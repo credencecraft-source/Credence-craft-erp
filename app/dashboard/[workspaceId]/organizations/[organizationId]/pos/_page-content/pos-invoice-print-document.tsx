@@ -68,6 +68,8 @@ export type PosInvoicePrintData = {
   taxRate?: number;
   taxAmount?: number;
   grandTotal?: number;
+  storeCreditAppliedAmount?: number;
+  amountDue?: number;
 };
 
 const itemFieldLabels: Record<string, string> = {
@@ -260,7 +262,7 @@ export default function PosInvoicePrintDocument({
           {sections.headerFields.includes("billTo") ? (
             <section className="mt-4 border border-[var(--erp-border)] p-3">
               <h2 className="font-semibold" style={{ color: design.accentColor }}>BILL TO</h2>
-              <p>{invoice.customer || "Walk-in customer"}</p>
+              <p>{invoice.customer || "Customer not linked"}</p>
               {invoice.shippingAddress ? (
                 <address className="mt-1 whitespace-pre-line not-italic">
                   {[

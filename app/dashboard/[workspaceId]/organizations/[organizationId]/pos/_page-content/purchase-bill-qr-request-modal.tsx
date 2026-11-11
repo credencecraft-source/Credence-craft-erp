@@ -148,7 +148,7 @@ function PurchaseBillQrRequestModal({
   organizationId: string;
   bill: PurchaseBill;
   onClose: () => void;
-  onSubmitted: (message: string) => void;
+  onSubmitted: (message: string, requestId: string) => void;
 }) {
   const [templates, setTemplates] = useState<QrTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
@@ -330,7 +330,16 @@ function PurchaseBillQrRequestModal({
           ? data.error
           : "Unable to send the QR request.");
       }
-      onSubmitted(`One QR request for ${selectedLines.length} purchase bill line${selectedLines.length === 1 ? "" : "s"} was sent to Design & Development. They can choose to print or download it.`);
+      if (!isRecord(data) || !isRecord(data.request)
+        || typeof data.request.id !== "string" || !data.request.id) {
+        throw new Error(
+          "The QR request was sent, but its detail link could not be loaded. Find it in Print/Download requests.",
+        );
+      }
+      onSubmitted(
+        `One QR request for ${selectedLines.length} purchase bill line${selectedLines.length === 1 ? "" : "s"} was sent to Design & Development. They can choose to print or download it.`,
+        data.request.id,
+      );
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "Unable to send the QR request.");
     } finally {

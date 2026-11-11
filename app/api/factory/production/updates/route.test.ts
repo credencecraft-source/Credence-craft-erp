@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   return {
     requireSessionUser: vi.fn(),
     requireOrganizationContext: vi.fn(),
+    requireOrganizationPermission: vi.fn(),
     processFindFirst: vi.fn(),
     factoryWorkOrderFindFirst,
     transaction,
@@ -24,6 +25,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -44,6 +46,7 @@ describe("factory production update lifecycle", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.processFindFirst.mockResolvedValue({
       id: "process-1",
       order_qty: 10,
@@ -84,5 +87,26 @@ describe("factory production update lifecycle", () => {
     expect(mocks.factoryWorkOrderFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "work-order-1", organization_id: "internal-org-1" },
     }));
+  });
+
+  it("denies production updates before reading or mutating production records", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await POST(new Request("http://localhost/api/factory/production/updates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        workOrderId: "work-order-1",
+        processName: "Cutting",
+        completedQty: 2,
+        sizeLines: [{ sourceFinishedGoodsId: "size-1", size: "M", buyerSize: "M", quantity: 2 }],
+      }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "UPDATE_FACTORY_PRODUCTION");
+    expect(mocks.processFindFirst).not.toHaveBeenCalled();
+    expect(mocks.prismaTransaction).not.toHaveBeenCalled();
   });
 });

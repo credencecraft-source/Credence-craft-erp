@@ -51,8 +51,14 @@ export const ERP_MODULES: ErpModule[] = [
       { key: "offers", label: "Offers", pathSegment: "offers" },
       { key: "coupon-code", label: "Coupon Code", pathSegment: "cupencode" },
       { key: "invoice", label: "Invoice", pathSegment: "invoice" },
+      { key: "sales-return", label: "Sales Return", pathSegment: "sales-return" },
       { key: "stock", label: "Stock", pathSegment: "stock" },
       { key: "vendor-customer", label: "Vendor/Customer", href: "/pos/vendor-customer" },
+      {
+        key: "online-store",
+        label: "Online Store",
+        href: "/pos/online-store/manage",
+      },
     ],
   },
   {
@@ -163,6 +169,18 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "scan-pack", label: "Scan Pack", pathSegment: "scan-pack" },
         ],
       },
+    ],
+  },
+  {
+    key: "uniform-management",
+    label: "Uniform Management",
+    pathSegment: "uniform-management",
+    children: [
+      { key: "dashboard", label: "Dashboard", pathSegment: "dashboard" },
+      { key: "styles", label: "Uniform Styles", pathSegment: "styles" },
+      { key: "people", label: "People", pathSegment: "people" },
+      { key: "take-measurements", label: "Take Measurements", pathSegment: "take-measurements" },
+      { key: "grouped-measurements", label: "Grouped Measurements", pathSegment: "grouped-measurements" },
     ],
   },
   {
@@ -385,7 +403,14 @@ export const ERP_MODULES: ErpModule[] = [
           },
         ],
       },
-      { key: "integrations", label: "Integrations", pathSegment: "integrations" },
+      {
+        key: "integrations",
+        label: "Integrations",
+        pathSegment: "integrations",
+        children: [
+          { key: "whatsapp", label: "WhatsApp", pathSegment: "whatsapp" },
+        ],
+      },
       {
         key: "migration",
         label: "Migration",
@@ -409,6 +434,7 @@ const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "design-development": "design-development",
   "design-and-development": "design-development",
   "factory-management": "factory-management",
+  "uniform-management": "uniform-management",
   "quality-management-system": "quality-management-system",
   "quality-management": "quality-management-system",
   "finance-management": "finance-management",

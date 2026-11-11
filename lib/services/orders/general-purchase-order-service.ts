@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
+import { getEntityGstRegistrationForDate } from "@/lib/services/organizations/entity-gst-registration-resolver";
 import { calculateTax } from "./gst-calculation-service";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
 import { getPurchaseOrder } from "./purchase-order-service";
@@ -806,7 +807,7 @@ export async function createGeneralPurchaseOrderFromGroups(
       throw new Error("A selected General PO Master Group references inactive or unavailable organization data.");
     }
 
-    const [organization, registeredState, defaultTaxProfile, gstRates] = await Promise.all([
+    const [organization, registeredState, defaultTaxProfile, gstRates, entityGstRegistration] = await Promise.all([
       transaction.organization.findUnique({
         where: { id: organizationId },
         select: { gst_number: true, state: true, country: true },
@@ -825,6 +826,7 @@ export async function createGeneralPurchaseOrderFromGroups(
         where: { organization_id: organizationId, is_active: true },
         select: { gst: true, cgst_rate: true, sgst_rate: true, igst_rate: true },
       }),
+      getEntityGstRegistrationForDate(transaction, organizationId, first.entity_id),
     ]);
     if (!organization) throw new Error("Organization not found.");
     if (first.vendor.registered_state_id && !registeredState) {
@@ -849,8 +851,8 @@ export async function createGeneralPurchaseOrderFromGroups(
         igstRate: configuredRate?.igst_rate?.toNumber() ?? defaultTaxProfile?.igst_rate?.toNumber(),
         vatRate: defaultTaxProfile?.vat_rate?.toNumber(),
         salesTaxRate: defaultTaxProfile?.sales_tax_rate?.toNumber(),
-        organizationState: organization.state,
-        organizationGstin: organization.gst_number,
+        organizationState: entityGstRegistration?.registration_state ?? organization.state,
+        organizationGstin: entityGstRegistration?.gstin ?? organization.gst_number,
         vendorState,
         vendorGstin: first.vendor.gst_number,
       });

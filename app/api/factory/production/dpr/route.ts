@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 function dayRange(value: string | null) {
   if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Report date must use YYYY-MM-DD format.");
@@ -77,6 +77,7 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const params = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, params.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_FACTORY_PRODUCTION");
     const processName = params.get("process")?.trim() || null;
     const { start, transfers, grns, processCards } = await buildReport(organization.id, params.get("date"), processName);
     const report = await prisma.factoryDailyProductionReport.findUnique({
@@ -85,7 +86,8 @@ export async function GET(request: Request) {
     });
     return NextResponse.json({ report, activity: { transfers, grns, processCards }, process: processName, reportDate: start.toISOString().slice(0, 10) });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load DPR." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load DPR." }, { status });
   }
 }
 
@@ -104,6 +106,11 @@ export async function POST(request: Request) {
       ? ["OWNER", "ADMIN"]
       : ["OWNER", "ADMIN", "MERCHANDISING"];
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), allowedRoles);
+    await requireOrganizationPermission(
+      user.id,
+      organization.id,
+      action === "APPROVE" || action === "REJECT" ? "MANAGE_FACTORY_PRODUCTION" : "UPDATE_FACTORY_PRODUCTION",
+    );
     const reportDate = body.date ?? new Date().toISOString().slice(0, 10);
     const { start, end } = dayRange(reportDate);
 
@@ -224,6 +231,7 @@ export async function POST(request: Request) {
     }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
     return NextResponse.json({ ok: true, report });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to generate DPR." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to generate DPR." }, { status });
   }
 }

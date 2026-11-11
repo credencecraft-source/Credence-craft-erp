@@ -159,6 +159,7 @@ export function getMastersForCategory(
     !vendorsAndContactsMasterKeys.has(master.key) &&
     !taxAndGstMasterKeys.has(master.key) &&
     !sizeMasterKeys.has(master.key) &&
-    master.key !== "price-list"
+    master.key !== "price-list" &&
+    master.key !== "entity"
   ));
 }

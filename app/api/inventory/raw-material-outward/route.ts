@@ -16,7 +16,7 @@ import {
   undoAcceptRawMaterialOutwardRequest,
   undoPickRawMaterialOutwardItem,
 } from "@/lib/services/inventory/raw-material-outward-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -102,6 +102,11 @@ export async function POST(request: Request) {
       ? ["OWNER", "ADMIN", "MERCHANDISING"]
       : ["OWNER", "ADMIN", "INVENTORY"];
     const organization = await requireOrganizationContext(user.id, organizationId, allowedRoles);
+    await requireOrganizationPermission(
+      user.id,
+      organization.id,
+      action === "request" ? "REQUEST_RAW_MATERIAL_OUTWARD" : "MANAGE_RAW_MATERIAL_OUTWARD",
+    );
     const actor = { organizationId: organization.id, actorId: user.id, actorName: user.full_name };
 
     if (action === "request") {

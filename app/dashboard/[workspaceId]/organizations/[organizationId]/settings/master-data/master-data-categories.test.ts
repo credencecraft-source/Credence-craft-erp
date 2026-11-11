@@ -40,6 +40,24 @@ describe("master data categories", () => {
     expect(getMastersForCategory(visibleMasters, others!).map((master) => master.key)).not.toContain("price-list");
   });
 
+  it("keeps Entity available as a standalone master-data destination", () => {
+    const others = MASTER_DATA_CATEGORIES.find((category) => category.id === "other");
+    const entity = visibleMasters.find((master) => master.key === "entity");
+
+    expect(entity?.label).toBe("Entity");
+    expect(entity?.fields.map((field) => field.key)).toEqual([
+      "entity_name",
+      "gstin",
+      "registered_address_line_1",
+      "registered_address_line_2",
+      "registered_city",
+      "registered_state",
+      "registered_postal_code",
+      "registered_country",
+    ]);
+    expect(getMastersForCategory(visibleMasters, others!).map((master) => master.key)).not.toContain("entity");
+  });
+
   it("includes Article under Finished Goods", () => {
     const finishedGoods = MASTER_DATA_CATEGORIES.find((category) => category.id === "finished-goods");
 
@@ -109,6 +127,7 @@ describe("master data categories", () => {
       "node_code",
       "node_name",
       "entity_id",
+      "master_location_id",
       "parent_node_id",
     ]);
     expect(visibleMasters.map((master) => master.key)).not.toEqual(

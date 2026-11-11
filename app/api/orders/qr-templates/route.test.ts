@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   listOrderQrTemplates: vi.fn(),
   createOrderQrTemplate: vi.fn(),
   deleteOrderQrTemplates: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/orders/order-qr-template-service", () => ({
@@ -44,6 +46,7 @@ describe("order QR template API", () => {
       id: "internal-org-1",
       organizationId: "public-org",
     });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listOrderQrTemplates.mockResolvedValue([]);
     mocks.createOrderQrTemplate.mockResolvedValue({ id: "template-1", name: "ORDER TAG" });
     mocks.deleteOrderQrTemplates.mockResolvedValue({ success: true, deletedCount: 2 });
@@ -187,6 +190,24 @@ describe("order QR template API", () => {
     );
   });
 
+  it("requires master-data permission before creating a QR template", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await POST(new Request(requestUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Order tags",
+        type: "ORDER_TAGS",
+        pageSetupTemplateId: "setup-1",
+        fieldKeys: ["orderNo"],
+        qrSize: 192,
+      }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.createOrderQrTemplate).not.toHaveBeenCalled();
+  });
+
   it("reports when the selected Page Setup is unavailable in this organization", async () => {
     mocks.createOrderQrTemplate.mockRejectedValue(
       new mocks.OrderQrTemplatePageSetupNotFoundError(),
@@ -223,6 +244,18 @@ describe("order QR template API", () => {
       ["template-1", "template-2"],
     );
     await expect(response.json()).resolves.toEqual({ deletedCount: 2 });
+  });
+
+  it("requires master-data permission before deleting QR templates", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await DELETE(new Request(requestUrl, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: ["template-1"] }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.deleteOrderQrTemplates).not.toHaveBeenCalled();
   });
 
   it("rejects malformed or duplicate template identifiers before deletion", async () => {

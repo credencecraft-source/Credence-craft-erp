@@ -13,6 +13,8 @@ type PageSetupTemplate = PageSetupTemplateInput & {
   id: string;
   createdAt: string;
   updatedAt: string;
+  paperWidthMm: number | null;
+  paperLengthMm: number | null;
 };
 
 export default function PageSetupTemplateDetailPage({
@@ -114,15 +116,23 @@ export default function PageSetupTemplateDetailPage({
             <h2 className="text-base font-semibold text-slate-900">{template.name}</h2>
             <dl className="grid min-w-0 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-600">Paper Size</dt>
-                <dd className="text-sm text-slate-900">{template.paperSize}</dd>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {template.printerType === "THERMAL" ? "Thermal Roll" : "Paper Size"}
+                </dt>
+                <dd className="text-sm text-slate-900">
+                  {template.printerType === "THERMAL"
+                    ? `${template.paperWidthMm} mm wide · length automatic per print request`
+                    : template.paperSize === "CUSTOM"
+                      ? `Custom · ${template.paperWidthMm} × ${template.paperLengthMm} mm`
+                      : template.paperSize}
+                </dd>
               </div>
-              <div className="space-y-1">
+              {template.printerType === "LASER" && <div className="space-y-1">
                 <dt className="text-xs font-semibold uppercase tracking-wide text-slate-600">Orientation</dt>
                 <dd className="text-sm text-slate-900">
                   {template.orientation.charAt(0) + template.orientation.slice(1).toLowerCase()}
                 </dd>
-              </div>
+              </div>}
               <div className="space-y-1">
                 <dt className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sticker Size</dt>
                 <dd className="text-sm text-slate-900">
@@ -153,7 +163,10 @@ export default function PageSetupTemplateDetailPage({
             </dl>
           </Card>
           <PageSetupStickerSheetPreview
+            printerType={template.printerType}
             paperSize={template.paperSize}
+            paperWidthMm={template.paperWidthMm}
+            paperLengthMm={template.paperLengthMm}
             orientation={template.orientation}
             stickerWidthMm={template.stickerWidthMm}
             stickerLengthMm={template.stickerLengthMm}

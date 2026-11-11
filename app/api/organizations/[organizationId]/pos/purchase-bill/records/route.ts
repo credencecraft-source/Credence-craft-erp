@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { createPurchaseRecord, deletePurchaseRecords, listPurchaseRecords, updatePurchaseRecord } from "@/lib/services/pos/purchase-bill-service";
 
 export async function GET(
@@ -12,6 +12,7 @@ export async function GET(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_POS_PURCHASE_RECORDS");
     const { searchParams } = new URL(request.url);
     const recordId = searchParams.get("recordId")?.trim();
     const rawLimit = searchParams.get("limit");
@@ -29,7 +30,10 @@ export async function GET(
     }
     return NextResponse.json({ records: await listPurchaseRecords(organization.id, recordId || undefined) });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load purchase records." }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to load purchase records." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
   }
 }
 
@@ -41,6 +45,7 @@ export async function POST(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_POS_PURCHASE_RECORDS");
     const body = await request.json() as Record<string, unknown>;
     const record = await createPurchaseRecord(organization.id, user.id, {
       itemType: body.itemType === "RAW_MATERIAL" ? "RAW_MATERIAL" : "FINISHED_GOODS",
@@ -65,7 +70,10 @@ export async function POST(
     });
     return NextResponse.json({ record }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save purchase record." }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to save purchase record." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
   }
 }
 
@@ -77,6 +85,7 @@ export async function PATCH(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_POS_PURCHASE_RECORDS");
     const body = await request.json() as Record<string, unknown>;
     const recordId = String(body.recordId ?? "");
     if (!recordId) return NextResponse.json({ error: "Record ID is required." }, { status: 400 });
@@ -103,7 +112,10 @@ export async function PATCH(
     });
     return NextResponse.json({ record });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update purchase record." }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to update purchase record." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
   }
 }
 
@@ -115,10 +127,14 @@ export async function DELETE(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "DELETE_POS_PURCHASE_RECORDS");
     const body = await request.json() as { recordIds?: unknown };
     const recordIds = Array.isArray(body.recordIds) ? body.recordIds.map(String) : [];
     return NextResponse.json(await deletePurchaseRecords(organization.id, user.id, recordIds));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete purchase records." }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to delete purchase records." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
   }
 }

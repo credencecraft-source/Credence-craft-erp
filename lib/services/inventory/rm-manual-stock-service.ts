@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
-import { getActiveBinPlacement, StorageNodeError } from "@/lib/services/inventory/storage-node-service";
+import { getActiveStoragePlacement, StorageNodeError } from "@/lib/services/inventory/storage-node-service";
 
 export class ManualStockError extends Error {
   constructor(message: string, readonly status: number = 400) {
@@ -16,15 +16,15 @@ type AddRawMaterialStockInput = {
   userId: string;
   rawMaterialId: string;
   locationId: string;
-  storageNodeId: string;
+  storageNodeId?: string;
   quantity: string;
   reason: string;
   isAssetStock?: boolean;
 };
 
 export async function addRawMaterialStockManually(input: AddRawMaterialStockInput) {
-  if (!input.rawMaterialId || !input.locationId || !input.storageNodeId) {
-    throw new ManualStockError("Select a raw material, active location, and storage Bin.");
+  if (!input.rawMaterialId || !input.locationId) {
+    throw new ManualStockError("Select a raw material and active stock location.");
   }
   if (!/^\d{1,12}(?:\.\d{1,2})?$/.test(input.quantity)) {
     throw new ManualStockError("Quantity must be a positive number with up to two decimal places.");
@@ -54,17 +54,20 @@ export async function addRawMaterialStockManually(input: AddRawMaterialStockInpu
       select: { id: true, entity_id: true, location_name: true },
     });
     if (!location) throw new ManualStockError("The selected location is not active in this organization.", 404);
-    let storageBin: Awaited<ReturnType<typeof getActiveBinPlacement>>;
-    try {
-      storageBin = await getActiveBinPlacement(
-        transaction,
-        input.organizationId,
-        input.storageNodeId,
-        location.entity_id,
-      );
-    } catch (error) {
-      if (error instanceof StorageNodeError) throw new ManualStockError(error.message, error.status);
-      throw error;
+    let storagePlacement: Awaited<ReturnType<typeof getActiveStoragePlacement>> | null = null;
+    if (input.storageNodeId) {
+      try {
+        storagePlacement = await getActiveStoragePlacement(
+          transaction,
+          input.organizationId,
+          input.storageNodeId,
+          location.entity_id,
+          location.id,
+        );
+      } catch (error) {
+        if (error instanceof StorageNodeError) throw new ManualStockError(error.message, error.status);
+        throw error;
+      }
     }
 
     const stock = await transaction.rawMaterialStock.create({
@@ -72,7 +75,7 @@ export async function addRawMaterialStockManually(input: AddRawMaterialStockInpu
         organization_id: input.organizationId,
         entity_id: location.entity_id,
         location_id: location.id,
-        storage_node_id: storageBin.id,
+        storage_node_id: storagePlacement?.id ?? null,
         raw_material: rawMaterial.raw_material_name,
         quantity_on_hand: quantity,
         source_type: "MANUAL",
@@ -93,7 +96,7 @@ export async function addRawMaterialStockManually(input: AddRawMaterialStockInpu
       details: {
         raw_material: rawMaterial.raw_material_name,
         location_id: location.id,
-        storage_node_id: storageBin.id,
+        storage_node_id: storagePlacement?.id ?? null,
         quantity_added: quantity.toString(),
         reason: input.reason,
       },

@@ -33,6 +33,7 @@ model WorkspaceUser {
   submittedSupportTickets        SupportTicket[]          @relation("SupportTicketSubmitter")
   supportTicketMessages          TicketMessage[]          @relation("TicketMessageWorkspaceAuthor")
   auditEvents                    AuditEvent[]
+  createdUniformOrders           UniformOrder[]             @relation("UniformOrderCreator")
 
   @@map("workspace_users")
 }
@@ -88,6 +89,8 @@ model Organization {
   destinationOrderShares                  OrderShare[]                              @relation("OrderShareDestinationOrganization")
   approvalRequests                        ApprovalRequest[]
   masterEntities                          MasterEntity[]
+  masterDivisions                         Division[]
+  entityGstRegistrations                  EntityGstRegistration[]
   masterLocations                         MasterLocation[]
   storageNodes                            StorageNode[]
   masterCategoryTypes                     MasterCategoryType[]
@@ -134,6 +137,7 @@ model Organization {
   masterGsts                              MasterGst[]
   masterHsns                              MasterHsn[]
   masterMeasurementCharts                 MasterMeasurementChart[]
+  masterMeasurementChartDetails           MasterMeasurementChartDetail[]
   masterSizeWiseConsumptions              MasterSizeWiseConsumption[]
   masterProducts                          MasterProduct[]
   masterProcesses                         MasterProcess[]
@@ -145,12 +149,25 @@ model Organization {
   masterMerchandisers                     MasterMerchandiser[]
   masterStatuses                          MasterStatus[]
   masterOrderVolumes                      MasterOrderVolume[]
+  uniformParticipants                     UniformParticipant[]
+  uniformOrderCounters                    UniformOrderCounter[]
+  uniformOrders                           UniformOrder[]
+  uniformStyleMeasurementFields           UniformStyleMeasurementField[]
+  uniformOrderAssignments                 UniformOrderAssignment[]
+  uniformAssignmentMeasurements           UniformAssignmentMeasurement[]
+  uniformMeasurementCounters              UniformEmployeeMeasurementCounter[]
+  masterMeasurementGroups                  MasterMeasurementGroup[]
+  masterMeasurementAreas                   MasterMeasurementArea[]
+  uniformEmployeeMeasurements             UniformEmployeeMeasurement[]
+  uniformEmployeeMeasurementDetails       UniformEmployeeMeasurementDetail[]
   groupedPurchaseOrders                   GroupedPurchaseOrder[]
   masterPurchaseOrders                    MasterPurchaseOrder[]
   purchaseOrders                          PurchaseOrder[]
   posPurchaseRecords                      PosPurchaseRecord[]
   posPurchaseBills                        PosPurchaseBill[]
   posSalesInvoices                        PosSalesInvoice[]
+  posSalesReturns                         PosSalesReturn[]
+  posSalesReturnCreditApplications        PosSalesReturnCreditApplication[]
   fgMaterialIssues                        FGMaterialIssue[]
   subscriptions                           Subscription[]
   segmentPrices                           OrganizationSegmentPrice[]
@@ -1030,6 +1047,15 @@ model MasterEntity {
   created_at                   DateTime                      @default(now())
   updated_at                   DateTime                      @updatedAt
   organization                 Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  divisions                    Division[]
+  gstin                        String?                       @db.VarChar(15)
+  registered_address_line_1    String?                       @db.VarChar(255)
+  registered_address_line_2    String?                       @db.VarChar(255)
+  registered_city              String?                       @db.VarChar(120)
+  registered_state             String?                       @db.VarChar(100)
+  registered_postal_code       String?                       @db.VarChar(20)
+  registered_country           String?                       @db.VarChar(100)
+  gstRegistrations             EntityGstRegistration[]
   locations                    MasterLocation[]
   storageNodes                 StorageNode[]
   merchandisingOrders          MerchandisingOrder[]          @relation("MerchandisingOrderEntity")
@@ -1046,6 +1072,48 @@ model MasterEntity {
   @@unique([organization_id, id])
   @@index([organization_id, is_active])
   @@map("master_entities")
+}
+
+model Division {
+  id              String       @id @default(cuid())
+  organization_id String
+  entity_id       String
+  division_name   String       @db.VarChar(255)
+  division_code   String       @db.VarChar(100)
+  description     String?      @db.VarChar(1000)
+  is_active       Boolean      @default(true)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity          MasterEntity @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  locations       MasterLocation[]
+
+  @@unique([organization_id, entity_id, division_code], map: "divisions_entity_code_key")
+  @@unique([organization_id, id], map: "divisions_organization_id_key")
+  @@unique([organization_id, entity_id, id], map: "divisions_organization_entity_id_key")
+  @@index([organization_id, is_active])
+  @@map("divisions")
+}
+
+model EntityGstRegistration {
+  id                 String       @id @default(cuid())
+  organization_id    String
+  entity_id          String
+  gstin              String       @db.VarChar(15)
+  registration_state String       @db.VarChar(100)
+  registration_type  String       @default("REGULAR") @db.VarChar(40)
+  effective_from     DateTime     @db.Date
+  effective_to       DateTime?    @db.Date
+  is_active          Boolean      @default(true)
+  created_at         DateTime     @default(now())
+  updated_at         DateTime     @updatedAt
+  organization       Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity             MasterEntity @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id], map: "entity_gst_registrations_organization_id_key")
+  @@unique([organization_id, gstin, effective_from], map: "entity_gst_registrations_organization_gstin_effective_key")
+  @@index([organization_id, entity_id, is_active, effective_from])
+  @@map("entity_gst_registrations")
 }
 
 enum StorageNodeType {
@@ -1074,6 +1142,8 @@ model StorageNode {
   updated_at            DateTime        @updatedAt
   organization          Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   entity                MasterEntity?   @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  master_location_id    String?
+  masterLocation        MasterLocation? @relation(fields: [organization_id, entity_id, master_location_id], references: [organization_id, entity_id, id], onDelete: Restrict, map: "storage_nodes_organization_entity_location_fkey")
   parent                StorageNode?    @relation("StorageNodeHierarchy", fields: [organization_id, parent_node_id, parent_node_type], references: [organization_id, id, node_type], onDelete: Restrict)
   children              StorageNode[]   @relation("StorageNodeHierarchy")
   rawMaterialStocks     RawMaterialStock[]
@@ -1081,6 +1151,7 @@ model StorageNode {
   @@unique([organization_id, id])
   @@unique([organization_id, id, node_type])
   @@unique([organization_id, node_code])
+  @@unique([organization_id, entity_id, master_location_id], map: "storage_nodes_organization_entity_master_location_key")
   @@index([organization_id, node_type, is_active])
   @@index([organization_id, parent_node_id])
   @@index([organization_id, entity_id])
@@ -1100,6 +1171,9 @@ model MasterLocation {
   updated_at                          DateTime                             @default(now()) @updatedAt
   organization                        Organization                         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   entity                              MasterEntity                         @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  division_id                         String
+  division                             Division                             @relation(fields: [organization_id, entity_id, division_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  storageNode                         StorageNode?
   inventoryReceipts                   InventoryReceipt[]
   rawMaterialStocks                   RawMaterialStock[]
   preventiveMaintenanceAssets         PreventiveMaintenanceAsset[]
@@ -1110,6 +1184,7 @@ model MasterLocation {
 
   @@unique([organization_id, location_name])
   @@unique([organization_id, entity_id, id])
+  @@index([organization_id, division_id, is_active])
   @@index([organization_id, entity_id])
   @@index([organization_id, is_active])
   @@map("master_locations")
@@ -1155,6 +1230,7 @@ model MasterCategory {
   subcategories          MasterSubCategory[]
   articles               MasterArticle[]
   posOfferTargets        PosOfferTarget[]
+  uniformEmployeeMeasurements UniformEmployeeMeasurement[]
 
   @@unique([organization_id, id])
   @@unique([organization_id, category_name])
@@ -1177,7 +1253,9 @@ model MasterSubCategory {
   organization    Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   category        MasterCategory? @relation(fields: [category_id], references: [id])
   articles        MasterArticle[]
+  uniformEmployeeMeasurements UniformEmployeeMeasurement[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, sub_category])
   @@index([organization_id, is_active])
   @@map("master_sub_categories")
@@ -1312,7 +1390,11 @@ model MasterArticle {
   size_group        MasterSizeGroup?       @relation(fields: [size_group_id], references: [id], onDelete: Restrict)
   variants          MasterArticleVariant[]
   sizes             MasterArticleSize[]
+  uniformMeasurementFields UniformStyleMeasurementField[]
+  uniformAssignments UniformOrderAssignment[]
+  uniformEmployeeMeasurements UniformEmployeeMeasurement[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, article])
   @@unique([organization_id, article_code])
   @@index([article_code(ops: raw("gin_trgm_ops"))], type: Gin, map: "master_articles_article_code_trgm_idx")
@@ -1342,7 +1424,9 @@ model MasterArticleVariant {
   organization    Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   article         MasterArticle @relation(fields: [article_id], references: [id], onDelete: Cascade)
   color           MasterColor   @relation(fields: [color_id], references: [id], onDelete: Restrict)
+  uniformAssignments UniformOrderAssignment[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, article_id, color_id])
   @@unique([organization_id, variant_code])
   @@unique([organization_id, sku])
@@ -1480,6 +1564,10 @@ model MasterSize {
   group_links     MasterSizeGroupSize[]
   article_sizes   MasterArticleSize[]
   posOfferTargets PosOfferTarget[]
+  uniformAssignments UniformOrderAssignment[]
+  uniformEmployeeMeasurements       UniformEmployeeMeasurement[]       @relation("UniformEmployeeMeasurementSize")
+  uniformEmployeeMeasurementDetails UniformEmployeeMeasurementDetail[] @relation("UniformEmployeeMeasurementPredictedSize")
+  measurementChartDetails           MasterMeasurementChartDetail[]
 
   @@unique([organization_id, id])
   @@unique([organization_id, size])
@@ -1660,7 +1748,10 @@ model MasterMeasurementChart {
   updated_at        DateTime          @updatedAt
   organization      Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   size_groups       MasterSizeGroup[]
+  uniformEmployeeMeasurements UniformEmployeeMeasurement[]
+  measurement_details MasterMeasurementChartDetail[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, measurement_chart])
   @@index([organization_id, is_active])
   @@map("master_measurement_charts")

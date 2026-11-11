@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { createPurchaseBill, listPurchaseBills } from "@/lib/services/pos/purchase-bill-service";
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -40,6 +40,7 @@ export async function GET(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_POS_PURCHASE_RECORDS");
     const searchParams = new URL(request.url).searchParams;
     const search = searchParams.get("search")?.trim() ?? "";
     if (search.length > 100) {
@@ -68,7 +69,10 @@ export async function GET(
         : null,
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load purchase bills." }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to load purchase bills." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
   }
 }
 
@@ -80,6 +84,7 @@ export async function POST(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE"]);
+    await requireOrganizationPermission(user.id, organization.id, "POST_POS_PURCHASE_BILLS");
     const body = await request.json() as Record<string, unknown>;
     const result = await createPurchaseBill(organization.id, user.id, {
       entityId: String(body.entityId ?? ""),
@@ -91,6 +96,9 @@ export async function POST(
     });
     return NextResponse.json({ bill: result }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to post purchase bill." }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to post purchase bill." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
   }
 }

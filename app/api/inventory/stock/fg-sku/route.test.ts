@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   workspaceUserFindMany: vi.fn(),
   skuFindFirst: vi.fn(),
   skuFindMany: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
@@ -80,6 +82,7 @@ describe("finished goods stock report", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1", role: "INVENTORY" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.skuFindMany.mockResolvedValue([]);
     mocks.skuFindFirst.mockResolvedValue(null);
     mocks.skuCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
@@ -127,6 +130,11 @@ describe("finished goods stock report", () => {
     const body = await response.json();
 
     expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "CREATE_FINISHED_GOODS_STOCK",
+    );
     expect(body.record).toMatchObject({
       sku_code: "CLASSIC-TEE-NAVY-BLUE-M",
       barcode: "POS1",
@@ -179,6 +187,28 @@ describe("finished goods stock report", () => {
     expect(mocks.counterUpsert).not.toHaveBeenCalled();
   });
 
+  it("does not create finished-goods stock without create permission", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await POST(new Request("http://localhost/api/inventory/stock/fg-sku", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        locationId: "location-1",
+        source: "DIRECT_FROM_POS",
+        styleName: "Classic Tee",
+        colour: "Navy Blue",
+        size: "M",
+        qtyIn: 4,
+        qtyOut: 0,
+      }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.locationFindFirst).not.toHaveBeenCalled();
+    expect(mocks.skuCreate).not.toHaveBeenCalled();
+  });
+
   it("recalculates the POS SKU when its variant changes and preserves its barcode", async () => {
     mocks.skuFindFirst
       .mockResolvedValueOnce({
@@ -217,6 +247,11 @@ describe("finished goods stock report", () => {
     }));
 
     expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "ADJUST_FINISHED_GOODS_STOCK",
+    );
     expect(mocks.skuUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "sku-record-1", organization_id: "internal-org-1" },
       data: expect.objectContaining({
@@ -227,6 +262,24 @@ describe("finished goods stock report", () => {
         colour: "BLACK",
       }),
     }));
+  });
+
+  it("does not adjust finished-goods stock when adjustment permission is denied", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await PUT(new Request("http://localhost/api/inventory/stock/fg-sku", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        recordId: "sku-record-1",
+        qtyIn: 8,
+        qtyOut: 0,
+      }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.skuFindFirst).not.toHaveBeenCalled();
+    expect(mocks.skuUpdate).not.toHaveBeenCalled();
   });
 
   it("returns email addresses for GRN submitter and verifier instead of user IDs", async () => {

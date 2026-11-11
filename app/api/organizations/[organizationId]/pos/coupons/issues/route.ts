@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { listPosCouponIssues } from "@/lib/services/pos/pos-coupon-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -40,6 +40,7 @@ export async function GET(
       organizationId,
       ["OWNER", "ADMIN", "FINANCE"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_POS_COUPONS");
     const params = new URL(request.url).searchParams;
     const status = params.get("status");
     if (status !== "ACTIVE" && status !== "EXPIRED" && status !== "CLAIMED") {
@@ -82,7 +83,7 @@ export async function GET(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to load issued POS coupons." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }

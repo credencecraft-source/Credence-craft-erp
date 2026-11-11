@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
+  requireOrganizationOrderManagementPermission: vi.fn(),
   listGroupedPurchaseOrdersPage: vi.fn(),
   listGeneralPurchaseOrderRequests: vi.fn(),
   listGeneralPurchaseOrderGroups: vi.fn(),
@@ -14,6 +16,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
+  requireOrganizationOrderManagementPermission: mocks.requireOrganizationOrderManagementPermission,
 }));
 vi.mock("@/lib/services/orders/general-purchase-order-service", () => ({
   approveGeneralPurchaseOrderPrice: vi.fn(),
@@ -42,6 +46,8 @@ describe("procurement list pagination", () => {
     vi.resetAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
+    mocks.requireOrganizationOrderManagementPermission.mockResolvedValue(undefined);
     mocks.listGroupedPurchaseOrdersPage.mockResolvedValue({
       groupedPurchaseOrders: [{ id: "group-1" }],
       nextCursor: "group-1",
@@ -63,6 +69,19 @@ describe("procurement list pagination", () => {
       groupedPurchaseOrders: [{ id: "group-1" }],
       nextGroupedCursor: "group-1",
     });
+  });
+
+  it("denies purchase-order reads before loading data when permission is missing", async () => {
+    mocks.requireOrganizationOrderManagementPermission.mockRejectedValue(
+      new Error("Access denied: VIEW_PURCHASE_ORDERS permission is required."),
+    );
+
+    const response = await GET(new Request(
+      "http://localhost/api/orders/procurement?organizationId=public-org&view=all",
+    ));
+
+    expect(response.status).toBe(403);
+    expect(mocks.listGroupedPurchaseOrdersPage).not.toHaveBeenCalled();
   });
 
   it("rejects malformed or repeated pagination parameters before querying", async () => {

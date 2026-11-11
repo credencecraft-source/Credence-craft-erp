@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   getOrganizationInternalIdForUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
+  requireOrganizationOrderManagementPermission: vi.fn(),
   getAdvanceBookingOrderDetails: vi.fn(),
   getOrderById: vi.fn(),
   getOrderCoreById: vi.fn(),
@@ -18,6 +20,8 @@ vi.mock("@/lib/auth/session-manager", () => ({
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   getOrganizationInternalIdForUser: mocks.getOrganizationInternalIdForUser,
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
+  requireOrganizationOrderManagementPermission: mocks.requireOrganizationOrderManagementPermission,
 }));
 
 vi.mock("@/lib/services/orders/order-service", () => ({
@@ -35,6 +39,8 @@ describe("merchandising order detail API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.getOrganizationInternalIdForUser.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
+    mocks.requireOrganizationOrderManagementPermission.mockResolvedValue(undefined);
     mocks.getOrderCoreById.mockResolvedValue({ id: "order-1" });
     mocks.getOrderDetailSection.mockResolvedValue({ bomItems: [] });
     mocks.getOrderById.mockResolvedValue({ id: "order-1", finishedGoods: [] });
@@ -71,5 +77,19 @@ describe("merchandising order detail API", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.getOrderDetailSection).not.toHaveBeenCalled();
+  });
+
+  it("denies order detail reads when VIEW_ORDERS is missing", async () => {
+    mocks.requireOrganizationOrderManagementPermission.mockRejectedValueOnce(
+      new Error("Access denied: This role does not have the required Order Management permission."),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/orders/order-1?organizationId=public-org-id"),
+      { params: Promise.resolve({ orderId: "order-1" }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.getOrderById).not.toHaveBeenCalled();
   });
 });

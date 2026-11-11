@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { createPurchaseBillFinishedGoodsStock, getPurchaseBill } from "@/lib/services/pos/purchase-bill-service";
 
 export async function GET(
@@ -12,9 +12,13 @@ export async function GET(
     const user = await requireSessionUser();
     const { organizationId, billId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "INVENTORY"]);
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_POS_PURCHASE_RECORDS");
     return NextResponse.json({ bill: await getPurchaseBill(organization.id, billId) });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load purchase bill." }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to load purchase bill." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
   }
 }
 
@@ -26,6 +30,7 @@ export async function POST(
     const user = await requireSessionUser();
     const { organizationId, billId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_FINISHED_GOODS_STOCK");
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     if (body.action !== "create-stock") throw new Error("A valid stock action is required.");
     if (typeof body.locationId !== "string" || !body.locationId.trim() || body.locationId.length > 128) {
@@ -38,6 +43,9 @@ export async function POST(
       body.locationId,
     ));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create Finished Goods stock." }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to create Finished Goods stock." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
   }
 }

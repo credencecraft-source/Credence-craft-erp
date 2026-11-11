@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   getOrderQrTemplate: vi.fn(),
   updateOrderQrTemplate: vi.fn(),
   OrderQrTemplatePageSetupNotFoundError: class extends Error {},
@@ -14,6 +15,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/orders/order-qr-template-service", () => ({
   getOrderQrTemplate: mocks.getOrderQrTemplate,
@@ -39,6 +41,7 @@ describe("order QR template record API", () => {
       id: "internal-org-1",
       organizationId: "public-org",
     });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.getOrderQrTemplate.mockResolvedValue({
       id: "template-1",
       name: "BASIC",
@@ -57,6 +60,7 @@ describe("order QR template record API", () => {
     const response = await GET(new Request(requestUrl), routeContext);
 
     expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).not.toHaveBeenCalled();
     expect(mocks.getOrderQrTemplate).toHaveBeenCalledWith("internal-org-1", "template-1");
     await expect(response.json()).resolves.toMatchObject({
       template: { id: "template-1", name: "BASIC" },
@@ -110,6 +114,7 @@ describe("order QR template record API", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "MANAGE_MASTER_DATA");
     expect(mocks.updateOrderQrTemplate).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
@@ -138,6 +143,26 @@ describe("order QR template record API", () => {
         stickerLengthMm: 30,
       },
     );
+  });
+
+  it("requires master-data permission before updating a QR template", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await PATCH(
+      new Request(requestUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Basic updated",
+          pageSetupTemplateId: "setup-1",
+          fieldKeys: ["orderNo"],
+          qrSize: 320,
+        }),
+      }),
+      routeContext,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.updateOrderQrTemplate).not.toHaveBeenCalled();
   });
 
   it("reports when the selected Page Setup is unavailable in this organization", async () => {

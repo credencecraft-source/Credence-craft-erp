@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { isDatabaseUnavailableError, DATABASE_UNAVAILABLE_MESSAGE } from "@/lib/database/database-errors";
 import { listFgIssued } from "@/lib/services/inventory/fg-issued-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 const sourceTypes = ["PACKING_LIST", "POS_INVOICE", "MANUAL_ADJUSTMENT"] as const satisfies readonly FGMaterialIssueSource[];
 const movements = ["ISSUE", "REVERSAL"] as const satisfies readonly FGMaterialIssueMovement[];
@@ -84,6 +84,7 @@ export async function GET(request: Request) {
   try {
     const search = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_INVENTORY_STOCK");
     const pageValue = search.get("page");
     const pageSizeValue = search.get("pageSize");
     const page = pageValue === null ? 1 : Number(pageValue);

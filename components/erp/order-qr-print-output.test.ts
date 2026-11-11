@@ -85,7 +85,10 @@ describe("order QR print output", () => {
       pageSetup: {
         id: "setup-1",
         name: "A3 STOCK",
+        printerType: "LASER" as const,
         paperSize: "A3" as const,
+        paperWidthMm: null,
+        paperLengthMm: null,
         orientation: "LANDSCAPE" as const,
         stickerWidthMm: 50,
         stickerLengthMm: 30,
@@ -116,5 +119,100 @@ describe("order QR print output", () => {
       format: "a3",
     });
     expect(mocks.addImage).toHaveBeenCalledWith("sticker-a3", "PNG", 15, 10, 50, 30);
+  });
+
+  it("uses the custom sheet width and length as the PDF page format", async () => {
+    const record = {
+      orderNo: "ORD-1",
+      qrSize: 256,
+      qrPayload: "order-1",
+      stickerWidthMm: 50,
+      stickerLengthMm: 30,
+      pageSetup: {
+        id: "custom-setup",
+        name: "CUSTOM STOCK",
+        printerType: "LASER" as const,
+        paperSize: "CUSTOM" as const,
+        paperWidthMm: 120,
+        paperLengthMm: 200,
+        orientation: "LANDSCAPE" as const,
+        stickerWidthMm: 50,
+        stickerLengthMm: 30,
+        marginTopMm: 5,
+        marginBottomMm: 5,
+        marginLeftMm: 5,
+        marginRightMm: 5,
+        horizontalGapMm: 2,
+        verticalGapMm: 2,
+      },
+      layout: {
+        qr: { x: 3, y: 25 },
+        fields: {},
+        printerType: "LASER" as const,
+        pdfPaperSize: "A4_AUTO" as const,
+      },
+      displayFields: ["orderNo"] as OrderQrTemplateFieldKey[],
+      displayValues: {},
+      displayFieldStyles: {},
+      printQuantity: 1,
+    };
+
+    await createOrderQrPrintPdf(record, ["custom-sticker"]);
+
+    expect(mocks.jsPDF).toHaveBeenCalledWith({
+      orientation: "landscape",
+      unit: "mm",
+      format: [200, 120],
+    });
+  });
+
+  it("writes thermal labels to a roll whose length follows the requested quantity", async () => {
+    const record = {
+      orderNo: "ORD-1",
+      qrSize: 256,
+      qrPayload: "order-1",
+      stickerWidthMm: 25,
+      stickerLengthMm: 30,
+      pageSetup: {
+        id: "thermal-setup",
+        name: "58MM ROLL",
+        printerType: "THERMAL" as const,
+        paperSize: "ROLL" as const,
+        paperWidthMm: 58,
+        paperLengthMm: null,
+        orientation: "PORTRAIT" as const,
+        stickerWidthMm: 25,
+        stickerLengthMm: 30,
+        marginTopMm: 5,
+        marginBottomMm: 5,
+        marginLeftMm: 3,
+        marginRightMm: 3,
+        horizontalGapMm: 2,
+        verticalGapMm: 2,
+      },
+      layout: {
+        qr: { x: 3, y: 25 },
+        fields: {},
+        printerType: "BARCODE" as const,
+        pdfPaperSize: "A4_AUTO" as const,
+      },
+      displayFields: ["orderNo"] as OrderQrTemplateFieldKey[],
+      displayValues: {},
+      displayFieldStyles: {},
+      printQuantity: 3,
+    };
+
+    await createOrderQrPrintPdf(record, ["sticker-1", "sticker-2", "sticker-3"]);
+
+    expect(mocks.jsPDF).toHaveBeenCalledWith({
+      orientation: "portrait",
+      unit: "mm",
+      format: [58, 72],
+    });
+    expect(mocks.addImage.mock.calls).toEqual([
+      ["sticker-1", "PNG", 3, 5, 25, 30],
+      ["sticker-2", "PNG", 30, 5, 25, 30],
+      ["sticker-3", "PNG", 3, 37, 25, 30],
+    ]);
   });
 });

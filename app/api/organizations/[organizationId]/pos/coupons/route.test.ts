@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createPosCoupon: vi.fn(),
   listPosCoupons: vi.fn(),
 }));
@@ -12,6 +13,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/pos/pos-coupon-service", () => ({
   createPosCoupon: mocks.createPosCoupon,
@@ -25,6 +27,7 @@ describe("POS coupon routes", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "actor-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listPosCoupons.mockResolvedValue({
       coupons: [{ id: "coupon-1", couponCode: "SAVE10" }],
       hasMore: false,
@@ -45,6 +48,7 @@ describe("POS coupon routes", () => {
       "public-org",
       ["OWNER", "ADMIN", "FINANCE"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("actor-1", "internal-org-1", "VIEW_POS_COUPONS");
     expect(mocks.listPosCoupons).toHaveBeenCalledWith("internal-org-1", {
       take: 50,
       cursor: undefined,
@@ -75,6 +79,7 @@ describe("POS coupon routes", () => {
     );
 
     expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("actor-1", "internal-org-1", "MANAGE_POS_COUPONS");
     expect(mocks.createPosCoupon).toHaveBeenCalledWith("internal-org-1", "actor-1", expect.objectContaining({
       couponCode: "SAVE10",
       couponType: "GENERAL",
@@ -92,4 +97,39 @@ describe("POS coupon routes", () => {
     expect(mocks.listPosCoupons).not.toHaveBeenCalled();
   });
 
+  it("denies coupon reads without the dedicated view permission", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/coupons"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.listPosCoupons).not.toHaveBeenCalled();
+  });
+
+  it("denies coupon creation without the dedicated management permission", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await POST(
+      new Request("http://localhost/api/organizations/public-org/pos/coupons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Save ten",
+          couponType: "GENERAL",
+          status: "ACTIVE",
+          discountType: "FLAT_AMOUNT",
+          discountValue: "10",
+          minimumPurchase: "50",
+          startsAt: "2026-11-07",
+        }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.createPosCoupon).not.toHaveBeenCalled();
+  });
 });

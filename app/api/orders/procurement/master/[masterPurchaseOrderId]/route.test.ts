@@ -3,13 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
+  requireOrganizationOrderManagementPermission: vi.fn(),
   deleteMasterPurchaseOrder: vi.fn(),
   getMasterPurchaseOrder: vi.fn(),
   notifyStoreForStockMasterGroup: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
-vi.mock("@/lib/services/organizations/organization-service", () => ({ requireOrganizationContext: mocks.requireOrganizationContext }));
+vi.mock("@/lib/services/organizations/organization-service", () => ({
+  requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
+  requireOrganizationOrderManagementPermission: mocks.requireOrganizationOrderManagementPermission,
+}));
 vi.mock("@/lib/services/orders/master-purchase-order-service", () => ({
   deleteMasterPurchaseOrder: mocks.deleteMasterPurchaseOrder,
   getMasterPurchaseOrder: mocks.getMasterPurchaseOrder,
@@ -25,6 +31,8 @@ describe("Master Group Notify Store action", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1", full_name: "Planner" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
+    mocks.requireOrganizationOrderManagementPermission.mockResolvedValue(undefined);
     mocks.notifyStoreForStockMasterGroup.mockResolvedValue({ notified: true, verificationTasks: 2 });
   });
 
@@ -94,5 +102,20 @@ describe("Master Group Notify Store action", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.deleteMasterPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("does not notify the Store without UPDATE_PURCHASE_ORDERS", async () => {
+    mocks.requireOrganizationOrderManagementPermission.mockRejectedValue(
+      new Error("Access denied: UPDATE_PURCHASE_ORDERS permission is required."),
+    );
+
+    const response = await PUT(new Request("http://localhost/api/orders/procurement/master/master-1", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organizationId: "public-org", action: "notify-store" }),
+    }), { params: Promise.resolve({ masterPurchaseOrderId: "master-1" }) });
+
+    expect(response.status).toBe(403);
+    expect(mocks.notifyStoreForStockMasterGroup).not.toHaveBeenCalled();
   });
 });

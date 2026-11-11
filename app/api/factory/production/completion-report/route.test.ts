@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   listFactoryProductionCompletionReport: vi.fn(),
 }));
 
@@ -12,6 +13,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/factory/factory-production-completion-report-service", () => ({
@@ -25,6 +27,7 @@ describe("factory production completion report route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listFactoryProductionCompletionReport.mockResolvedValue({ records: [], nextCursor: null });
   });
 
@@ -71,5 +74,18 @@ describe("factory production completion report route", () => {
     ));
 
     expect(response.status).toBe(404);
+  });
+
+  it("denies the report when VIEW_FACTORY_PRODUCTION is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValueOnce(
+      new Error("Access denied: VIEW_FACTORY_PRODUCTION permission is required."),
+    );
+
+    const response = await GET(new Request(
+      "http://localhost/api/factory/production/completion-report?organizationId=public-org",
+    ));
+
+    expect(response.status).toBe(403);
+    expect(mocks.listFactoryProductionCompletionReport).not.toHaveBeenCalled();
   });
 });

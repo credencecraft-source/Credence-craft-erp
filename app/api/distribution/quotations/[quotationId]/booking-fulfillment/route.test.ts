@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   listQuotationBookingFulfillment: vi.fn(),
   reverseQuotationBookingFulfillment: vi.fn(),
 }));
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/distribution/quotation-booking-fulfillment-service", () => ({
   listQuotationBookingFulfillment: mocks.listQuotationBookingFulfillment,
@@ -33,6 +35,7 @@ describe("quotation-linked booking fulfillment API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listQuotationBookingFulfillment.mockResolvedValue({ bookings: [] });
     mocks.reverseQuotationBookingFulfillment.mockResolvedValue({
       bookingId: "booking-1",
@@ -49,6 +52,7 @@ describe("quotation-linked booking fulfillment API", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_ORDERS");
     expect(mocks.listQuotationBookingFulfillment).toHaveBeenCalledWith("internal-org-1", "quotation-1");
   });
 
@@ -64,6 +68,7 @@ describe("quotation-linked booking fulfillment API", () => {
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "MANAGE_FINISHED_GOODS_OUTWARD");
     expect(mocks.reverseQuotationBookingFulfillment).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",

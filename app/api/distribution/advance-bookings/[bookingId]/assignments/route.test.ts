@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   assignAdvanceBookingToWorkOrder: vi.fn(),
 }));
 
@@ -12,6 +13,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/distribution/advance-booking-service", () => ({
@@ -25,6 +27,7 @@ describe("advance-booking assignment route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.assignAdvanceBookingToWorkOrder.mockResolvedValue({ bookingId: "booking-1", workOrderId: "work-order-1" });
   });
 
@@ -47,6 +50,7 @@ describe("advance-booking assignment route", () => {
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "UPDATE_FACTORY_PRODUCTION");
     expect(mocks.assignAdvanceBookingToWorkOrder).toHaveBeenCalledWith("internal-org-1", "user-1", "booking-1", {
       workOrderId: "work-order-1",
       lines: [{ bookingSizeLineId: "booking-size-1", assignedQuantity: 30 }],

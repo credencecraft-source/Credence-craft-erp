@@ -60,7 +60,7 @@ const delegates = {
   brand: prisma.masterBrand, "pre-order-checklist": prisma.masterPreOrderChecklist, "currency-type": prisma.masterCurrencyType, buyer: prisma.masterBuyer,
   season: prisma.masterSeason, article: prisma.masterArticle, "article-variant": prisma.masterArticleVariant, "gold-seal": prisma.masterGoldSeal, "gold-seal-variant": prisma.masterGoldSealVariant, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
   uom: prisma.masterUom, "stock-uom-convert": prisma.masterStockUomConvert, "raw-material": prisma.masterRawMaterial, vendor: prisma.masterVendor, "gst-type": prisma.masterGstType, gst: prisma.masterGst,
-  hsn: prisma.masterHsn, state: prisma.masterState, "measurement-chart": prisma.masterMeasurementChart, "size-wise-consumption": prisma.masterSizeWiseConsumption,
+  hsn: prisma.masterHsn, state: prisma.masterState, "measurement-chart": prisma.masterMeasurementChart, "measurement-chart-detail": prisma.masterMeasurementChartDetail, "measurement-group": prisma.masterMeasurementGroup, "measurement-area": prisma.masterMeasurementArea, "size-wise-consumption": prisma.masterSizeWiseConsumption,
   "product-master": prisma.masterProduct, "process-master": prisma.masterProcess, operation: prisma.masterOperation, "process-template": prisma.masterProcessTemplate, "process-template-step": prisma.masterProcessTemplateStep, "operation-template": prisma.masterOperationTemplate, "operation-template-step": prisma.masterOperationTemplateStep, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
   "order-volume": prisma.masterOrderVolume,
   "raw-material-type": prisma.masterRawMaterialType, "raw-material-category": prisma.masterRawMaterialCategory, "raw-material-sub-category": prisma.masterRawMaterialSubCategory,
@@ -152,6 +152,8 @@ const transactionDelegateNames: Record<string, string> = {
   merchandiser: "masterMerchandiser",
   "order-volume": "masterOrderVolume",
   "raw-material-sub-category": "masterRawMaterialSubCategory",
+  "measurement-group": "masterMeasurementGroup",
+  "measurement-area": "masterMeasurementArea",
 };
 
 export function isMasterSectionBulkDeletable(moduleKey: string) {
@@ -162,14 +164,23 @@ const labelFields: Record<string, string> = {
   entity: "entity_name", location: "location_name", "category-type": "category_type", category: "category_name", "sub-category": "sub_category", brand: "brand",
   "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", "article-variant": "variant", "gold-seal": "gold_seal", "gold-seal-variant": "variant", color: "colors",
   "size-group": "size_group", size: "size", uom: "uom", "stock-uom-convert": "name", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
-  hsn: "hsn_code", state: "state", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
+  hsn: "hsn_code", state: "state", "measurement-chart": "measurement_chart", "measurement-chart-detail": "measurement_area_name", "measurement-group": "group_name", "measurement-area": "measurement_area_name", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
   "process-master": "process_name", operation: "operation_name", "process-template": "process_name", "process-template-step": "process_name", "operation-template": "operation_template_name", "operation-template-step": "operation", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
   "raw-material-type": "raw_material_type", "raw-material-category": "raw_material_category", "raw-material-sub-category": "raw_material_sub_category",
   "price-list": "label",
 };
 
 const fieldColumns: Record<string, Record<string, string>> = {
-  entity: { entity_name: "entity_name" },
+  entity: {
+    entity_name: "entity_name",
+    gstin: "gstin",
+    registered_address_line_1: "registered_address_line_1",
+    registered_address_line_2: "registered_address_line_2",
+    registered_city: "registered_city",
+    registered_state: "registered_state",
+    registered_postal_code: "registered_postal_code",
+    registered_country: "registered_country",
+  },
   "price-list": { Channel_Name: "label", Channel_Code: "code" },
   location: { location_name: "location_name", entity_id: "entity_id" },
   "category-type": { Category_Type1: "category_type", Books_Item_ID: "books_item_id" },
@@ -187,7 +198,7 @@ const fieldColumns: Record<string, Record<string, string>> = {
   size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, "stock-uom-convert": { Name: "name", How_Many: "how_many" }, vendor: { vendor: "vendor", Contact_Person: "legacy_metadata.contact_person", Contact_Phone: "legacy_metadata.contact_phone", Contact_Email: "legacy_metadata.contact_email", Gst_Number: "gst_number", Registered_State: "registered_state_id", Is_this_Current_Store: "is_current_store" }, state: { State: "state" },
   gst: { Name: "name", Gst: "gst", Cgst_Rate: "cgst_rate", Sgst_Rate: "sgst_rate", Igst_Rate: "igst_rate", GST_TYPELOOKUP1: "gst_type_id", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
   "pre-order-checklist": { Pre_Order_Checklist: "pre_order_checklist" }, "currency-type": { Currency_Type: "currency_type" }, "gst-type": { GST_TYPE: "gst_type" },
-  "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
+  "measurement-chart": { Measurement_Chart: "measurement_chart" }, "measurement-chart-detail": { measurement_area_name: "measurement_area_name", minimum_value: "minimum_value", maximum_value: "maximum_value", size_id: "size_id" }, "measurement-group": { group_name: "group_name" }, "measurement-area": { measurement_area_name: "measurement_area_name" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
   "product-master": { Product_Master_name: "product_master_name" }, "process-master": { Process_Name: "process_name" }, "process-template": { Process_Template_Name: "process_name", First_Process: "legacy_metadata.first_process_id", Last_Process: "legacy_metadata.last_process_id" }, "process-template-step": { Process: "process_id", Operation_Template: "operation_template_id", Sl_No: "sl_no", Is_Returnable_Process: "legacy_metadata.is_returnable_process", Block_By: "legacy_metadata.block_by_process_id" }, "operation-template": { Operation_Template_Name: "operation_template_name", Process: "process_id" }, "operation-template-step": { Operation: "operation", Sl_No: "sl_no", Price: "price" }, merchandiser: { merchandiser: "merchandiser" },
   status: { status: "status" }, "order-volume": { Order_Volume: "order_volume", From: "from_value", To: "to_value" },
   "raw-material-type": { Raw_Material_Type: "raw_material_type", Asset_Classification: "is_asset" },
@@ -207,6 +218,7 @@ const parentColumns: Record<string, string> = {
   "operation-template-step": "operation_template_id",
   "stock-uom-convert": "stock_uom_id",
   "gold-seal-variant": "gold_seal_id",
+  "measurement-chart-detail": "measurement_chart_id",
 };
 
 function typedValue(field: MasterFieldDefinition, value: unknown) {
@@ -498,6 +510,16 @@ async function buildData(
       }
     }
 
+    const rawValue = typedValue(field, fields[field.key]);
+    if (moduleKey === "entity" && typeof rawValue === "string") {
+      const normalizedValue = normalizeUppercase(rawValue.trim());
+      if (field.key === "gstin" && normalizedValue && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(normalizedValue)) {
+        throw new Error("Enter a valid GSTIN.");
+      }
+      data[relationField] = normalizedValue || null;
+      continue;
+    }
+
     const val = moduleKey === "raw-material-type" && field.key === "Asset_Classification"
       ? Boolean(fields[field.key])
         : moduleKey === "raw-material" && field.key === "Useful_Life_Months"
@@ -530,7 +552,7 @@ async function buildData(
       ? fields[field.key] === null || fields[field.key] === undefined || fields[field.key] === ""
         ? null
         : parseFinishedGoodsPrice(fields[field.key], "Default price")
-      : typedValue(field, fields[field.key]);
+      : rawValue;
     if (val !== null) {
       if (legacyMetadataKey) {
         legacyMetadata[legacyMetadataKey] = val;
@@ -538,12 +560,17 @@ async function buildData(
       } else {
         data[relationField] = val;
       }
+    } else if (moduleKey === "entity" && relationField !== labelFields[moduleKey]) {
+      data[relationField] = null;
     } else if (moduleKey === "article" && ["Product_Master", "Category", "Subcategory", "Size_Group", "default_price"].includes(field.key)) {
       data[relationField] = null;
     }
   }
 
   if (hasLegacyMetadataUpdates) data.legacy_metadata = legacyMetadata;
+  if (moduleKey === "entity" && data.gstin && !data.registered_state) {
+    throw new Error("Registered State is required when a GSTIN is provided.");
+  }
   if (moduleKey === "article") {
     const categoryId = data.category_id;
     const productMasterId = data.product_master_id;
@@ -1294,6 +1321,7 @@ export async function createMasterValueForOrganization(
       name: fields.node_name ?? input.label,
       parentId: fields.parent_node_id,
       entityId: fields.entity_id,
+      masterLocationId: fields.master_location_id,
     }, database);
   }
   const delegate = delegates[moduleKey];
@@ -1439,6 +1467,15 @@ export async function createMasterValueForOrganization(
     }
 
     if (moduleKey === "location") {
+      const entityId = typeof data.entity_id === "string" ? data.entity_id : "";
+      const division = entityId
+        ? await transaction.division.findFirst({
+            where: { organization_id: organizationId, entity_id: entityId, division_code: "DEFAULT" },
+            select: { id: true },
+          })
+        : null;
+      if (!division) throw new Error("Select an Entity with its organization-scoped Division.");
+      data.division_id = division.id;
       await enforceInventoryLocationLimit(transaction, organizationId, input.label.trim());
     }
 
@@ -1459,6 +1496,8 @@ export async function createMasterValueForOrganization(
     if (input.parentValueId && parentColumns[moduleKey]) {
       const parentModuleKey = moduleKey === "gold-seal-variant"
         ? "gold-seal"
+        : moduleKey === "measurement-chart-detail"
+          ? "measurement-chart"
         : moduleKey === "process-template-step"
         ? "process-template"
         : moduleKey === "operation-template-step"
@@ -1544,6 +1583,29 @@ export async function createMasterValueForOrganization(
       });
     } else {
       created = await transactionDelegate.create({ data });
+    }
+    if (moduleKey === "entity") {
+      const entityId = created.id;
+      const entityName = String(created.entity_name ?? input.label.trim());
+      await transaction.division.upsert({
+        where: {
+          organization_id_entity_id_division_code: {
+            organization_id: organizationId,
+            entity_id: entityId,
+            division_code: "DEFAULT",
+          },
+        },
+        create: {
+          id: `division-${entityId}`,
+          organization_id: organizationId,
+          entity_id: entityId,
+          division_name: `${entityName.slice(0, 245)} Division`,
+          division_code: "DEFAULT",
+          description: "Default Division created for this Entity.",
+          is_active: true,
+        },
+        update: {},
+      });
     }
     if (sizeGroup) {
       const existingSizeGroupLink = await transaction.masterSizeGroupSize.findFirst({
@@ -1781,6 +1843,23 @@ export async function updateMasterValue(
         : {};
       delete data.organization_id;
       if (input.is_active !== undefined) data.is_active = input.is_active;
+      if (moduleKey === "location") {
+        return runInMasterTransaction(database, async (transaction) => {
+          const currentLocation = await transaction.masterLocation.findFirst({
+            where: { id: existing.id, organization_id: organizationId },
+            select: { id: true, entity_id: true },
+          });
+          if (!currentLocation) return null;
+          const entityId = typeof data.entity_id === "string" ? data.entity_id : currentLocation.entity_id;
+          const division = await transaction.division.findFirst({
+            where: { organization_id: organizationId, entity_id: entityId, division_code: "DEFAULT" },
+            select: { id: true },
+          });
+          if (!division) throw new Error("Select an Entity with its organization-scoped Division.");
+          data.division_id = division.id;
+          return transaction.masterLocation.update({ where: { id: existing.id }, data });
+        });
+      }
       if (moduleKey === "raw-material-type") {
         if (!input.actorUserId) throw new Error("The category change requires an authorized actor.");
         if (typeof data.is_asset !== "boolean") {

@@ -5,7 +5,7 @@ import {
   listRoleMappedContacts,
   replaceRoleMappedContacts,
 } from "@/lib/services/master-data/distributor-dealer-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 export async function GET(
   request: Request,
@@ -38,6 +38,7 @@ export async function PUT(
       return NextResponse.json({ error: "Unsupported role mapping." }, { status: 400 });
     }
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
     const body = await request.json() as { contactIds?: unknown; commissionPercentage?: unknown };
     if (!Array.isArray(body.contactIds) || body.contactIds.some((id) => typeof id !== "string")) {
       return NextResponse.json({ error: "Contact IDs must be provided as an array." }, { status: 400 });
@@ -52,6 +53,7 @@ export async function PUT(
     );
     return NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save role mappings." }, { status: 400 });
+    const message = error instanceof Error ? error.message : "Unable to save role mappings.";
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }

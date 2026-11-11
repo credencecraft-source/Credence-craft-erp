@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { reverseAdvanceBookingFulfillment } from "@/lib/services/distribution/quotation-booking-fulfillment-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 type RouteContext = { params: Promise<{ bookingId: string }> };
 
@@ -25,7 +25,7 @@ function errorResponse(error: unknown) {
   }
   return NextResponse.json(
     { error: error instanceof Error ? error.message : "Unable to move booking fulfillment to general stock." },
-    { status: 400 },
+    { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
   );
 }
 
@@ -50,6 +50,7 @@ export async function POST(request: Request, context: RouteContext) {
       organizationId,
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_FINISHED_GOODS_OUTWARD");
     const { bookingId } = await context.params;
     if (!bookingId.trim()) throw new Error("Select a booking whose fulfillment should be reversed.");
     const reversed = await reverseAdvanceBookingFulfillment(organization.id, user.id, bookingId);

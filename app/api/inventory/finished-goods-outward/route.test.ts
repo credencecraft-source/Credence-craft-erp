@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   acceptRequest: vi.fn(),
   cancelRequest: vi.fn(),
   createBox: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/inventory/finished-goods-outward-service", () => ({
   acceptFinishedGoodsOutwardRequest: mocks.acceptRequest,
@@ -56,6 +58,7 @@ describe("finished-goods-outward route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1", full_name: "Merch User" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.createRequestFromBookings.mockResolvedValue({
       id: "request-1",
       request_no: "FGR-1",
@@ -82,6 +85,11 @@ describe("finished-goods-outward route", () => {
       "user-1",
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "REQUEST_FINISHED_GOODS_OUTWARD",
     );
     expect(mocks.createRequestFromBookings).toHaveBeenCalledWith({
       organizationId: "internal-org-1",
@@ -135,6 +143,19 @@ describe("finished-goods-outward route", () => {
     expect(mocks.createRequestFromBookings).not.toHaveBeenCalled();
   });
 
+  it("denies finished-goods requests when the dedicated request permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await POST(postRequest({
+      organizationId: "public-org",
+      action: "request-bookings",
+      bookingRequests: [{ bookingId: "booking-1", sizeRequests: [{ sizeLineId: "size-1", quantity: "2" }] }],
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.createRequestFromBookings).not.toHaveBeenCalled();
+  });
+
   it("returns a safe actionable message when an inventory reference changes during request creation", async () => {
     mocks.createRequestFromBookings.mockRejectedValue(new Prisma.PrismaClientKnownRequestError(
       "Foreign key constraint failed",
@@ -165,6 +186,11 @@ describe("finished-goods-outward route", () => {
       "user-1",
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
+    );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "MANAGE_FINISHED_GOODS_OUTWARD",
     );
     expect(mocks.unpickLine).toHaveBeenCalledWith({
       organizationId: "internal-org-1",

@@ -5,7 +5,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { listRawMaterialGeneralInventory } from "@/lib/services/inventory/rm-general-inventory-service";
 import { addRawMaterialStockManually, ManualStockError } from "@/lib/services/inventory/rm-manual-stock-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
   try {
@@ -56,6 +56,7 @@ export async function POST(request: Request) {
   let organization;
   try {
     organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+    await requireOrganizationPermission(user.id, organization.id, "ADJUST_RAW_MATERIAL_STOCK");
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Access denied:")) {
       return NextResponse.json({ error: error.message }, { status: 403 });
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
       userId: user.id,
       rawMaterialId: readText(input.rawMaterialId),
       locationId: readText(input.locationId),
-      storageNodeId: readText(input.storageNodeId),
+      storageNodeId: readText(input.storageNodeId) || undefined,
       quantity: readText(input.quantity),
       reason: readText(input.reason),
       isAssetStock: input.isAssetStock === true,

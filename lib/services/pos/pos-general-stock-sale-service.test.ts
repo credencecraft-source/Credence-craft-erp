@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     posCouponIssue: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
     posCouponRedemption: { count: vi.fn(), create: vi.fn() },
     posSalesInvoice: { findFirst: vi.fn(), create: vi.fn() },
+    posSalesReturn: { findMany: vi.fn(), updateMany: vi.fn() },
+    posSalesReturnCreditApplication: { create: vi.fn() },
     posSalesInvoiceLine: { createManyAndReturn: vi.fn() },
   },
   prismaTransaction: vi.fn(),
@@ -67,7 +69,7 @@ const saleInput = {
   requestKey: "sale-request-1",
   entityId: "entity-1",
   invoiceDate: "2026-10-07",
-  customer: "Walk-in",
+  customerContactId: "customer-1",
   taxMode: "LOCAL" as const,
   lines: [{
     stockId: "general-stock-1",
@@ -105,6 +107,14 @@ describe("createPosGeneralStockSale", () => {
     mocks.transaction.posCouponIssue.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.posCouponRedemption.create.mockResolvedValue({ id: "redemption-1" });
     mocks.transaction.posSalesInvoice.findFirst.mockResolvedValue(null);
+    mocks.transaction.posSalesReturn.findMany.mockResolvedValue([]);
+    mocks.transaction.posSalesReturn.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.posSalesReturnCreditApplication.create.mockResolvedValue({ id: "return-credit-application-1" });
+    mocks.transaction.contact.findFirst.mockResolvedValue({
+      id: "customer-1",
+      legal_name: "Customer One",
+      display_name: "Customer One",
+    });
     mocks.transaction.posSalesInvoice.create.mockResolvedValue({ id: "invoice-1" });
     mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
       id: "invoice-line-1",
@@ -112,6 +122,60 @@ describe("createPosGeneralStockSale", () => {
       sku_stock_id: null,
     }]);
     mocks.reserveNumber.mockResolvedValue("POS-1");
+  });
+
+  it("applies same-customer return credit atomically without changing invoice value", async () => {
+    mocks.transaction.posSalesReturn.findMany.mockResolvedValue([{
+      id: "return-1",
+      store_credit_balance_amount: new Prisma.Decimal("60.00"),
+    }]);
+
+    const result = await createPosGeneralStockSale({
+      ...saleInput,
+      customerContactId: "customer-1",
+      returnCreditApplications: [{ returnId: "return-1", amount: "50.00" }],
+    });
+
+    expect(result).toMatchObject({
+      totalAmount: "189.00",
+      storeCreditAppliedAmount: "50.00",
+      amountDue: "139.00",
+    });
+    expect(mocks.transaction.posSalesInvoice.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        total_amount: new Prisma.Decimal("189.00"),
+        store_credit_applied_amount: new Prisma.Decimal("50.00"),
+      }),
+    }));
+    expect(mocks.transaction.posSalesReturn.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "return-1",
+        organization_id: "organization-1",
+        settlement_type: "STORE_CREDIT",
+        store_credit_balance_amount: { gte: new Prisma.Decimal("50.00") },
+      },
+      data: { store_credit_balance_amount: { decrement: new Prisma.Decimal("50.00") } },
+    });
+    expect(mocks.transaction.posSalesReturnCreditApplication.create).toHaveBeenCalledWith({
+      data: {
+        organization_id: "organization-1",
+        return_id: "return-1",
+        invoice_id: "invoice-1",
+        amount: new Prisma.Decimal("50.00"),
+        applied_by: "user-1",
+      },
+    });
+  });
+
+  it("rejects return credit that does not belong to the selected customer", async () => {
+    await expect(createPosGeneralStockSale({
+      ...saleInput,
+      customerContactId: "customer-1",
+      returnCreditApplications: [{ returnId: "other-customer-return", amount: "10.00" }],
+    })).rejects.toThrow("unavailable, belongs to another customer");
+
+    expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
+    expect(mocks.transaction.posSalesReturnCreditApplication.create).not.toHaveBeenCalled();
   });
 
   it("reports an active purchase reward when the selected items meet its threshold", async () => {
@@ -264,6 +328,15 @@ describe("createPosGeneralStockSale", () => {
 
     expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
     expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects counter invoices without a registered customer", async () => {
+    await expect(createPosGeneralStockSale({
+      ...saleInput,
+      customerContactId: null,
+    })).rejects.toThrow("Select a registered customer before posting a POS invoice.");
+
+    expect(mocks.prismaTransaction).not.toHaveBeenCalled();
   });
 
   it("rejects quantity above General stock without posting", async () => {
@@ -539,6 +612,7 @@ describe("createPosGeneralStockSale", () => {
     await createPosGeneralStockSale({
       ...saleInput,
       salesChannel: "ONLINE_STORE",
+      customerContactId: null,
       shippingAddress,
       customer: "STORE CUSTOMER",
       lines: [{
@@ -602,6 +676,7 @@ describe("createPosGeneralStockSale", () => {
     await createPosGeneralStockSale({
       ...saleInput,
       salesChannel: "ONLINE_STORE",
+      customerContactId: null,
       shippingAddress: {
         recipientName: "Store Customer",
         phone: "9876543210",
@@ -658,6 +733,7 @@ describe("createPosGeneralStockSale", () => {
     await expect(createPosGeneralStockSale({
       ...saleInput,
       salesChannel: "ONLINE_STORE",
+      customerContactId: null,
       shippingAddress: {
         recipientName: "Store Customer",
         phone: "9876543210",
@@ -686,6 +762,7 @@ describe("createPosGeneralStockSale", () => {
     await expect(createPosGeneralStockSale({
       ...saleInput,
       salesChannel: "ONLINE_STORE",
+      customerContactId: null,
       lines: [{
         stockId: "sku-store-stock-1",
         stockType: "SKU",
@@ -709,6 +786,7 @@ describe("createPosGeneralStockSale", () => {
     await expect(createPosGeneralStockSale({
       ...saleInput,
       salesChannel: "ONLINE_STORE",
+      customerContactId: null,
       shippingAddress: {
         recipientName: "Store Customer",
         phone: "9876543210",
@@ -891,6 +969,7 @@ describe("createPosGeneralStockSale", () => {
       igst_amount: new Prisma.Decimal("0.00"),
       tax_amount: new Prisma.Decimal("9.00"),
       total_amount: new Prisma.Decimal("189.00"),
+      store_credit_applied_amount: new Prisma.Decimal("0.00"),
       coupon_discount_amount: new Prisma.Decimal("0.00"),
       entity: { entity_name: "Store A" },
       couponRedemption: null,

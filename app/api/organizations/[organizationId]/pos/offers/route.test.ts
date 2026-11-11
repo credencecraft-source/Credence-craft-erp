@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createPosOffer: vi.fn(),
   listEligiblePosOffersByStock: vi.fn(),
   listPosOffers: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/pos/pos-offer-service", () => ({
   createPosOffer: mocks.createPosOffer,
@@ -33,6 +35,7 @@ describe("POS offer API route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "actor-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-id" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listPosOffers.mockResolvedValue({ offers: [], nextCursor: null });
     mocks.listEligiblePosOffersByStock.mockResolvedValue({ offersByStock: {}, offerLimitReached: false });
     mocks.listPosOfferTargetOptions.mockResolvedValue([]);
@@ -56,6 +59,7 @@ describe("POS offer API route", () => {
       "public-org-id",
       ["OWNER", "ADMIN", "FINANCE", "INVENTORY"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("actor-1", "internal-org-id", "VIEW_POS_OFFERS");
     expect(mocks.listPosOffers).toHaveBeenCalledWith(expect.objectContaining({
       organizationId: "internal-org-id",
       offerType: "PERCENTAGE",
@@ -111,7 +115,7 @@ describe("POS offer API route", () => {
     expect(mocks.listPosOffers).not.toHaveBeenCalled();
   });
 
-  it("creates an offer only after organization membership authorization", async () => {
+  it("creates an offer only after organization membership and manage permission authorization", async () => {
     const response = await POST(
       new Request("http://localhost/api/organizations/public-org-id/pos/offers", {
         method: "POST",
@@ -132,6 +136,7 @@ describe("POS offer API route", () => {
     );
 
     expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("actor-1", "internal-org-id", "MANAGE_POS_OFFERS");
     expect(mocks.createPosOffer).toHaveBeenCalledWith(expect.objectContaining({
       organizationId: "internal-org-id",
       actorId: "actor-1",
@@ -151,5 +156,43 @@ describe("POS offer API route", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.listPosOffers).not.toHaveBeenCalled();
+  });
+
+  it("does not list offers when the dedicated view permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org-id/pos/offers"),
+      routeContext,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.listPosOffers).not.toHaveBeenCalled();
+  });
+
+  it("does not create offers when the dedicated management permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await POST(
+      new Request("http://localhost/api/organizations/public-org-id/pos/offers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestKey: "request-1",
+          offerCode: "SAVE10",
+          name: "SAVE TEN",
+          offerType: "percentage",
+          scope: "all",
+          status: "DRAFT",
+          discountPercentage: "10",
+          startsAt: "2026-11-06",
+          targetIds: [],
+        }),
+      }),
+      routeContext,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.createPosOffer).not.toHaveBeenCalled();
   });
 });

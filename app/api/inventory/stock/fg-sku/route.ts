@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { getFinishedGoodsSourceHierarchy } from "@/lib/services/inventory/finished-goods-stock-overview";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import {
   buildPosStockSkuCode,
@@ -17,6 +17,10 @@ const POS_SKU_SOURCES = [
   "POS",
   "POS_PURCHASE_BILL",
 ] as const;
+
+function errorStatus(error: unknown) {
+  return error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+}
 
 function resolveActorEmail(actorValue: string, actorEmails: Map<string, string>) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(actorValue)
@@ -325,6 +329,7 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const organizationId = String(body.organizationId ?? "");
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_FINISHED_GOODS_STOCK");
     const locationId = String(body.locationId ?? "").trim();
     const location = locationId
       ? await prisma.masterLocation.findFirst({
@@ -427,7 +432,7 @@ export async function POST(request: Request) {
         error: "A POS stock item with this style, colour, and size already exists. Refresh and check the stock report.",
       }, { status: 409 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create finished goods SKU stock." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create finished goods SKU stock." }, { status: errorStatus(error) });
   }
 }
 
@@ -438,6 +443,7 @@ export async function PUT(request: Request) {
     const organizationId = String(body.organizationId ?? "");
     const recordId = String(body.recordId ?? "");
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+    await requireOrganizationPermission(user.id, organization.id, "ADJUST_FINISHED_GOODS_STOCK");
     if (!recordId) return NextResponse.json({ error: "Stock record ID is required." }, { status: 400 });
 
     const existing = await prisma.finishedGoodsSkuStock.findFirst({ where: { id: recordId, organization_id: organization.id } });
@@ -519,7 +525,7 @@ export async function PUT(request: Request) {
         error: "A stock item with this SKU or barcode already exists in this organization.",
       }, { status: 409 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update finished goods SKU stock." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update finished goods SKU stock." }, { status: errorStatus(error) });
   }
 }
 

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Store } from "lucide-react";
+import { RotateCcw, Store } from "lucide-react";
 
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
@@ -22,8 +22,23 @@ export default async function PosPage({ params }: { params: Promise<{ workspaceI
           <Card className="transition hover:border-[var(--erp-brand)] hover:shadow-md">
             <p className="erp-eyebrow">Sales workspace</p>
             <h2 className="erp-card-title mt-2">Quick Invoice</h2>
-            <p className="mt-2 text-sm text-[var(--erp-muted)]">Start a fast invoice for walk-in and counter customers.</p>
+            <p className="mt-2 text-sm text-[var(--erp-muted)]">Start a fast invoice linked to a registered customer account.</p>
             <span className="mt-6 inline-block text-sm font-semibold text-[var(--erp-brand)]">Open Quick Invoice -&gt;</span>
+          </Card>
+        </Link>
+        <Link href={`${base}/sales-return`} className="block max-w-xl">
+          <Card className="transition hover:border-[var(--erp-brand)] hover:shadow-md">
+            <p className="erp-eyebrow">Sales workspace</p>
+            <h2 className="erp-card-title mt-2 flex items-center gap-2">
+              <RotateCcw aria-hidden="true" size={20} />
+              Sales Return
+            </h2>
+            <p className="mt-2 text-sm text-[var(--erp-muted)]">
+              Find a posted invoice, select returned items, and post a stock-linked credit note.
+            </p>
+            <span className="mt-6 inline-block text-sm font-semibold text-[var(--erp-brand)]">
+              Open Sales Return -&gt;
+            </span>
           </Card>
         </Link>
         <Link

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { PosOfferScope, PosOfferStatus, PosOfferType } from "@prisma/client";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   getPosOffer,
   PosOfferConflictError,
@@ -52,6 +52,7 @@ export async function GET(
     const user = await requireSessionUser();
     const { organizationId, offerId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, OFFER_ROLES);
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_POS_OFFERS");
     if (!offerId || offerId.length > 100) {
       throw new PosOfferValidationError("Select a valid POS offer.");
     }
@@ -69,6 +70,7 @@ export async function PATCH(
     const user = await requireSessionUser();
     const { organizationId, offerId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, OFFER_ROLES);
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_POS_OFFERS");
     if (!offerId || offerId.length > 100) {
       throw new PosOfferValidationError("Select a valid POS offer.");
     }

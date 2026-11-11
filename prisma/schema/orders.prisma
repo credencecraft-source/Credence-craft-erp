@@ -820,6 +820,7 @@ model PosSalesInvoice {
   igst_amount     Decimal               @db.Decimal(14, 2)
   tax_amount      Decimal               @db.Decimal(14, 2)
   coupon_discount_amount Decimal        @default(0) @db.Decimal(14, 2)
+  store_credit_applied_amount Decimal   @default(0) @db.Decimal(14, 2)
   total_amount    Decimal               @db.Decimal(14, 2)
   created_by      String                @db.VarChar(255)
   posted_at       DateTime              @default(now())
@@ -832,6 +833,8 @@ model PosSalesInvoice {
   couponRedemption PosCouponRedemption?
   issuedCoupon     PosCouponIssue?       @relation("PosCouponIssueOriginInvoice")
   redeemedCouponIssues PosCouponIssue[]  @relation("PosCouponIssueRedemptionInvoice")
+  salesReturns       PosSalesReturn[]
+  appliedReturnCredits PosSalesReturnCreditApplication[]
 
   @@unique([organization_id, invoice_no])
   @@unique([organization_id, id])
@@ -941,16 +944,101 @@ model PosSalesInvoiceLine {
   sgst_amount              Decimal                          @db.Decimal(14, 2)
   igst_amount              Decimal                          @db.Decimal(14, 2)
   total_amount             Decimal                          @db.Decimal(14, 2)
+  returned_quantity        Int                              @default(0)
   created_at               DateTime                         @default(now())
   invoice                  PosSalesInvoice                  @relation(fields: [organization_id, invoice_id], references: [organization_id, id], onDelete: Restrict)
   generalStockReceipt      FinishedGoodsGeneralStockReceipt? @relation(fields: [organization_id, general_stock_receipt_id], references: [organization_id, id], onDelete: Restrict)
   skuStock                 FinishedGoodsSkuStock?            @relation(fields: [organization_id, sku_stock_id], references: [organization_id, id], onDelete: Restrict)
+  salesReturnLines         PosSalesReturnLine[]
 
+  @@unique([organization_id, invoice_id, id], map: "pos_sales_invoice_lines_organization_invoice_id_key")
   @@unique([organization_id, invoice_id, general_stock_receipt_id], map: "pos_sales_lines_invoice_stock_key")
   @@unique([organization_id, invoice_id, sku_stock_id], map: "pos_sales_lines_invoice_sku_stock_key")
   @@index([organization_id, general_stock_receipt_id, created_at], map: "pos_sales_invoice_lines_stock_created_idx")
   @@index([organization_id, sku_stock_id, created_at], map: "pos_sales_invoice_lines_sku_stock_created_idx")
   @@map("pos_sales_invoice_lines")
+}
+
+model PosSalesReturn {
+  id                 String                @id @default(cuid())
+  organization_id    String
+  invoice_id         String
+  return_no          String                @db.VarChar(100)
+  request_key        String                @db.VarChar(100)
+  return_date        DateTime              @default(now()) @db.Date
+  reason             String                @db.VarChar(1000)
+  status             String                @default("POSTED") @db.VarChar(30)
+  subtotal           Decimal               @db.Decimal(14, 2)
+  cgst_amount        Decimal               @db.Decimal(14, 2)
+  sgst_amount        Decimal               @db.Decimal(14, 2)
+  igst_amount        Decimal               @db.Decimal(14, 2)
+  tax_amount         Decimal               @db.Decimal(14, 2)
+  total_credit_amount Decimal              @db.Decimal(14, 2)
+  settlement_type     String?              @db.VarChar(20)
+  refund_method       String?              @db.VarChar(30)
+  refund_status       String?              @db.VarChar(20)
+  refund_reference    String?              @db.VarChar(100)
+  refunded_by         String?              @db.VarChar(255)
+  refunded_at         DateTime?
+  store_credit_balance_amount Decimal?     @db.Decimal(14, 2)
+  created_by         String                @db.VarChar(255)
+  posted_at          DateTime              @default(now())
+  created_at         DateTime              @default(now())
+  organization       Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  invoice            PosSalesInvoice       @relation(fields: [organization_id, invoice_id], references: [organization_id, id], onDelete: Restrict)
+  lines              PosSalesReturnLine[]
+  creditApplications PosSalesReturnCreditApplication[]
+
+  @@unique([organization_id, id], map: "pos_sales_returns_organization_id_key")
+  @@unique([organization_id, return_no], map: "pos_sales_returns_organization_return_no_key")
+  @@unique([organization_id, request_key], map: "pos_sales_returns_organization_request_key")
+  @@index([organization_id, invoice_id, return_date], map: "pos_sales_returns_organization_invoice_date_idx")
+  @@index([organization_id, return_date, status], map: "pos_sales_returns_organization_date_status_idx")
+  @@map("pos_sales_returns")
+}
+
+model PosSalesReturnCreditApplication {
+  id              String          @id @default(cuid())
+  organization_id String
+  return_id       String
+  invoice_id      String
+  amount          Decimal         @db.Decimal(14, 2)
+  applied_by      String          @db.VarChar(255)
+  created_at      DateTime        @default(now())
+  organization    Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  salesReturn     PosSalesReturn  @relation(fields: [organization_id, return_id], references: [organization_id, id], onDelete: Restrict)
+  invoice         PosSalesInvoice @relation(fields: [organization_id, invoice_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, return_id, invoice_id])
+  @@index([organization_id, invoice_id, created_at])
+  @@index([organization_id, return_id, created_at])
+  @@map("pos_sales_return_credit_applications")
+}
+
+model PosSalesReturnLine {
+  id                   String               @id @default(cuid())
+  organization_id      String
+  return_id             String
+  invoice_id            String
+  invoice_line_id       String
+  stock_issue_line_id   String
+  quantity              Int
+  taxable_amount        Decimal              @db.Decimal(14, 2)
+  cgst_amount           Decimal              @db.Decimal(14, 2)
+  sgst_amount           Decimal              @db.Decimal(14, 2)
+  igst_amount           Decimal              @db.Decimal(14, 2)
+  total_amount          Decimal              @db.Decimal(14, 2)
+  created_at            DateTime             @default(now())
+  salesReturn           PosSalesReturn       @relation(fields: [organization_id, return_id], references: [organization_id, id], onDelete: Restrict, map: "pos_sales_return_lines_organization_return_fkey")
+  invoiceLine           PosSalesInvoiceLine  @relation(fields: [organization_id, invoice_id, invoice_line_id], references: [organization_id, invoice_id, id], onDelete: Restrict, map: "pos_sales_return_lines_organization_invoice_line_fkey")
+  stockIssueLine        FGMaterialIssueLine  @relation(fields: [organization_id, stock_issue_line_id], references: [organization_id, id], onDelete: Restrict, map: "pos_sales_return_lines_organization_stock_issue_line_fkey")
+
+  @@unique([organization_id, id], map: "pos_sales_return_lines_organization_id_key")
+  @@unique([organization_id, return_id, invoice_line_id], map: "pos_sales_return_lines_organization_return_invoice_line_key")
+  @@unique([organization_id, stock_issue_line_id], map: "pos_sales_return_lines_organization_stock_issue_line_key")
+  @@index([organization_id, invoice_id, invoice_line_id], map: "pos_sales_return_lines_organization_invoice_line_idx")
+  @@map("pos_sales_return_lines")
 }
 
 model ProcurementDocumentCounter {
@@ -1655,6 +1743,7 @@ model FGMaterialIssueLine {
   shipmentBoxLine FinishedGoodsOutwardBoxLine?            @relation(fields: [organization_id, shipment_box_line_id], references: [organization_id, id], onDelete: Restrict)
   reversalOfLine  FGMaterialIssueLine?                    @relation("FGIssueLineReversal", fields: [organization_id, reversal_of_line_id], references: [organization_id, id], onDelete: Restrict)
   reversals       FGMaterialIssueLine[]                   @relation("FGIssueLineReversal")
+  salesReturnLine PosSalesReturnLine?
 
   @@unique([organization_id, id])
   @@unique([organization_id, issue_id, line_no])

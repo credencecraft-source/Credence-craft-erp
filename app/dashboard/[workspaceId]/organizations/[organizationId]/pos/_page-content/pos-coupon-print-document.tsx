@@ -101,7 +101,7 @@ export default function PosCouponPrintDocument({
           <dl className="mx-auto mt-8 grid max-w-xl gap-4 text-left text-sm sm:grid-cols-2">
             <div>
               <dt className="text-xs font-medium text-[var(--erp-muted)]">Customer</dt>
-              <dd className="mt-1 font-semibold">{invoice.customer || "Walk-in customer"}</dd>
+              <dd className="mt-1 font-semibold">{invoice.customer || "Customer not linked"}</dd>
             </div>
             <div>
               <dt className="text-xs font-medium text-[var(--erp-muted)]">Issued with invoice</dt>

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createAdvanceBooking: vi.fn(),
   deleteAdvanceBookings: vi.fn(),
   getAdvanceBookingById: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/distribution/advance-booking-service", () => ({
@@ -44,6 +46,7 @@ describe("advance-booking route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listAdvanceBookings.mockResolvedValue({ bookings: [] });
     mocks.getAdvanceBookingById.mockResolvedValue({ booking: { id: "record-1", bookingId: "BK-1" } });
     mocks.listAssignableWorkOrders.mockResolvedValue({ workOrders: [] });
@@ -56,6 +59,7 @@ describe("advance-booking route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_ORDERS");
     expect(mocks.listAdvanceBookings).toHaveBeenCalledWith("internal-org-1", {
       cursor: undefined,
       limit: 100,
@@ -87,6 +91,7 @@ describe("advance-booking route", () => {
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "CREATE_ORDERS");
     expect(mocks.createAdvanceBooking).toHaveBeenCalledWith("internal-org-1", "user-1", {
       orderId: "order-1",
       vendorId: "vendor-1",

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   generalStockFindMany: vi.fn(),
   skuStockFindMany: vi.fn(),
   entityFindFirst: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
@@ -29,6 +31,7 @@ describe("POS General FG stock route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.skuStockFindMany.mockResolvedValue([]);
     mocks.generalStockFindMany.mockResolvedValue([{
       id: "general-stock-1",
@@ -61,7 +64,7 @@ describe("POS General FG stock route", () => {
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
     expect(mocks.generalStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1", current_stock: { gt: 0 } },
-      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
+      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { size: "asc" }, { id: "asc" }],
       take: 11,
     }));
     expect(mocks.skuStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -70,7 +73,7 @@ describe("POS General FG stock route", () => {
         source: { in: expect.arrayContaining(["DIRECT", "DIRECT_FROM_INVENTORY"]) },
         current_stock: { gt: 0 },
       }),
-      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
+      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { size: "asc" }, { id: "asc" }],
       take: 11,
     }));
     expect(body.records).toHaveLength(1);
@@ -80,7 +83,23 @@ describe("POS General FG stock route", () => {
       inventory_bucket: "GENERAL",
       source: "WORK_ORDER_GRN",
     });
+
     expect(body.hasMore).toBe(false);
+  });
+
+  it("denies stock reads before querying when VIEW_INVENTORY_STOCK is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(
+      new Error("Access denied: VIEW_INVENTORY_STOCK permission is required."),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.generalStockFindMany).not.toHaveBeenCalled();
+    expect(mocks.skuStockFindMany).not.toHaveBeenCalled();
   });
 
   it("resolves a scanned record only from General stock", async () => {
@@ -112,7 +131,7 @@ describe("POS General FG stock route", () => {
           { order_no: { contains: "sh", mode: "insensitive" } },
         ]),
       }),
-      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
+      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { size: "asc" }, { id: "asc" }],
       take: 11,
     }));
   });
@@ -182,6 +201,38 @@ describe("POS General FG stock route", () => {
     expect(body.records.map((record: { style_name: string }) => record.style_name)).toEqual(
       Array.from({ length: 10 }, (_, index) => `Style ${String.fromCharCode(65 + index)}`),
     );
+  });
+
+  it("supports bounded tenant-scoped pagination for explicit stock types", async () => {
+    mocks.generalStockFindMany.mockResolvedValue([]);
+    mocks.skuStockFindMany.mockResolvedValue([]);
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?stockType=SKU&limit=50&offset=50"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.skuStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ organization_id: "internal-org-1" }),
+      skip: 50,
+      take: 51,
+    }));
+    expect(mocks.generalStockFindMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects unbounded pagination and pagination across merged stock types", async () => {
+    const unbounded = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?stockType=SKU&limit=500"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+    const merged = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?offset=10"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(unbounded.status).toBe(400);
+    expect(merged.status).toBe(400);
   });
 
   it("merges SKU and GRN inventory before applying the first 10 alphabetical limit", async () => {

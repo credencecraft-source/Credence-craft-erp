@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createWorkOrderInventoryGrn: vi.fn(),
   deleteWorkOrderInventoryGrns: vi.fn(),
   listWorkOrderInventoryGrns: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/inventory/work-order-grn-service", () => ({
@@ -52,6 +54,7 @@ describe("work-order GRN route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listWorkOrderInventoryGrns.mockResolvedValue({ grns: [], nextCursor: null });
     mocks.listWorkOrdersForReceiving.mockResolvedValue({ workOrders: [], nextCursor: null });
     mocks.createWorkOrderInventoryGrn.mockResolvedValue({ id: "grn-1" });
@@ -74,6 +77,7 @@ describe("work-order GRN route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_INVENTORY_RECEIPTS");
     expect(mocks.listWorkOrderInventoryGrns).toHaveBeenCalledWith("internal-org-1", {
       status: "PENDING_VERIFICATION",
       cursor: undefined,
@@ -90,6 +94,7 @@ describe("work-order GRN route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_INVENTORY_RECEIPTS");
     expect(mocks.listWorkOrderInventoryGrns).toHaveBeenCalledWith("internal-org-1", {
       grnId: "grn-1",
       limit: 1,
@@ -146,6 +151,7 @@ describe("work-order GRN route", () => {
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "MANAGE_INVENTORY_RECEIPTS");
     expect(mocks.createWorkOrderInventoryGrn).toHaveBeenCalledWith("internal-org-1", "user-1", {
       workOrderId: "work-order-1",
       receivedDate: "2026-10-07",
@@ -206,6 +212,7 @@ describe("work-order GRN route", () => {
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "DELETE_INVENTORY_RECEIPTS");
     expect(mocks.deleteWorkOrderInventoryGrns).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
@@ -260,6 +267,32 @@ describe("work-order GRN route", () => {
 
     expect(unauthenticated.status).toBe(400);
     expect(unauthorized.status).toBe(400);
+    expect(mocks.deleteWorkOrderInventoryGrns).not.toHaveBeenCalled();
+  });
+
+  it("does not create a GRN when the receiving permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await POST(postRequest({
+      organizationId: "public-org",
+      workOrderId: "work-order-1",
+      receivedDate: "2026-10-07",
+      lines: [{ workOrderSizeLineId: "size-s", receivedQuantity: 3 }],
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.createWorkOrderInventoryGrn).not.toHaveBeenCalled();
+  });
+
+  it("does not delete GRNs when the delete permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await DELETE(deleteRequest({
+      organizationId: "public-org",
+      grnIds: ["grn-1"],
+    }));
+
+    expect(response.status).toBe(403);
     expect(mocks.deleteWorkOrderInventoryGrns).not.toHaveBeenCalled();
   });
 });

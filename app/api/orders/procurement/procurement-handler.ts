@@ -18,7 +18,11 @@ import {
   listGroupedPurchaseOrdersPage,
 } from "@/lib/services/orders/grouped-purchase-order-service";
 import { createMasterPurchaseOrder, listMasterPurchaseOrdersPage } from "@/lib/services/orders/master-purchase-order-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
 
 function parsePageParameters(url: URL, defaultLimit = 50, cursorParameter = "cursor") {
   const limitValues = url.searchParams.getAll("limit");
@@ -46,6 +50,10 @@ export async function GET(request: Request) {
 
     const organization = await requireOrganizationContext(user.id, organizationId);
     const view = url.searchParams.get("view") ?? "price-approval";
+    const resource = ["general-po", "general-groups", "general-po-request"].includes(view)
+      ? "procurement/general-po"
+      : "procurement/style-wise-po";
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, resource, "view");
     const assetOnlyParameter = url.searchParams.get("isAsset");
     if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
       return NextResponse.json({ error: "Asset classification filter must be true or false." }, { status: 400 });
@@ -139,6 +147,9 @@ export async function GET(request: Request) {
       ...(masterPage ? { ...masterPage, nextMasterCursor: masterPage.nextCursor } : {}),
     });
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: "You do not have permission to view Purchase Orders." }, { status: 403 });
+    }
     return apiErrorResponse(error, { context: "procurement.GET" });
   }
 }
@@ -150,6 +161,7 @@ export async function POST(request: Request) {
     const organizationId = String(body.organizationId ?? "");
     if (body.action === "create-general-requests") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/general-po", "create");
       const requestRows = Array.isArray(body.requests) ? body.requests : [];
       if (requestRows.some((item: unknown) => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return true;
@@ -175,6 +187,7 @@ export async function POST(request: Request) {
     }
     if (body.action === "save-general-price") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/general-po", "edit");
       await saveGeneralPurchaseOrderPrice(
         organization.id,
         String(body.requestId ?? ""),
@@ -191,6 +204,7 @@ export async function POST(request: Request) {
     }
     if (body.action === "approve-general-price") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationPermission(user.id, organization.id, "APPROVE_PURCHASE_ORDERS");
       const result = await approveGeneralPurchaseOrderPrice(
         organization.id,
         String(body.requestId ?? ""),
@@ -201,6 +215,7 @@ export async function POST(request: Request) {
     }
     if (body.action === "create-general-po") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/general-po", "create");
       const purchaseOrder = await createGeneralPurchaseOrderFromGroups(
         organization.id,
         Array.isArray(body.groupIds) ? body.groupIds.map(String) : [],
@@ -213,6 +228,7 @@ export async function POST(request: Request) {
     }
     if (body.action === "create-general-master-groups") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/general-po", "create");
       const groups = await createGeneralPurchaseOrderGroups(
         organization.id,
         Array.isArray(body.requestIds) ? body.requestIds.map(String) : [],
@@ -224,6 +240,7 @@ export async function POST(request: Request) {
     }
     if (body.action === "master-group") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/style-wise-po", "create");
       const masterPurchaseOrder = await createMasterPurchaseOrder(
         organization.id,
         Array.isArray(body.groupedPurchaseOrderIds) ? body.groupedPurchaseOrderIds.map((id: unknown) => String(id)) : [],
@@ -232,6 +249,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, masterPurchaseOrder }, { status: 201 });
     }
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/style-wise-po", "create");
     const groupedPurchaseOrder = await createGroupedPurchaseOrder({
       organizationId: organization.id,
       vendorId: String(body.vendorId ?? ""),
@@ -243,6 +261,9 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, groupedPurchaseOrder }, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: "You do not have permission to manage Purchase Orders." }, { status: 403 });
+    }
     return apiErrorResponse(error, { context: "procurement.POST" });
   }
 }

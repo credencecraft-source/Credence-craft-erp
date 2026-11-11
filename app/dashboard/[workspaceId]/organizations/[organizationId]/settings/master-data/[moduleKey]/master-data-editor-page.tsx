@@ -135,7 +135,22 @@ function validateChildValues(
     if (!Object.values(fields).some((value) => value !== null && value !== undefined && String(value).trim() !== "")) continue;
     const missingRequired = childFields.some((child) => child.required && (fields[child.key] === null || fields[child.key] === undefined || String(fields[child.key]).trim() === ""));
     if (missingRequired) throw new Error(`${childField.label} has an incomplete row.`);
-    const labelField = childFields.find((child) => child.type === "lookup") ?? childFields[0];
+    if (childField.childModuleKey === "measurement-chart-detail") {
+      const minimum = Number(fields.minimum_value);
+      const maximum = Number(fields.maximum_value);
+      const isMeasurementValueValid = (value: number, rawValue: unknown) =>
+        Number.isFinite(value) && value >= 0 && value <= 9999.99 && /^\d{1,4}(?:\.\d{1,2})?$/.test(String(rawValue));
+      if (!isMeasurementValueValid(minimum, fields.minimum_value) || !isMeasurementValueValid(maximum, fields.maximum_value)) {
+        throw new Error("Measurement template Min and Max must be between 0 and 9999.99 with up to two decimal places.");
+      }
+      if (minimum > maximum) {
+        throw new Error("Measurement template Min cannot be greater than Max.");
+      }
+    }
+    const childDefinition = childField.childModuleKey ? getMasterDefinition(childField.childModuleKey) : undefined;
+    const labelField = childFields.find((child) => child.key === childDefinition?.labelField)
+      ?? childFields.find((child) => child.type === "lookup")
+      ?? childFields[0];
     const label = String(labelField ? fields[labelField.key] ?? "" : "").trim();
     if (!label) continue;
     const slNo = Number(fields.Sl_No);
@@ -200,8 +215,17 @@ function masterDataErrorRedirect(
   recordId = "",
   returnToMasterRecord = false,
   masterRecordCode = "",
+  returnToUniformManagement = false,
 ): never {
   const message = error instanceof Error ? error.message : "Unable to save master data.";
+  if (returnToUniformManagement && moduleKey === "article") {
+    const articleRecordKey = recordCode || recordId;
+    const articlePath = articleRecordKey
+      ? `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(articleRecordKey)}`
+      : `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/create`;
+    const editMode = articleRecordKey ? "&mode=edit" : "";
+    redirect(`${articlePath}?source=uniform-management&error=${encodeURIComponent(message)}${editMode}`);
+  }
   if (returnToMasterRecord && moduleKey !== "article" && moduleKey !== "size-group") {
     const recordPath = masterRecordCode
       ? `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(masterRecordCode)}`
@@ -287,13 +311,14 @@ export async function createMasterValueAction(formData: FormData) {
   const organizationId = String(formData.get("organizationId") ?? "");
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const returnToArticleDetail = formData.get("returnToArticleDetail") === "true";
+  const returnToUniformManagement = formData.get("returnToUniformManagement") === "true";
   const returnToMasterRecord = formData.get("returnToMasterRecord") === "true";
   const definition = getMasterDefinition(moduleKey);
   let fields: MasterFieldValues = {};
   try {
     fields = definition ? await readFields(formData, definition.fields) : {};
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord, "", returnToUniformManagement);
   }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
@@ -310,7 +335,7 @@ export async function createMasterValueAction(formData: FormData) {
   if (missingRequiredFieldLabels.length > 0) {
     const errorMessage = getRequiredFieldsErrorMessage(missingRequiredFieldLabels);
     if (returnToArticleDetail && moduleKey === "article") {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage), true);
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage), true, "", false, "", false, "", returnToUniformManagement);
     }
     if (returnToMasterRecord) {
       masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage),
@@ -343,7 +368,7 @@ export async function createMasterValueAction(formData: FormData) {
         .map(({ id, fields: variantFields }) => ({ ...(id ? { id } : {}), fields: variantFields }));
     }
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord, "", returnToUniformManagement);
   }
 
   let created: Awaited<ReturnType<typeof createMasterValueForOrganization>>;
@@ -367,10 +392,14 @@ export async function createMasterValueAction(formData: FormData) {
       return parent;
     }, { maxWait: 10_000, timeout: 30_000 });
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord, "", returnToUniformManagement);
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  if (returnToUniformManagement && moduleKey === "article") {
+    revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/uniform-management/styles`);
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/uniform-management/styles?created=1`);
+  }
   if (returnToArticleDetail && moduleKey === "article") {
     const articles = await getMasterValuesForOrganization(organization.id, "article", true, {
       search: label,
@@ -400,6 +429,7 @@ export async function updateMasterValueAction(formData: FormData) {
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const valueId = String(formData.get("valueId") ?? "");
   const returnToArticleDetail = formData.get("returnToArticleDetail") === "true";
+  const returnToUniformManagement = formData.get("returnToUniformManagement") === "true";
   const returnToMasterRecord = formData.get("returnToMasterRecord") === "true";
   const masterRecordCode = String(formData.get("masterRecordCode") ?? "");
   const returnToSizeGroupDetail = moduleKey === "size-group"
@@ -421,6 +451,7 @@ export async function updateMasterValueAction(formData: FormData) {
       valueId,
       returnToMasterRecord,
       masterRecordCode,
+      returnToUniformManagement,
     );
   }
   const label = definition ? getRecordLabel(fields, definition) : "";
@@ -437,7 +468,7 @@ export async function updateMasterValueAction(formData: FormData) {
   if (missingRequiredFieldLabels.length > 0) {
     const errorMessage = getRequiredFieldsErrorMessage(missingRequiredFieldLabels);
     if (returnToArticleDetail && moduleKey === "article" && definition) {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage), true, returnRecordCode);
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage), true, returnRecordCode, false, "", false, "", returnToUniformManagement);
     }
     if (returnToSizeGroupDetail && definition) {
       masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage),
@@ -486,6 +517,7 @@ export async function updateMasterValueAction(formData: FormData) {
       valueId,
       returnToMasterRecord,
       masterRecordCode,
+      returnToUniformManagement,
     );
   }
 
@@ -521,10 +553,15 @@ export async function updateMasterValueAction(formData: FormData) {
       valueId,
       returnToMasterRecord,
       masterRecordCode,
+      returnToUniformManagement,
     );
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  if (returnToUniformManagement && moduleKey === "article") {
+    revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/uniform-management/styles`);
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/uniform-management/styles?saved=1`);
+  }
   if (returnToArticleDetail && moduleKey === "article" && returnRecordCode) {
     const articlePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(returnRecordCode)}`;
     revalidatePath(articlePath);

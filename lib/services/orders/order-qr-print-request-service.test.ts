@@ -43,7 +43,10 @@ import {
 const pageSetupSnapshot = {
   id: "setup-1",
   name: "A3 STOCK",
+  printerType: "LASER",
   paperSize: "A3",
+  paperWidthMm: null,
+  paperLengthMm: null,
   orientation: "LANDSCAPE",
   stickerWidthMm: 50,
   stickerLengthMm: 30,

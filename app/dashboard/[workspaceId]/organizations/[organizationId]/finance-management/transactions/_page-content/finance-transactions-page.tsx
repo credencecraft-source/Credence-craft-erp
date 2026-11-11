@@ -83,7 +83,7 @@ export default function FinanceTransactionsPage({
                 sourceModule: "POS",
                 sourceRecordId: invoice.invoiceNumber,
                 date: invoice.invoiceDate,
-                party: invoice.customer || "Walk-in customer",
+                party: invoice.customer || "Customer not linked",
                 amount: invoice.subtotal,
                 tax: invoice.taxAmount ?? 0,
                 net: invoice.grandTotal ?? invoice.subtotal + (invoice.taxAmount ?? 0),

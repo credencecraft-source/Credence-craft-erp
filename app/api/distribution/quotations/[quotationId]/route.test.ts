@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   getDistributionQuotation: vi.fn(),
   saveDistributionQuotationDraft: vi.fn(),
   deleteDistributionQuotation: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/distribution/quotation-service", () => ({
   getDistributionQuotation: mocks.getDistributionQuotation,
@@ -37,6 +39,7 @@ describe("distribution quotation detail API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.getDistributionQuotation.mockResolvedValue({ quotation: { id: "quotation-1" }, children: [] });
     mocks.saveDistributionQuotationDraft.mockResolvedValue({ id: "quotation-1" });
     mocks.deleteDistributionQuotation.mockResolvedValue({ id: "quotation-1", mode: "SINGLE" });
@@ -45,6 +48,7 @@ describe("distribution quotation detail API", () => {
   it("loads the quotation using authorized tenant scope", async () => {
     const response = await GET(new Request("http://localhost/api/distribution/quotations/quotation-1?organizationId=public-org"), context);
     expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_ORDERS");
     expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
       masterOrder: false,
       includeChildren: true,
@@ -72,6 +76,7 @@ describe("distribution quotation detail API", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_ORDERS");
     expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
       masterOrder: true,
       includeChildren: true,
@@ -125,6 +130,7 @@ describe("distribution quotation detail API", () => {
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "CREATE_ORDERS");
     expect(mocks.saveDistributionQuotationDraft).toHaveBeenCalledWith("internal-org-1", "user-1", "quotation-1", {
       quotationDate: "2026-10-07",
       validUntil: "",

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   listPosCouponIssues: vi.fn(),
 }));
 
@@ -11,6 +12,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/pos/pos-coupon-service", () => ({
   listPosCouponIssues: mocks.listPosCouponIssues,
@@ -23,6 +25,7 @@ describe("POS issued coupon route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "actor-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listPosCouponIssues.mockResolvedValue({
       issues: [{ id: "issue-1", couponCode: "CC-ACTIVE" }],
       hasMore: false,
@@ -42,6 +45,7 @@ describe("POS issued coupon route", () => {
       "public-org",
       ["OWNER", "ADMIN", "FINANCE"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("actor-1", "internal-org-1", "VIEW_POS_COUPONS");
     expect(mocks.listPosCouponIssues).toHaveBeenCalledWith("internal-org-1", expect.objectContaining({
       take: 20,
       search: "CC",
@@ -71,5 +75,17 @@ describe("POS issued coupon route", () => {
     expect(mocks.listPosCouponIssues).toHaveBeenCalledWith("internal-org-1", expect.objectContaining({
       status: "CLAIMED",
     }));
+  });
+
+  it("denies issued-coupon reads without the dedicated view permission", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/coupons/issues?status=ACTIVE"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.listPosCouponIssues).not.toHaveBeenCalled();
   });
 });

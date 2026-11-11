@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createRawMaterialStockBookings, getRawMaterialStockBooking, listRawMaterialStockBookings } from "@/lib/services/inventory/rm-stock-booking-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+
+function errorStatus(error: unknown) {
+  return error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+}
 
 export async function GET(request: Request) {
   try {
@@ -27,6 +31,7 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const body = await request.json() as { organizationId?: unknown; currentStoreVendorId?: unknown; lines?: unknown };
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "RESERVE_RAW_MATERIAL_STOCK");
     const lines = Array.isArray(body.lines) ? body.lines.map((line: unknown) => {
       const value = line && typeof line === "object" ? line as Record<string, unknown> : {};
       return {
@@ -43,6 +48,6 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, ...result }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to book raw-material stock." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to book raw-material stock." }, { status: errorStatus(error) });
   }
 }

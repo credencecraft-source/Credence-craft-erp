@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { PosCouponDiscountType, PosCouponStatus, PosCouponType } from "@prisma/client";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createPosCoupon, listPosCoupons } from "@/lib/services/pos/pos-coupon-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -58,6 +58,7 @@ export async function GET(
       organizationId,
       ["OWNER", "ADMIN", "FINANCE"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_POS_COUPONS");
     const search = params.get("search")?.trim() ?? "";
     if (search.length > 100) {
       return NextResponse.json({ error: "Coupon search must contain 100 characters or fewer." }, { status: 400 });
@@ -102,7 +103,7 @@ export async function GET(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to load POS coupons." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }
@@ -119,6 +120,7 @@ export async function POST(
       organizationId,
       ["OWNER", "ADMIN", "FINANCE"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_POS_COUPONS");
     const body: unknown = await request.json();
     if (!isRecord(body)) {
       return NextResponse.json({ error: "Coupon details are required." }, { status: 400 });
@@ -171,7 +173,7 @@ export async function POST(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to create the POS coupon." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }

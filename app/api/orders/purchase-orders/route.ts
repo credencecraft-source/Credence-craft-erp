@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { generatePurchaseOrders, listPurchaseOrderReportPage, listPurchaseOrders } from "@/lib/services/orders/purchase-order-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
+
+function errorStatus(error: unknown) {
+  return error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+}
 
 export async function GET(request: Request) {
   try {
@@ -10,6 +17,7 @@ export async function GET(request: Request) {
     const searchParams = new URL(request.url).searchParams;
     const organizationId = searchParams.get("organizationId") ?? "";
     const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/purchase-order", "view");
     const assetOnlyParameter = searchParams.get("isAssetPurchase");
     if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
       return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
@@ -26,7 +34,7 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ purchaseOrders: await listPurchaseOrders(organization.id, { assetOnly }) });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load Purchase Orders." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load Purchase Orders." }, { status: errorStatus(error) });
   }
 }
 
@@ -35,6 +43,7 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const body = await request.json();
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/purchase-order", "create");
     const purchaseOrder = await generatePurchaseOrders(
       organization.id,
       Array.isArray(body.masterPurchaseOrderIds) ? body.masterPurchaseOrderIds.map(String) : [],
@@ -44,6 +53,6 @@ export async function POST(request: Request) {
     );
     return NextResponse.json({ ok: true, purchaseOrder }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to generate Purchase Orders." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to generate Purchase Orders." }, { status: errorStatus(error) });
   }
 }

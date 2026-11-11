@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   createOrganizationOnlineStoreDomain,
   isVercelDomainIntegrationConfigured,
@@ -13,10 +13,12 @@ const MANAGEMENT_ROLES = ["OWNER", "ADMIN"];
 
 async function getAuthorizedOrganization(
   context: { params: Promise<{ organizationId: string }> },
+  permission: "VIEW_POS_ONLINE_STORE" | "MANAGE_POS_ONLINE_STORE",
 ) {
   const user = await requireSessionUser();
   const { organizationId } = await context.params;
   const organization = await requireOrganizationContext(user.id, organizationId, MANAGEMENT_ROLES);
+  await requireOrganizationPermission(user.id, organization.id, permission);
   return { organization, user };
 }
 
@@ -38,7 +40,7 @@ export async function GET(
   context: { params: Promise<{ organizationId: string }> },
 ) {
   try {
-    const { organization } = await getAuthorizedOrganization(context);
+    const { organization } = await getAuthorizedOrganization(context, "VIEW_POS_ONLINE_STORE");
     const domains = await listOrganizationOnlineStoreDomains(organization.id);
     const vercelConfigured = isVercelDomainIntegrationConfigured();
     return NextResponse.json({
@@ -60,7 +62,7 @@ export async function POST(
   context: { params: Promise<{ organizationId: string }> },
 ) {
   try {
-    const { organization, user } = await getAuthorizedOrganization(context);
+    const { organization, user } = await getAuthorizedOrganization(context, "MANAGE_POS_ONLINE_STORE");
     const contentLength = Number(request.headers.get("content-length") ?? "0");
     if (contentLength > 16_000) {
       return NextResponse.json({ error: "The domain request is too large." }, { status: 413 });

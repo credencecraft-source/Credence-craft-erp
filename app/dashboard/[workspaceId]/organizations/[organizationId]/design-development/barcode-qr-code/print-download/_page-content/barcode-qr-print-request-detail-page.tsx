@@ -19,6 +19,7 @@ import {
   getA4StickerGrid,
   getQrTemplateFieldLabel,
 } from "@/lib/services/orders/order-qr-template-contract";
+import { getPageSetupPaperSizeLabel } from "@/lib/services/design-development/page-setup-template-contract";
 import { getOrderQrPrintPreviewMode } from "@/lib/services/orders/order-qr-print-request-contract";
 import type { OrderQrPrintRequestRecord } from "@/lib/services/orders/order-qr-print-request-service";
 
@@ -63,6 +64,11 @@ export default function BarcodeQrPrintRequestDetailPage({
     Boolean(request.pageSetup),
   );
   const usesPageSetupSheet = previewMode === "page-setup-sheet";
+  const paperSizeLabel = request.pageSetup
+    ? request.pageSetup.printerType === "THERMAL"
+      ? "Thermal roll"
+      : getPageSetupPaperSizeLabel(request.pageSetup.paperSize)
+    : "A4";
   const grid = useMemo(
     () => usesPageSetupSheet
       ? getA4StickerGrid(
@@ -70,6 +76,7 @@ export default function BarcodeQrPrintRequestDetailPage({
         request.stickerLengthMm,
         request.layout.pdfPaperSize,
         request.pageSetup,
+        request.printQuantity,
       )
       : null,
     [request, usesPageSetupSheet],
@@ -141,7 +148,7 @@ export default function BarcodeQrPrintRequestDetailPage({
         download.href = pdfUrl;
         const sourcePrefix = request.sourceType === "POS_PURCHASE_BILL" ? "purchase-bill" : "order";
         download.download = usesPageSetupSheet
-          ? `${sourcePrefix}-${request.orderNo}-${request.pageSetup?.paperSize.toLowerCase() ?? "a4"}-stickers.pdf`
+          ? `${sourcePrefix}-${request.orderNo}-${paperSizeLabel.toLowerCase()}-stickers.pdf`
           : `${sourcePrefix}-${request.orderNo}-sticker-labels.pdf`;
         download.click();
         window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 60_000);
@@ -228,7 +235,9 @@ export default function BarcodeQrPrintRequestDetailPage({
                 {previewMode === "page-setup-required"
                   ? "Page Setup unavailable for this legacy request"
                   : usesPageSetupSheet
-                    ? `${request.pageSetup?.paperSize} ${grid?.portrait ? "Portrait" : "Landscape"} sheet`
+                    ? request.pageSetup?.printerType === "THERMAL"
+                      ? `${paperSizeLabel} · ${grid?.pageWidthMm} mm wide × ${grid?.pageHeightMm} mm automatic length`
+                      : `${paperSizeLabel} ${grid?.portrait ? "Portrait" : "Landscape"} sheet`
                     : "Barcode printer sticker"}
                 {previewMode !== "page-setup-required" && (
                   <>
@@ -283,7 +292,9 @@ export default function BarcodeQrPrintRequestDetailPage({
               )}
               <div
                 className="relative mx-auto overflow-hidden border border-[var(--erp-border)] bg-white shadow-sm"
-                aria-label={`${request.pageSetup?.paperSize} ${grid.portrait ? "portrait" : "landscape"} print sheet`}
+                aria-label={request.pageSetup?.printerType === "THERMAL"
+                  ? `${paperSizeLabel}, ${grid.pageWidthMm} mm wide and ${grid.pageHeightMm} mm long`
+                  : `${paperSizeLabel} ${grid.portrait ? "portrait" : "landscape"} print sheet`}
                 role="img"
                 style={{
                   width: grid.portrait ? "min(100%, 28rem)" : "min(100%, 48rem)",
@@ -321,7 +332,9 @@ export default function BarcodeQrPrintRequestDetailPage({
                 })}
               </div>
               <p className="text-center text-xs text-[var(--erp-text-muted)]">
-                {pageIndexes.length} labels positioned on this {request.pageSetup?.paperSize} sheet.
+                {request.pageSetup?.printerType === "THERMAL"
+                  ? `${request.printQuantity} labels positioned on this ${paperSizeLabel}.`
+                  : `${pageIndexes.length} labels positioned on this ${paperSizeLabel} sheet.`}
               </p>
             </>
           )}
@@ -396,7 +409,9 @@ export default function BarcodeQrPrintRequestDetailPage({
             <dt className="text-[var(--erp-text-muted)]">Printer</dt>
             <dd className="font-medium text-slate-900">
               {request.pageSetup
-                ? "Page Setup sheet"
+                ? request.pageSetup.printerType === "THERMAL"
+                  ? "Thermal Printer"
+                  : "Laser Printer"
                 : request.layout.printerType === "LASER" ? "Laser Printer" : "Barcode Printer"}
             </dd>
             <dt className="text-[var(--erp-text-muted)]">Paper</dt>
@@ -404,7 +419,9 @@ export default function BarcodeQrPrintRequestDetailPage({
               {previewMode === "page-setup-required"
                 ? "Unavailable"
                 : usesPageSetupSheet
-                  ? `${request.pageSetup?.paperSize} ${grid?.portrait ? "Portrait" : "Landscape"}`
+                  ? request.pageSetup?.printerType === "THERMAL"
+                    ? `${paperSizeLabel} · ${grid?.pageWidthMm} mm wide · ${grid?.pageHeightMm} mm automatic length`
+                    : `${paperSizeLabel} ${grid?.portrait ? "Portrait" : "Landscape"}`
                   : "Sticker size"}
             </dd>
             {request.pageSetup && (

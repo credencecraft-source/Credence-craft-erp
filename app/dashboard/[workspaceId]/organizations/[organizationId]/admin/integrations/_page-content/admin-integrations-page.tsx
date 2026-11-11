@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Fingerprint } from "lucide-react";
+import { ArrowUpRight, Fingerprint, MessageCircle } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
 
 import Card from "@/components/ui/Card";
@@ -39,33 +39,61 @@ export default async function AdminIntegrationsPage({
           </p>
         </div>
 
-        <Link
-          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/integrations/essl`}
-          className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
-        >
-          <Card className="flex min-h-36 flex-row items-center justify-between gap-4 p-6 transition hover:border-[var(--erp-brand)] hover:shadow-md">
-            <div className="flex min-w-0 items-start gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]">
-                <Fingerprint className="h-6 w-6" aria-hidden="true" />
-              </span>
-              <div className="min-w-0">
-                <h2 className="text-base font-bold text-slate-900">ESSL Biometric Attendance</h2>
-                <p className="mt-1 max-w-2xl text-sm text-slate-600">
-                  Configure biometric machine serial numbers, entity mappings, templates, and import attendance from your existing ESSL attendance API.
-                </p>
-                <p className="mt-3 text-xs font-medium text-slate-500">
-                  {integration.configuration.isActive ? "Enabled" : "Not enabled"}
-                  {" · "}
-                  {integration.machines.filter((machine) => machine.isActive).length} active machines
-                </p>
+        <div className="grid min-w-0 gap-4 md:grid-cols-2">
+          <Link
+            href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/integrations/essl`}
+            className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+          >
+            <Card className="flex min-h-36 flex-row items-center justify-between gap-4 p-6 transition hover:border-[var(--erp-brand)] hover:shadow-md">
+              <div className="flex min-w-0 items-start gap-4">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]">
+                  <Fingerprint className="h-6 w-6" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-base font-bold text-slate-900">ESSL Biometric Attendance</h2>
+                  <p className="mt-1 max-w-2xl text-sm text-slate-600">
+                    Configure biometric machine serial numbers, entity mappings, templates, and import attendance from your existing ESSL attendance API.
+                  </p>
+                  <p className="mt-3 text-xs font-medium text-slate-500">
+                    {integration.configuration.isActive ? "Enabled" : "Not enabled"}
+                    {" · "}
+                    {integration.machines.filter((machine) => machine.isActive).length} active machines
+                  </p>
+                </div>
               </div>
-            </div>
-            <span className="inline-flex shrink-0 items-center gap-2 text-sm font-semibold text-[var(--erp-brand)]">
-              Open ESSL
-              <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
-            </span>
-          </Card>
-        </Link>
+              <span className="inline-flex shrink-0 items-center gap-2 text-sm font-semibold text-[var(--erp-brand)]">
+                Open ESSL
+                <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+              </span>
+            </Card>
+          </Link>
+
+          <Link
+            href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/integrations/whatsapp`}
+            className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+          >
+            <Card className="flex min-h-36 flex-row items-center justify-between gap-4 p-6 transition hover:border-[var(--erp-brand)] hover:shadow-md">
+              <div className="flex min-w-0 items-start gap-4">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]">
+                  <MessageCircle className="h-6 w-6" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-base font-bold text-slate-900">WhatsApp</h2>
+                  <p className="mt-1 max-w-2xl text-sm text-slate-600">
+                    Configure this organization&apos;s MSG91 WhatsApp credentials and approved message templates.
+                  </p>
+                  <p className="mt-3 text-xs font-medium text-slate-500">
+                    Organization-specific settings
+                  </p>
+                </div>
+              </div>
+              <span className="inline-flex shrink-0 items-center gap-2 text-sm font-semibold text-[var(--erp-brand)]">
+                Open WhatsApp
+                <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+              </span>
+            </Card>
+          </Link>
+        </div>
       </Section>
     </Page>
   );

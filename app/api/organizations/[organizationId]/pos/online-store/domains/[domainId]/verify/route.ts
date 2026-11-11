@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   OnlineStoreDomainError,
   verifyOrganizationOnlineStoreDomain,
@@ -17,6 +17,7 @@ export async function POST(
     const user = await requireSessionUser();
     const { organizationId, domainId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, MANAGEMENT_ROLES);
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_POS_ONLINE_STORE");
     const domain = await verifyOrganizationOnlineStoreDomain({
       organization,
       actorId: user.id,

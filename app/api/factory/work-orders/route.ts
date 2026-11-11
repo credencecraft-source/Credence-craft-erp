@@ -2,14 +2,20 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { createWorkOrder, createWorkOrders, deleteWorkOrders, getWorkOrderAllocation, listOrdersByArticle, listWorkOrderAllocationsByArticle, listWorkOrderArticles, listWorkOrders } from "@/lib/services/factory/work-order-service";
+
+function errorStatus(error: unknown) {
+  return error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+}
 
 export async function GET(request: Request) {
   try {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
-    const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    const organizationId = searchParams.get("organizationId") ?? "";
+    const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationPermission(user.id, organizationId, "VIEW_WORK_ORDERS");
     if (searchParams.get("articles") === "true") {
       return NextResponse.json(await listWorkOrderArticles(organization.id));
     }
@@ -40,7 +46,7 @@ export async function GET(request: Request) {
       });
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load work order data." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load work order data." }, { status: errorStatus(error) });
   }
 }
 
@@ -53,7 +59,9 @@ export async function POST(request: Request) {
       lines?: Array<{ sourceFinishedGoodsId?: string; quantity?: number | string }>;
       requests?: Array<{ orderNo?: string; lines?: Array<{ sourceFinishedGoodsId?: string; quantity?: number | string }> }>;
     };
-    const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    const organizationId = String(body.organizationId ?? "");
+    const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationPermission(user.id, organizationId, "CREATE_WORK_ORDERS");
     if (body.requests !== undefined) {
       if (!Array.isArray(body.requests)) throw new Error("Work-order batch must be a list.");
       const workOrders = await createWorkOrders(organization.id, user.id, body.requests.map((request) => ({
@@ -73,7 +81,7 @@ export async function POST(request: Request) {
       });
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create work order." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create work order." }, { status: errorStatus(error) });
   }
 }
 
@@ -101,11 +109,8 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "Select between 1 and 100 unique work orders to delete." }, { status: 400 });
     }
 
-    const organization = await requireOrganizationContext(
-      user.id,
-      organizationId,
-      ["OWNER", "ADMIN", "MERCHANDISING"],
-    );
+    const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationPermission(user.id, organizationId, "DELETE_WORK_ORDERS");
     await deleteWorkOrders(organization.id, user.id, workOrderIds);
     return NextResponse.json({ deleted: workOrderIds });
   } catch (error) {
@@ -117,7 +122,7 @@ export async function DELETE(request: Request) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to delete work orders." },
-      { status: 400 },
+      { status: errorStatus(error) },
     );
   }
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   invoiceFindMany: vi.fn(),
   invoiceFindFirst: vi.fn(),
   organizationFindFirst: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
@@ -39,6 +41,7 @@ describe("POS sales invoice detail route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.organizationFindFirst.mockResolvedValue({
       organization_name: "Example Organization",
       gst_number: "29ABCDE1234F1Z5",
@@ -238,6 +241,7 @@ describe("POS sales invoice detail route", () => {
           invoiceDate: "2026-10-17",
           taxMode: "LOCAL",
           customerContactId: "customer-contact-1",
+          returnCreditApplications: [{ returnId: "return-1", amount: "12.50" }],
           lines: [{
             stockId: "sku-stock-1",
             stockType: "SKU",
@@ -254,9 +258,15 @@ describe("POS sales invoice detail route", () => {
     const data = await response.json();
 
     expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "CREATE_POS_SALES",
+    );
     expect(mocks.createPosGeneralStockSale).toHaveBeenCalledWith(expect.objectContaining({
       organizationId: "internal-org-1",
       customerContactId: "customer-contact-1",
+      returnCreditApplications: [{ returnId: "return-1", amount: "12.50" }],
       lines: [expect.objectContaining({
         stockId: "sku-stock-1",
         stockType: "SKU",
@@ -264,6 +274,58 @@ describe("POS sales invoice detail route", () => {
       })],
     }));
     expect(data.invoice.invoiceNo).toBe("POS-0001");
+  });
+
+  it("does not post a POS invoice when the dedicated permission is denied", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await POST(
+      new Request("http://localhost/api/organizations/public-org/pos/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestKey: "sale-request-denied",
+          entityId: "entity-1",
+          invoiceDate: "2026-10-17",
+          taxMode: "LOCAL",
+          customerContactId: "customer-contact-1",
+          lines: [{ stockId: "sku-stock-1", quantity: 1, rate: 100, gstRate: 0, discountPercent: 0 }],
+        }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.createPosGeneralStockSale).not.toHaveBeenCalled();
+  });
+
+  it("rejects counter invoices without a registered customer", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/organizations/public-org/pos/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestKey: "sale-request-1",
+          entityId: "entity-1",
+          invoiceDate: "2026-10-17",
+          taxMode: "LOCAL",
+          lines: [{
+            stockId: "sku-stock-1",
+            stockType: "SKU",
+            quantity: 1,
+            rate: 100,
+            gstRate: 0,
+            discountPercent: 0,
+          }],
+        }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("registered customer");
+    expect(mocks.createPosGeneralStockSale).not.toHaveBeenCalled();
   });
 
   it("passes validated online shipping details to the authorized catalog-priced sale service", async () => {

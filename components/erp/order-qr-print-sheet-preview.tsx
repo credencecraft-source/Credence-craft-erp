@@ -2,7 +2,10 @@
 
 import Image from "next/image";
 
-import type { PageSetupPrintSnapshot } from "@/lib/services/design-development/page-setup-template-contract";
+import {
+  getPageSetupPaperSizeLabel,
+  type PageSetupPrintSnapshot,
+} from "@/lib/services/design-development/page-setup-template-contract";
 import { getA4StickerGrid } from "@/lib/services/orders/order-qr-template-contract";
 
 type Props = {
@@ -10,6 +13,7 @@ type Props = {
   stickerDataUrl?: string;
   stickerWidthMm: number;
   stickerLengthMm: number;
+  quantity?: number;
 };
 
 export default function OrderQrPrintSheetPreview({
@@ -17,6 +21,7 @@ export default function OrderQrPrintSheetPreview({
   stickerDataUrl,
   stickerWidthMm,
   stickerLengthMm,
+  quantity = 1,
 }: Props) {
   if (!pageSetup) {
     return (
@@ -31,7 +36,12 @@ export default function OrderQrPrintSheetPreview({
     stickerLengthMm,
     "A4_AUTO",
     pageSetup,
+    quantity,
   );
+  const isThermal = pageSetup.printerType === "THERMAL";
+  const paperSizeLabel = isThermal
+    ? "Thermal roll"
+    : getPageSetupPaperSizeLabel(pageSetup.paperSize);
   if (!grid) {
     return (
       <p className="text-sm text-[var(--erp-danger)]" role="alert">
@@ -51,7 +61,9 @@ export default function OrderQrPrintSheetPreview({
     <div className="space-y-3">
       <div
         className="relative mx-auto overflow-hidden border border-[var(--erp-border)] bg-white shadow-sm"
-        aria-label={`${pageSetup.name}, ${pageSetup.paperSize} ${pageSetup.orientation.toLowerCase()} sheet with ${grid.count} stickers`}
+        aria-label={isThermal
+          ? `${pageSetup.name}, thermal roll ${grid.pageWidthMm} mm wide and ${grid.pageHeightMm} mm long with ${grid.count} stickers`
+          : `${pageSetup.name}, ${paperSizeLabel} ${pageSetup.orientation.toLowerCase()} sheet with ${grid.count} stickers`}
         role="img"
         style={{
           width: grid.portrait ? "min(100%, 28rem)" : "min(100%, 48rem)",
@@ -89,9 +101,9 @@ export default function OrderQrPrintSheetPreview({
         })}
       </div>
       <p className="text-center text-xs text-[var(--erp-text-muted)]">
-        {pageSetup.paperSize} {pageSetup.orientation.toLowerCase()} ·{" "}
-        {grid.pageWidthMm} × {grid.pageHeightMm} mm ·{" "}
-        {grid.columns} columns × {grid.rows} rows · {grid.count} stickers per sheet
+        {isThermal
+          ? `${paperSizeLabel} · ${grid.pageWidthMm} mm wide × ${grid.pageHeightMm} mm calculated length · ${grid.columns} columns × ${grid.rows} rows · ${grid.count} stickers`
+          : `${paperSizeLabel} ${pageSetup.orientation.toLowerCase()} · ${grid.pageWidthMm} × ${grid.pageHeightMm} mm · ${grid.columns} columns × ${grid.rows} rows · ${grid.count} stickers per sheet`}
       </p>
       <p className="text-center text-xs text-[var(--erp-text-muted)]">
         Margins: {pageSetup.marginTopMm} mm top, {pageSetup.marginBottomMm} mm bottom,{" "}

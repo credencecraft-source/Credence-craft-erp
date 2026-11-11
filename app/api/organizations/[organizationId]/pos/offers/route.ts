@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { PosOfferScope, PosOfferStatus, PosOfferType } from "@prisma/client";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   getPosOfferScopeBySlug,
   getPosOfferTypeBySlug,
@@ -81,6 +81,7 @@ export async function GET(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, OFFER_ROLES);
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_POS_OFFERS");
     const searchParams = new URL(request.url).searchParams;
     const lookupScopeSlug = searchParams.get("lookupScope");
     const rawLimit = searchParams.get("limit");
@@ -159,6 +160,7 @@ export async function POST(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, OFFER_ROLES);
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_POS_OFFERS");
     const body = await request.json().catch(() => {
       throw new PosOfferValidationError("Offer details must be valid JSON.");
     }) as unknown;

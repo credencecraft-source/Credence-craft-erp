@@ -14,12 +14,12 @@ export const STORAGE_NODE_TYPES = [
 
 export type StorageNodeType = (typeof STORAGE_NODE_TYPES)[number];
 
-const parentTypeByNodeType: Record<StorageNodeType, StorageNodeType | null> = {
-  LOCATION_SITE: null,
-  WAREHOUSE: "LOCATION_SITE",
-  SUB_STORE: "WAREHOUSE",
-  RACK: "SUB_STORE",
-  BIN: "RACK",
+const allowedParentTypes: Record<StorageNodeType, StorageNodeType[]> = {
+  LOCATION_SITE: [],
+  WAREHOUSE: ["LOCATION_SITE"],
+  SUB_STORE: ["LOCATION_SITE", "WAREHOUSE"],
+  RACK: ["LOCATION_SITE", "WAREHOUSE", "SUB_STORE"],
+  BIN: ["LOCATION_SITE", "WAREHOUSE", "SUB_STORE", "RACK"],
 };
 
 export class StorageNodeError extends Error {
@@ -35,6 +35,7 @@ type StorageNodeInput = {
   name: unknown;
   parentId?: unknown;
   entityId?: unknown;
+  masterLocationId?: unknown;
 };
 
 type StorageNodeRecord = {
@@ -47,6 +48,7 @@ type StorageNodeRecord = {
   parent_node_id: string | null;
   parent_node_type: StorageNodeType | null;
   entity_id: string | null;
+  master_location_id?: string | null;
   is_active: boolean;
   sort_order: number;
 };
@@ -89,6 +91,7 @@ async function findActiveNodeChain(
         parent_node_id: true,
         parent_node_type: true,
         entity_id: true,
+        master_location_id: true,
         is_active: true,
         sort_order: true,
       },
@@ -99,15 +102,22 @@ async function findActiveNodeChain(
     if (expectedNodeType && node.node_type !== expectedNodeType) {
       throw new StorageNodeError(`A ${expectedNodeType.replaceAll("_", " ").toLowerCase()} is required.`);
     }
-    if (node.parent_node_type !== parentTypeByNodeType[node.node_type]) {
+    if (!node.parent_node_id) {
+      if (node.node_type !== "LOCATION_SITE" || node.parent_node_type !== null) {
+        throw new StorageNodeError("The storage hierarchy is incomplete.", 409);
+      }
+      chain.push(node);
+      break;
+    }
+    if (!node.parent_node_type || !allowedParentTypes[node.node_type].includes(node.parent_node_type)) {
       throw new StorageNodeError("The storage hierarchy has an invalid parent relationship.", 409);
     }
     chain.push(node);
-    expectedNodeType = parentTypeByNodeType[node.node_type] ?? undefined;
+    expectedNodeType = node.parent_node_type;
     nextId = node.parent_node_id;
   }
 
-  if (chain.length !== STORAGE_NODE_TYPES.indexOf(chain[0].node_type) + 1) {
+  if (!chain.some((node) => node.node_type === "LOCATION_SITE")) {
     throw new StorageNodeError("The storage hierarchy is incomplete.", 409);
   }
   return chain;
@@ -115,6 +125,66 @@ async function findActiveNodeChain(
 
 function nodePath(chain: StorageNodeRecord[]) {
   return [...chain].reverse().map((node) => node.node_name).join(" / ");
+}
+
+function storageNodePathForEntity(path: StorageNodeType[], entityId: string): Record<string, unknown> {
+  let predicate: Record<string, unknown> = {
+    node_type: "LOCATION_SITE",
+    entity_id: entityId,
+    is_active: true,
+  };
+  for (let index = path.length - 2; index >= 0; index -= 1) {
+    predicate = {
+      node_type: path[index],
+      is_active: true,
+      parent: { is: predicate },
+    };
+  }
+  return predicate;
+}
+
+const BIN_ANCESTOR_PATHS: StorageNodeType[][] = [
+  ["RACK", "SUB_STORE", "WAREHOUSE", "LOCATION_SITE"],
+  ["RACK", "SUB_STORE", "LOCATION_SITE"],
+  ["RACK", "WAREHOUSE", "LOCATION_SITE"],
+  ["RACK", "LOCATION_SITE"],
+  ["SUB_STORE", "WAREHOUSE", "LOCATION_SITE"],
+  ["SUB_STORE", "LOCATION_SITE"],
+  ["WAREHOUSE", "LOCATION_SITE"],
+  ["LOCATION_SITE"],
+];
+
+const STORAGE_NODE_ENTITY_PATHS: Record<StorageNodeType, StorageNodeType[][]> = {
+  LOCATION_SITE: [],
+  WAREHOUSE: [["LOCATION_SITE"]],
+  SUB_STORE: [["LOCATION_SITE"], ["WAREHOUSE", "LOCATION_SITE"]],
+  RACK: [
+    ["LOCATION_SITE"],
+    ["WAREHOUSE", "LOCATION_SITE"],
+    ["SUB_STORE", "LOCATION_SITE"],
+    ["SUB_STORE", "WAREHOUSE", "LOCATION_SITE"],
+  ],
+  BIN: BIN_ANCESTOR_PATHS,
+};
+
+function storageNodeEntityFilter(
+  siteEntityId: string,
+  nodeType?: StorageNodeType,
+): Record<string, unknown> {
+  const nodeTypes = nodeType ? [nodeType] : STORAGE_NODE_TYPES;
+  const paths: Record<string, unknown>[] = [];
+  for (const type of nodeTypes) {
+    if (type === "LOCATION_SITE") {
+      paths.push({ node_type: type, entity_id: siteEntityId, is_active: true });
+    } else {
+      paths.push(...STORAGE_NODE_ENTITY_PATHS[type].map((path) => ({
+        node_type: type,
+        is_active: true,
+        parent: { is: storageNodePathForEntity(path, siteEntityId) },
+      })));
+    }
+  }
+  return paths.length === 1 ? paths[0] : { OR: paths };
 }
 
 export async function listStorageNodesForOrganization(
@@ -135,33 +205,9 @@ export async function listStorageNodesForOrganization(
       organization_id: organizationId,
       ...(options.includeInactive ? {} : { is_active: true }),
       ...(options.nodeType ? { node_type: options.nodeType } : {}),
-      ...(options.siteEntityId ? {
-        parent: {
-          is: {
-            node_type: "RACK",
-            is_active: true,
-            parent: {
-              is: {
-                node_type: "SUB_STORE",
-                is_active: true,
-                parent: {
-                  is: {
-                    node_type: "WAREHOUSE",
-                    is_active: true,
-                    parent: {
-                      is: {
-                        node_type: "LOCATION_SITE",
-                        entity_id: options.siteEntityId,
-                        is_active: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      } : {}),
+      ...(options.siteEntityId
+        ? { AND: [storageNodeEntityFilter(options.siteEntityId, options.nodeType)] }
+        : {}),
       ...(options.search?.trim() ? {
         OR: [
           ...(options.exactSearch ? [
@@ -189,6 +235,7 @@ export async function listStorageNodesForOrganization(
       parent_node_id: true,
       parent_node_type: true,
       entity_id: true,
+      master_location_id: true,
       is_active: true,
       sort_order: true,
     },
@@ -209,6 +256,7 @@ export async function listStorageNodesForOrganization(
         parent_node_id: true,
         parent_node_type: true,
         entity_id: true,
+        master_location_id: true,
         is_active: true,
         sort_order: true,
       },
@@ -243,6 +291,7 @@ export async function listStorageNodesForOrganization(
       node_code: node.node_code,
       node_name: node.node_name,
       entity_id: node.entity_id,
+      master_location_id: node.master_location_id ?? null,
       parent_node_id: node.parent_node_id,
       parent_node_type: node.parent_node_type,
       path: nodePath(chain),
@@ -282,6 +331,7 @@ export async function getStorageNodePathsForOrganization(organizationId: string,
         parent_node_id: true,
         parent_node_type: true,
         entity_id: true,
+        master_location_id: true,
         is_active: true,
         sort_order: true,
       },
@@ -317,14 +367,16 @@ export async function createStorageNode(
   const nodeName = requiredText(input.name, "Name", 255);
   const parentId = typeof input.parentId === "string" ? input.parentId.trim() : "";
   const entityId = typeof input.entityId === "string" ? input.entityId.trim() : "";
-  const expectedParentType = parentTypeByNodeType[nodeType];
+  const masterLocationId = typeof input.masterLocationId === "string" ? input.masterLocationId.trim() : "";
+  const expectedParentTypes = allowedParentTypes[nodeType];
+  let parentNodeType: StorageNodeType | null = null;
 
   if (nodeType === "LOCATION_SITE") {
     if (parentId) throw new StorageNodeError("A Location/Site cannot have a parent.");
     if (!entityId) throw new StorageNodeError("Select the active legal Entity associated with this Location/Site.");
   } else {
-    if (!parentId) throw new StorageNodeError(`Select an active ${expectedParentType?.replaceAll("_", " ").toLowerCase()}.`);
-    if (entityId) throw new StorageNodeError("Legal Entity is assigned only to a Location/Site.");
+    if (!parentId) throw new StorageNodeError("Select an active parent Location or storage level.");
+    if (entityId || masterLocationId) throw new StorageNodeError("Entity and operational Location are assigned only to a Location/Site.");
   }
 
   const createWithinTransaction = async (transaction: Prisma.TransactionClient) => {
@@ -334,8 +386,28 @@ export async function createStorageNode(
         select: { id: true },
       });
       if (!entity) throw new StorageNodeError("Select an active legal Entity belonging to this organization.", 404);
+      if (masterLocationId) {
+        const location = await transaction.masterLocation.findFirst({
+          where: {
+            id: masterLocationId,
+            organization_id: organizationId,
+            entity_id: entityId,
+            is_active: true,
+          },
+          select: { id: true },
+        });
+        if (!location) throw new StorageNodeError("Select an active operational Location belonging to this Entity.", 404);
+      }
     } else {
-      await findActiveNodeChain(transaction, organizationId, parentId, expectedParentType ?? undefined);
+      const parent = await transaction.storageNode.findFirst({
+        where: { organization_id: organizationId, id: parentId },
+        select: { id: true, node_type: true },
+      });
+      if (!parent || !expectedParentTypes.includes(parent.node_type)) {
+        throw new StorageNodeError("Select an active parent at a valid higher hierarchy level.", 400);
+      }
+      parentNodeType = parent.node_type;
+      await findActiveNodeChain(transaction, organizationId, parentId, parent.node_type);
     }
 
     const created = await transaction.storageNode.create({
@@ -345,8 +417,9 @@ export async function createStorageNode(
         node_code: nodeCode,
         node_name: nodeName,
         parent_node_id: parentId || null,
-        parent_node_type: expectedParentType,
+        parent_node_type: parentNodeType,
         entity_id: entityId || null,
+        master_location_id: masterLocationId || null,
         sort_order: await transaction.storageNode.count({
           where: { organization_id: organizationId, node_type: nodeType },
         }),
@@ -365,6 +438,7 @@ export async function createStorageNode(
         node_name: created.node_name,
         parent_node_id: created.parent_node_id,
         entity_id: created.entity_id,
+        master_location_id: created.master_location_id,
       },
     }, transaction);
     return created;
@@ -401,6 +475,7 @@ export async function updateStorageNode(
     for (const [fieldKey, currentValue] of [
       ["parent_node_id", existing.parent_node_id],
       ["entity_id", existing.entity_id],
+      ["master_location_id", existing.master_location_id],
     ] as const) {
       const requested = fields[fieldKey];
       if (requested === undefined) continue;
@@ -490,10 +565,26 @@ export async function getActiveBinPlacement(
   binId: string,
   legacyLocationEntityId: string,
 ) {
-  const chain = await findActiveNodeChain(transaction, organizationId, binId, "BIN");
+  return getActiveStoragePlacement(transaction, organizationId, binId, legacyLocationEntityId, undefined, "BIN");
+}
+
+export async function getActiveStoragePlacement(
+  transaction: Prisma.TransactionClient,
+  organizationId: string,
+  storageNodeId: string,
+  legacyLocationEntityId: string,
+  masterLocationId?: string,
+  expectedType?: StorageNodeType,
+) {
+  const chain = await findActiveNodeChain(transaction, organizationId, storageNodeId, expectedType);
   const site = chain.find((node) => node.node_type === "LOCATION_SITE");
   if (!site || site.entity_id !== legacyLocationEntityId) {
-    throw new StorageNodeError("Select a Bin under a Location/Site associated with the selected Entity.", 400);
+    throw new StorageNodeError(expectedType === "BIN"
+      ? "Select a Bin under a Location/Site associated with the selected Entity."
+      : "Select a storage location under a Location/Site associated with the selected Entity.", 400);
+  }
+  if (site.master_location_id && masterLocationId && site.master_location_id !== masterLocationId) {
+    throw new StorageNodeError("Select a storage location mapped to the selected stock Location.", 400);
   }
   return chain[0];
 }

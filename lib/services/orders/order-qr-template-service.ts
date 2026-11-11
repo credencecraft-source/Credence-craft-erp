@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import {
+  parseStoredPageSetupPaperSize,
   parsePageSetupPrintSnapshot,
   type PageSetupPrintSnapshot,
 } from "@/lib/services/design-development/page-setup-template-contract";
@@ -41,10 +42,12 @@ function mapPageSetup(template: {
   horizontal_gap_mm: number | { toNumber(): number };
   vertical_gap_mm: number | { toNumber(): number };
 }): PageSetupPrintSnapshot | null {
+  const paperSize = parseStoredPageSetupPaperSize(template.paper_size);
+  if (!paperSize) return null;
   return parsePageSetupPrintSnapshot({
     id: template.id,
     name: template.name,
-    paperSize: template.paper_size,
+    ...paperSize,
     orientation: template.orientation,
     stickerWidthMm: typeof template.sticker_width_mm === "number"
       ? template.sticker_width_mm
@@ -130,6 +133,12 @@ function mapOrderQrTemplate(template: {
     : legacyFields[0] ?? "orderNo";
   const design = parseStoredOrderQrTemplateDesign(template.display_field_styles, displayFields);
   const pageSetup = design.pageSetup;
+  const layout = pageSetup
+    ? {
+      ...design.layout,
+      printerType: pageSetup.printerType === "THERMAL" ? "BARCODE" as const : "LASER" as const,
+    }
+    : design.layout;
   return {
     id: template.id,
     name: template.name,
@@ -138,7 +147,7 @@ function mapOrderQrTemplate(template: {
     qrFieldKey,
     displayFields,
     displayFieldStyles: design.displayFieldStyles,
-    layout: design.layout,
+    layout,
     pageSetup: design.pageSetup,
     qrSize: ORDER_QR_TEMPLATE_SIZES.includes(
       template.qr_size as (typeof ORDER_QR_TEMPLATE_SIZES)[number],
@@ -211,7 +220,10 @@ export async function createOrderQrTemplate(
       organizationId,
       input.pageSetupTemplateId,
     );
-    const layout = { ...input.layout, printerType: "LASER" as const };
+    const layout = {
+      ...input.layout,
+      printerType: pageSetup.printerType === "THERMAL" ? "BARCODE" as const : "LASER" as const,
+    };
 
     const template = await transaction.merchandisingOrderQrTemplate.create({
       data: {
@@ -269,7 +281,10 @@ export async function updateOrderQrTemplate(
     const pageSetup = currentDesign.pageSetup?.id === input.pageSetupTemplateId
       ? currentDesign.pageSetup
       : await getSelectedPageSetup(transaction, organizationId, input.pageSetupTemplateId);
-    const layout = { ...input.layout, printerType: "LASER" as const };
+    const layout = {
+      ...input.layout,
+      printerType: pageSetup.printerType === "THERMAL" ? "BARCODE" as const : "LASER" as const,
+    };
     const updated = await transaction.merchandisingOrderQrTemplate.updateMany({
       where: { organization_id: organizationId, id: templateId },
       data: {

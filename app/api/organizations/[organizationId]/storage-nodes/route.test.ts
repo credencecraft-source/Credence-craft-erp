@@ -50,7 +50,7 @@ describe("organization storage-node API", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "public-org", "VIEW_STORAGE_NODES");
     expect(mocks.listStorageNodesForOrganization).toHaveBeenCalledWith("internal-org-1", {
       includeInactive: false,
       nodeType: "BIN",
@@ -93,7 +93,7 @@ describe("organization storage-node API", () => {
     expect(mocks.createStorageNode).not.toHaveBeenCalled();
   });
 
-  it("requires master-data permission and passes the authorized internal organization ID to creation", async () => {
+  it("requires storage-node management permission and passes the authorized internal organization ID to creation", async () => {
     const response = await POST(request({
       nodeType: "LOCATION_SITE",
       code: "SITE-1",
@@ -102,14 +102,41 @@ describe("organization storage-node API", () => {
     }), context);
 
     expect(response.status).toBe(201);
-    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "public-org", "MANAGE_MASTER_DATA");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "public-org", "MANAGE_STORAGE_NODES");
     expect(mocks.createStorageNode).toHaveBeenCalledWith("internal-org-1", "user-1", {
       nodeType: "LOCATION_SITE",
       code: "SITE-1",
       name: "Bengaluru",
       parentId: undefined,
       entityId: "entity-1",
+      masterLocationId: undefined,
     });
+  });
+
+  it("does not list storage nodes when the dedicated view permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/storage-nodes"),
+      context,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.listStorageNodesForOrganization).not.toHaveBeenCalled();
+  });
+
+  it("does not create storage nodes when the dedicated management permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await POST(request({
+      nodeType: "LOCATION_SITE",
+      code: "SITE-1",
+      name: "Bengaluru",
+      entityId: "entity-1",
+    }), context);
+
+    expect(response.status).toBe(403);
+    expect(mocks.createStorageNode).not.toHaveBeenCalled();
   });
 
   it("rejects invalid lookup types and out-of-range lookup limits", async () => {

@@ -9,7 +9,7 @@ import {
   deleteDistributionOrderForms,
   listDistributionOrderForms,
 } from "@/lib/services/distribution/quotation-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
   try {
@@ -24,6 +24,7 @@ export async function GET(request: Request) {
         user.id,
         url.searchParams.get("organizationId") ?? "",
       );
+      await requireOrganizationPermission(user.id, organization.id, "VIEW_ORDERS");
       return organization.id;
     });
     const list = await measureDatabaseQueries(() => listDistributionOrderForms(
@@ -62,6 +63,7 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     const bookingIds = body.bookingIds;
     if (!Array.isArray(bookingIds) || !bookingIds.every((id) => typeof id === "string")) {
       throw new Error("Select one or more advance bookings.");
@@ -85,7 +87,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to create the Order Form." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }
@@ -114,6 +116,7 @@ export async function DELETE(request: Request) {
       body.organizationId,
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     const deleted = await deleteDistributionOrderForms(
       organization.id,
       user.id,
@@ -132,7 +135,7 @@ export async function DELETE(request: Request) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to delete the selected Order Forms." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }

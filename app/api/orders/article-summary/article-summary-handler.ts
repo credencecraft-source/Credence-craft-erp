@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session-manager";
 import { getArticleOrderSummaries } from "@/lib/services/orders/order-service";
 import { getArticleOrderSummaryIndex } from "@/lib/services/orders/order-summary-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -35,6 +38,7 @@ export async function GET(request: Request) {
     }
 
     const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order-summary", "view");
 
     if (hasArticle && hasSeason) {
       const normalizeLabel = (value: string | null) => value?.trim() || null;
@@ -85,7 +89,7 @@ export async function GET(request: Request) {
     return NextResponse.json(summaries);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    const status = message.includes("Access denied") ? 403 : 500;
+    const status = message.startsWith("Access denied:") ? 403 : 500;
     return NextResponse.json({ error: status === 403 ? "Access denied." : "Unable to build the article order summary." }, { status });
   }
 }

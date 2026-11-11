@@ -9,7 +9,11 @@ import {
   type OrderDetailSection,
   updateOrderWithDetails,
 } from "@/lib/services/orders/order-service";
-import { getOrganizationInternalIdForUser, requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  getOrganizationInternalIdForUser,
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
 
 const ORDER_DETAIL_SECTIONS = new Set<OrderDetailSection>(["finishedGoods", "bom", "process"]);
 
@@ -25,6 +29,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ orde
     if (!organization) {
       return NextResponse.json({ error: "Access denied or organization not found." }, { status: 403 });
     }
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "view");
     const searchParams = new URL(request.url).searchParams;
     const requestedSection = searchParams.get("section");
     if (requestedSection && !ORDER_DETAIL_SECTIONS.has(requestedSection as OrderDetailSection)) {
@@ -43,7 +48,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ orde
     return NextResponse.json({ order });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 500 });
   }
 }
 
@@ -60,6 +65,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ orde
     }
 
     const organization = await requireOrganizationContext(user.id, String(organizationId), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "edit");
     const payload = { ...body };
     delete payload.organizationId;
     delete payload.id;
@@ -68,6 +74,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ orde
     return NextResponse.json({ ok: true, order });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unable to update order.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }

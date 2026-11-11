@@ -4,7 +4,10 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { reconcileSelectedWorkOrderGrns } from "@/lib/services/inventory/work-order-grn-reconciliation-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
 
 export async function POST(request: Request) {
   try {
@@ -26,6 +29,11 @@ export async function POST(request: Request) {
       user.id,
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "INVENTORY"],
+    );
+    await requireOrganizationPermission(
+      user.id,
+      organization.id,
+      body.action === "apply" ? "MANAGE_INVENTORY_RECEIPTS" : "VIEW_INVENTORY_RECEIPTS",
     );
     const result = await reconcileSelectedWorkOrderGrns(
       organization.id,
@@ -51,7 +59,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to reconcile Work Order GRNs." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }

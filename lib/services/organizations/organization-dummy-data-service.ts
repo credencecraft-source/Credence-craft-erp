@@ -705,10 +705,16 @@ async function createOrganizationDummyDataForUser(
       orderBy: [{ sort_order: "asc" }, { id: "asc" }],
       select: { id: true },
     });
+    const stockDivision = await transaction.division.findFirst({
+      where: { organization_id: organization.id, entity_id: entity.id },
+      select: { id: true },
+    });
+    if (!stockDivision) throw new Error("The sample stock Entity must have its organization-scoped Division.");
     const stockLocation = activeStockLocation ?? await transaction.masterLocation.create({
       data: {
         organization_id: organization.id,
         entity_id: entity.id,
+        division_id: stockDivision.id,
         location_name: `Sample Data Store - ${batch.id.slice(-6)}`,
         is_active: true,
         sort_order: 0,

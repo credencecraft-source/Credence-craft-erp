@@ -7,7 +7,7 @@ import {
   isPosPurchaseRewardAvailable,
   type PosInvoiceShippingAddress,
 } from "@/lib/services/pos/pos-general-stock-sale-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -69,6 +69,25 @@ function offerSnapshot(value: unknown) {
   };
 }
 
+function parseReturnCreditApplications(value: unknown) {
+  if (value === undefined) return { applications: [], error: null };
+  if (!Array.isArray(value) || value.length > 50) {
+    return { applications: [], error: "Sales-return credits must be a list of no more than 50 entries." };
+  }
+  const applications: Array<{ returnId: string; amount: string }> = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { applications: [], error: "Each sales-return credit must include a return ID and decimal amount." };
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.returnId !== "string" || typeof record.amount !== "string") {
+      return { applications: [], error: "Each sales-return credit must include a return ID and decimal amount." };
+    }
+    applications.push({ returnId: record.returnId, amount: record.amount });
+  }
+  return { applications, error: null };
+}
+
 function encodeInvoiceCursor(invoice: { id: string; posted_at: Date }) {
   return Buffer.from(JSON.stringify({
     id: invoice.id,
@@ -126,7 +145,6 @@ export async function GET(
       });
       return NextResponse.json({ available });
     }
-
     const invoiceNumber = searchParams.get("invoiceNumber")?.trim();
     if (invoiceNumber) {
       const [invoice, issuer] = await Promise.all([
@@ -233,6 +251,8 @@ export async function GET(
           taxRate: Number(invoice.subtotal) > 0 ? Number(invoice.tax_amount) / Number(invoice.subtotal) * 100 : 0,
           taxAmount: Number(invoice.tax_amount),
           grandTotal: Number(invoice.total_amount),
+          storeCreditAppliedAmount: Number(invoice.store_credit_applied_amount ?? 0),
+          amountDue: Number(invoice.total_amount) - Number(invoice.store_credit_applied_amount ?? 0),
           savedAt: invoice.posted_at.toISOString(),
         }],
       });
@@ -286,6 +306,7 @@ export async function GET(
         igst_amount: true,
         tax_amount: true,
         total_amount: true,
+        store_credit_applied_amount: true,
         posted_at: true,
       },
       orderBy: [{ posted_at: "desc" }, { id: "desc" }],
@@ -309,6 +330,8 @@ export async function GET(
         taxRate: Number(invoice.subtotal) > 0 ? Number(invoice.tax_amount) / Number(invoice.subtotal) * 100 : 0,
         taxAmount: Number(invoice.tax_amount),
         grandTotal: Number(invoice.total_amount),
+        storeCreditAppliedAmount: Number(invoice.store_credit_applied_amount ?? 0),
+        amountDue: Number(invoice.total_amount) - Number(invoice.store_credit_applied_amount ?? 0),
         savedAt: invoice.posted_at.toISOString(),
       })),
       nextCursor: hasMore
@@ -331,10 +354,15 @@ export async function POST(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "INVENTORY"]);
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_POS_SALES");
     const body = await request.json() as Record<string, unknown>;
     const salesChannel = body.salesChannel === undefined ? "COUNTER" : body.salesChannel;
     if (salesChannel !== "COUNTER" && salesChannel !== "ONLINE_STORE") {
       return NextResponse.json({ error: "Select a valid POS sales channel." }, { status: 400 });
+    }
+    if (salesChannel === "COUNTER"
+      && (typeof body.customerContactId !== "string" || !body.customerContactId.trim())) {
+      return NextResponse.json({ error: "Select a registered customer before posting a POS invoice." }, { status: 400 });
     }
     let shippingAddress: PosInvoiceShippingAddress | null = null;
     try {
@@ -386,6 +414,10 @@ export async function POST(
     if (body.couponCode !== undefined && body.couponCode !== null && typeof body.couponCode !== "string") {
       return NextResponse.json({ error: "Enter a valid coupon code." }, { status: 400 });
     }
+    const returnCreditParse = parseReturnCreditApplications(body.returnCreditApplications);
+    if (returnCreditParse.error) {
+      return NextResponse.json({ error: returnCreditParse.error }, { status: 400 });
+    }
 
     const invoice = await createPosGeneralStockSale({
       organizationId: organization.id,
@@ -395,6 +427,7 @@ export async function POST(
       invoiceDate: String(body.invoiceDate ?? ""),
       customer: typeof body.customer === "string" ? body.customer : null,
       customerContactId: typeof body.customerContactId === "string" ? body.customerContactId : null,
+      returnCreditApplications: returnCreditParse.applications,
       couponCode: typeof body.couponCode === "string" ? body.couponCode : null,
       salesChannel,
       shippingAddress,
@@ -403,9 +436,10 @@ export async function POST(
     });
     return NextResponse.json({ invoice }, { status: 201 });
   } catch (error) {
+    const denied = error instanceof Error && error.message.startsWith("Access denied:");
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to post POS sale." },
-      { status: 400 },
+      { error: denied ? "You do not have permission to post POS sales." : error instanceof Error ? error.message : "Unable to post POS sale." },
+      { status: denied ? 403 : error instanceof Error && "code" in error && error.code === "P2034" ? 409 : 400 },
     );
   }
 }

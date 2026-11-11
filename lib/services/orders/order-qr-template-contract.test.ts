@@ -154,7 +154,10 @@ describe("parseOrderQrTemplateInput", () => {
     const pageSetup = {
       id: "setup-1",
       name: "A3 STOCK",
+      printerType: "LASER" as const,
       paperSize: "A3" as const,
+      paperWidthMm: null,
+      paperLengthMm: null,
       orientation: "LANDSCAPE" as const,
       stickerWidthMm: 50,
       stickerLengthMm: 30,
@@ -178,6 +181,65 @@ describe("parseOrderQrTemplateInput", () => {
       verticalGapMm: 4,
       portrait: false,
       paperSize: "A3",
+    });
+  });
+
+  it("uses saved custom paper dimensions to calculate the QR print sheet", () => {
+    const pageSetup = {
+      id: "custom-setup",
+      name: "CUSTOM STOCK",
+      printerType: "LASER" as const,
+      paperSize: "CUSTOM" as const,
+      paperWidthMm: 120,
+      paperLengthMm: 200,
+      orientation: "LANDSCAPE" as const,
+      stickerWidthMm: 50,
+      stickerLengthMm: 30,
+      marginTopMm: 5,
+      marginBottomMm: 5,
+      marginLeftMm: 5,
+      marginRightMm: 5,
+      horizontalGapMm: 2,
+      verticalGapMm: 2,
+    };
+
+    expect(getA4StickerGrid(50, 30, "A4_AUTO", pageSetup)).toMatchObject({
+      pageWidthMm: 200,
+      pageHeightMm: 120,
+      columns: 3,
+      rows: 3,
+      count: 9,
+      paperSize: "CUSTOM",
+    });
+  });
+
+  it("calculates a thermal roll length from the requested quantity", () => {
+    const pageSetup = {
+      id: "thermal-setup",
+      name: "58MM ROLL",
+      printerType: "THERMAL" as const,
+      paperSize: "ROLL" as const,
+      paperWidthMm: 58,
+      paperLengthMm: null,
+      orientation: "PORTRAIT" as const,
+      stickerWidthMm: 25,
+      stickerLengthMm: 30,
+      marginTopMm: 5,
+      marginBottomMm: 5,
+      marginLeftMm: 3,
+      marginRightMm: 3,
+      horizontalGapMm: 2,
+      verticalGapMm: 2,
+    };
+
+    expect(getA4StickerGrid(25, 30, "A4_AUTO", pageSetup, 3)).toMatchObject({
+      pageWidthMm: 58,
+      pageHeightMm: 72,
+      columns: 2,
+      rows: 2,
+      count: 3,
+      paperSize: "ROLL",
+      portrait: true,
     });
   });
 

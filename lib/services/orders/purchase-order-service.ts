@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { requireSameOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
+import { getEntityGstRegistrationForDate } from "@/lib/services/organizations/entity-gst-registration-resolver";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
 import { calculateTax } from "./gst-calculation-service";
 
@@ -121,6 +122,11 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
     if (masters.some((master) => master.vendor_id !== vendorId)) throw new Error("Select Master Groups from the same vendor.");
     const organization = await transaction.organization.findUnique({ where: { id: organizationId }, select: { gst_number: true, state: true, country: true } });
     if (!organization) throw new Error("Organization not found.");
+    const entityGstRegistration = await getEntityGstRegistrationForDate(
+      transaction,
+      organizationId,
+      entityId,
+    );
     const vendor = masters[0].vendor;
     let defaultTaxProfile: { tax_regime: string; cgst_rate: Prisma.Decimal | null; sgst_rate: Prisma.Decimal | null; igst_rate: Prisma.Decimal | null; vat_rate: Prisma.Decimal | null; sales_tax_rate: Prisma.Decimal | null; } | null = null;
     try {
@@ -159,8 +165,8 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         igstRate: numberValue(configuredRate?.igst_rate) ?? numberValue(defaultTaxProfile?.igst_rate),
         vatRate: numberValue(defaultTaxProfile?.vat_rate),
         salesTaxRate: numberValue(defaultTaxProfile?.sales_tax_rate),
-        organizationState: organization.state,
-        organizationGstin: organization.gst_number,
+        organizationState: entityGstRegistration?.registration_state ?? organization.state,
+        organizationGstin: entityGstRegistration?.gstin ?? organization.gst_number,
         vendorState: vendor.registeredState?.state ?? vendor.registered_state,
         vendorGstin: vendor.gst_number,
       });

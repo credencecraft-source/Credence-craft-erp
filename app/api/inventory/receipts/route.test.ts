@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
     inventoryReceiptDeleteMany,
     requireSessionUser: vi.fn(),
     requireOrganizationContext: vi.fn(),
+    requireOrganizationPermission: vi.fn(),
     reserveChallanNumber: vi.fn(),
     createAuditEvent: vi.fn(),
     saveRmGrnVerificationInTransaction: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/organizations/challan-number-configuration-service", () => ({
@@ -57,6 +59,7 @@ describe("inventory receipt verification posting", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1", full_name: "Receiver", email: "receiver@example.test" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.reserveChallanNumber.mockResolvedValue("GRN-1");
     mocks.createAuditEvent.mockResolvedValue(undefined);
     mocks.saveRmGrnVerificationInTransaction.mockResolvedValue({ created: true, verificationId: "verification-1" });
@@ -287,6 +290,11 @@ describe("inventory receipt verification posting", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org", ["OWNER", "ADMIN", "INVENTORY"]);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "DELETE_INVENTORY_RECEIPTS",
+    );
     expect(mocks.transaction.rawMaterialStock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         id: "stock-1",
@@ -312,6 +320,19 @@ describe("inventory receipt verification posting", () => {
       entityType: "InventoryReceipt",
       entityId: "receipt-1",
     }), mocks.transaction);
+  });
+
+  it("does not start GRN deletion when the dedicated permission is denied", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
+      method: "DELETE",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.prismaTransaction).not.toHaveBeenCalled();
+    expect(mocks.inventoryReceiptDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.rawMaterialStock.updateMany).not.toHaveBeenCalled();
   });
 
   it("reverses a pre-migration GRN from the legacy aggregate row", async () => {

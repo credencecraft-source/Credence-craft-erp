@@ -7,6 +7,7 @@ import {
   createContact,
   deactivateContacts,
   deleteUnusedContacts,
+  findCustomerContactsByMobile,
   getContactRoleCounts,
   listContacts,
   listContactReportPage,
@@ -81,6 +82,11 @@ export async function GET(
     if (!auth.authorized) return auth.response;
     const searchParams = new URL(request.url).searchParams;
     const search = searchParams.get("search") ?? undefined;
+    const mobile = searchParams.get("mobile");
+    if (mobile !== null) {
+      const records = await findCustomerContactsByMobile(auth.organizationId, mobile);
+      return NextResponse.json({ records });
+    }
     if (searchParams.get("summary") === "true") {
       return NextResponse.json(await getContactRoleCounts(auth.organizationId));
     }

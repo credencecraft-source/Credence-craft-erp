@@ -7,7 +7,7 @@ import {
   listQuotationBookingFulfillment,
   reverseQuotationBookingFulfillment,
 } from "@/lib/services/distribution/quotation-booking-fulfillment-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 type RouteContext = { params: Promise<{ quotationId: string }> };
 
@@ -26,7 +26,8 @@ function errorResponse(error: unknown, fallback: string) {
     });
     return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
   }
-  return NextResponse.json({ error: error instanceof Error ? error.message : fallback }, { status: 400 });
+  const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+  return NextResponse.json({ error: error instanceof Error ? error.message : fallback }, { status });
 }
 
 export async function GET(request: Request, context: RouteContext) {
@@ -36,6 +37,7 @@ export async function GET(request: Request, context: RouteContext) {
       user.id,
       new URL(request.url).searchParams.get("organizationId") ?? "",
     );
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_ORDERS");
     const { quotationId } = await context.params;
     return NextResponse.json(await listQuotationBookingFulfillment(organization.id, quotationId));
   } catch (error) {
@@ -58,6 +60,7 @@ export async function POST(request: Request, context: RouteContext) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_FINISHED_GOODS_OUTWARD");
     const { quotationId } = await context.params;
     const result = await reverseQuotationBookingFulfillment(
       organization.id,

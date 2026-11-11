@@ -8,7 +8,7 @@ import {
   RmGrnOrderAllocationNotFoundError,
   saveRmGrnOrderAllocations,
 } from "@/lib/services/inventory/rm-grn-order-allocation-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 function errorResponse(error: unknown, fallback: string) {
   if (error instanceof RmGrnOrderAllocationNotFoundError) {
@@ -26,7 +26,8 @@ function errorResponse(error: unknown, fallback: string) {
     }
   }
   if (error instanceof Error && !(error instanceof Prisma.PrismaClientKnownRequestError)) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    const status = error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error.message }, { status });
   }
   return NextResponse.json({ error: fallback }, { status: 500 });
 }
@@ -36,6 +37,7 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_INVENTORY_RECEIPTS");
     const allocationId = searchParams.get("allocationId")?.trim() ?? "";
     if (!allocationId) return NextResponse.json({ error: "GRN allocation is required." }, { status: 400 });
 
@@ -55,6 +57,7 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_INVENTORY_RECEIPTS");
     const allocationId = String(body.allocationId ?? "").trim();
     if (!allocationId) return NextResponse.json({ error: "GRN allocation is required." }, { status: 400 });
 

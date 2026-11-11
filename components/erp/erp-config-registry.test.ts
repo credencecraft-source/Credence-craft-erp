@@ -108,6 +108,40 @@ describe("POS contact navigation", () => {
       pathSegment: "cupencode",
     });
   });
+
+  it("adds Sales Return to the POS sidebar at the sales-return route", () => {
+    const pos = ERP_MODULES.find((module) => module.key === "pos");
+    const salesReturn = pos?.children.find((child) => child.key === "sales-return");
+
+    expect(salesReturn).toMatchObject({
+      label: "Sales Return",
+      pathSegment: "sales-return",
+    });
+  });
+
+  it("links Online Store directly to its settings page in the POS sidebar", () => {
+    const pos = ERP_MODULES.find((module) => module.key === "pos");
+    const onlineStore = pos?.children.find((child) => child.key === "online-store");
+
+    expect(onlineStore).toMatchObject({
+      label: "Online Store",
+      href: "/pos/online-store/manage",
+    });
+    expect(onlineStore?.children).toBeUndefined();
+  });
+});
+
+describe("organization Admin integration navigation", () => {
+  it("nests WhatsApp under Admin > Integrations at the organization route", () => {
+    const admin = ERP_MODULES.find((module) => module.key === "admin");
+    const integrations = admin?.children.find((child) => child.key === "integrations");
+
+    expect(integrations).toMatchObject({
+      label: "Integrations",
+      pathSegment: "integrations",
+      children: [{ key: "whatsapp", label: "WhatsApp", pathSegment: "whatsapp" }],
+    });
+  });
 });
 
 describe("organization route module resolution", () => {
@@ -120,6 +154,10 @@ describe("organization route module resolution", () => {
     )?.key).toBe("order-management");
     expect(getErpModuleForOrganizationPath(
       `${organizationPath}/pos/quick-invoice`,
+      organizationPath,
+    )?.key).toBe("pos");
+    expect(getErpModuleForOrganizationPath(
+      `${organizationPath}/pos/online-store/manage`,
       organizationPath,
     )?.key).toBe("pos");
   });
@@ -177,5 +215,31 @@ describe("Inventory Management outward navigation", () => {
       label: "FG Issued",
       pathSegment: "fg-issued",
     });
+  });
+});
+
+describe("Uniform Management module navigation", () => {
+  const organizationPath = "/dashboard/workspace/organizations/organization";
+
+  it("registers a top-level module with a Dashboard entry and resolves its organization route", () => {
+    const uniformManagement = ERP_MODULES.find((module) => module.key === "uniform-management");
+
+    expect(uniformManagement).toMatchObject({
+      key: "uniform-management",
+      label: "Uniform Management",
+      pathSegment: "uniform-management",
+      children: [
+        { key: "dashboard", label: "Dashboard", pathSegment: "dashboard" },
+        { key: "styles", label: "Uniform Styles", pathSegment: "styles" },
+        { key: "people", label: "People", pathSegment: "people" },
+        { key: "take-measurements", label: "Take Measurements", pathSegment: "take-measurements" },
+        { key: "grouped-measurements", label: "Grouped Measurements", pathSegment: "grouped-measurements" },
+      ],
+    });
+    expect(getErpModuleForBusinessTypeName("Uniform Management")?.key).toBe("uniform-management");
+    expect(getErpModuleForOrganizationPath(
+      `${organizationPath}/uniform-management/dashboard`,
+      organizationPath,
+    )?.key).toBe("uniform-management");
   });
 });

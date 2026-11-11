@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { createArticleBasedOrders } from "@/lib/services/orders/article-based-order-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
 
 export async function POST(request: Request) {
   try {
@@ -17,6 +20,7 @@ export async function POST(request: Request) {
       organizationId,
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "create");
     let body: unknown;
     try {
       body = await request.json();
@@ -48,6 +52,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
     const message = error instanceof Error ? error.message : "Unable to create Article orders.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }

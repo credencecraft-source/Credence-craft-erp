@@ -552,6 +552,42 @@ export async function listContactReportPage(
   };
 }
 
+export async function findCustomerContactsByMobile(organizationId: string, value: string) {
+  const digits = value.replace(/\D/g, "");
+  const mobile = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+  if (!/^[6-9]\d{9}$/.test(mobile)) {
+    throw new ContactValidationError("Enter a valid 10-digit Indian mobile number.");
+  }
+  const matchingContacts = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT contact.id
+    FROM contacts AS contact
+    WHERE contact.organization_id = ${organizationId}
+      AND contact.is_active = TRUE
+      AND regexp_replace(COALESCE(contact.phone, ''), '[^0-9]', '', 'g') IN (${mobile}, ${`91${mobile}`})
+      AND EXISTS (
+        SELECT 1
+        FROM contact_role_assignments AS assignment
+        WHERE assignment.organization_id = contact.organization_id
+          AND assignment.contact_id = contact.id
+          AND assignment.role_code = 'CUSTOMER'
+          AND assignment.is_active = TRUE
+      )
+    ORDER BY contact.created_at ASC, contact.id ASC
+    LIMIT 2
+  `);
+  if (matchingContacts.length === 0) return [];
+  return prisma.contact.findMany({
+    where: {
+      organization_id: organizationId,
+      id: { in: matchingContacts.map((contact) => contact.id) },
+      is_active: true,
+      roles: { some: { role_code: "CUSTOMER", is_active: true } },
+    },
+    select: { id: true, legal_name: true, display_name: true, phone: true },
+    orderBy: [{ created_at: "asc" }, { id: "asc" }],
+  });
+}
+
 export async function getContactRoleCounts(organizationId: string, database: ContactDatabase = prisma) {
   const [counts] = await database.$queryRaw<Array<{
     total: bigint;

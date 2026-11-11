@@ -1,5 +1,6 @@
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import {
+  getThermalRollLayout,
   getPageSetupStickerGrid,
   parsePageSetupPrintSnapshot,
   type PageSetupPrintSnapshot,
@@ -154,16 +155,27 @@ export function getA4StickerGrid(
   stickerLengthMm: number,
   paperSize: OrderQrPdfPaperSize,
   pageSetup?: PageSetupPrintSnapshot | null,
+  quantity = 1,
 ) {
   if (pageSetup) {
-    const grid = getPageSetupStickerGrid(
-      pageSetup.paperSize,
-      pageSetup.orientation,
-      stickerWidthMm,
-      stickerLengthMm,
-      pageSetup,
-    );
-    if (grid.count < 1) return null;
+    const grid = pageSetup.printerType === "THERMAL"
+      ? getThermalRollLayout(
+        pageSetup.paperWidthMm ?? 0,
+        quantity,
+        stickerWidthMm,
+        stickerLengthMm,
+        pageSetup,
+      )
+      : getPageSetupStickerGrid(
+        pageSetup.paperSize,
+        pageSetup.orientation,
+        stickerWidthMm,
+        stickerLengthMm,
+        pageSetup,
+        pageSetup.paperWidthMm,
+        pageSetup.paperLengthMm,
+      );
+    if (!grid || grid.count < 1) return null;
     return {
       ...grid,
       pageHeightMm: grid.pageLengthMm,
@@ -173,7 +185,8 @@ export function getA4StickerGrid(
       marginLeftMm: pageSetup.marginLeftMm,
       horizontalGapMm: pageSetup.horizontalGapMm,
       verticalGapMm: pageSetup.verticalGapMm,
-      portrait: pageSetup.orientation === "PORTRAIT",
+      portrait: pageSetup.printerType === "THERMAL"
+        || pageSetup.orientation === "PORTRAIT",
       paperSize: pageSetup.paperSize,
     };
   }

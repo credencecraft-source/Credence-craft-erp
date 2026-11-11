@@ -6,7 +6,7 @@ import {
   DATABASE_UNAVAILABLE_MESSAGE,
   isDatabaseUnavailableError,
 } from "@/lib/database/database-errors";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   getOrderQrTemplate,
   OrderQrTemplatePageSetupNotFoundError,
@@ -18,7 +18,7 @@ const ALLOWED_ROLES = ["OWNER", "ADMIN", "MERCHANDISING"];
 const SCHEMA_NOT_READY_MESSAGE =
   "QR template storage is not ready. Apply pending database migrations before using this feature.";
 
-async function authorizeOrganization(request: Request) {
+async function authorizeOrganization(request: Request, requireManagePermission = false) {
   const user = await requireSessionUser();
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
@@ -39,6 +39,9 @@ async function authorizeOrganization(request: Request) {
 
   try {
     const organization = await requireOrganizationContext(user.id, organizationId, ALLOWED_ROLES);
+    if (requireManagePermission) {
+      await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+    }
     return { authorized: true as const, user, organization };
   } catch (error) {
     if (
@@ -100,7 +103,7 @@ export async function PATCH(
   context: { params: Promise<{ templateId: string }> },
 ): Promise<NextResponse> {
   try {
-    const authorization = await authorizeOrganization(request);
+    const authorization = await authorizeOrganization(request, true);
     if (!authorization.authorized) return authorization.response;
 
     let body: unknown;

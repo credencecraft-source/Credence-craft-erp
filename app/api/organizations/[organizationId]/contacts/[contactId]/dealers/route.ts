@@ -6,7 +6,7 @@ import {
   removeDistributorDealer,
   replaceDistributorDealers,
 } from "@/lib/services/master-data/distributor-dealer-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 async function authorizedContext(organizationPublicId: string) {
   const user = await getSessionUser();
@@ -30,6 +30,9 @@ export async function GET(
     if (!auth) return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
     return NextResponse.json(await listDistributorDealers(auth.organization.id, contactId));
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({
       error: error instanceof Error ? error.message : "Unable to load Distributor Dealers.",
     }, { status: 400 });
@@ -44,6 +47,7 @@ export async function PUT(
     const { organizationId, contactId } = await context.params;
     const auth = await authorizedContext(organizationId);
     if (!auth) return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
+    await requireOrganizationPermission(auth.user.id, auth.organization.id, "MANAGE_MASTER_DATA");
     const body = await request.json() as { dealerIds?: unknown };
     if (!Array.isArray(body.dealerIds) || body.dealerIds.some((id) => typeof id !== "string")) {
       return NextResponse.json({ error: "Dealer IDs must be provided as an array." }, { status: 400 });
@@ -56,6 +60,9 @@ export async function PUT(
     );
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({
       error: error instanceof Error ? error.message : "Unable to save Distributor Dealers.",
     }, { status: 400 });
@@ -70,6 +77,7 @@ export async function DELETE(
     const { organizationId, contactId } = await context.params;
     const auth = await authorizedContext(organizationId);
     if (!auth) return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
+    await requireOrganizationPermission(auth.user.id, auth.organization.id, "MANAGE_MASTER_DATA");
     const body = await request.json() as { dealerId?: unknown };
     if (typeof body.dealerId !== "string" || !body.dealerId.trim()) {
       return NextResponse.json({ error: "Dealer ID is required." }, { status: 400 });
@@ -82,6 +90,9 @@ export async function DELETE(
     );
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({
       error: error instanceof Error ? error.message : "Unable to remove the Distributor Dealer.",
     }, { status: 400 });

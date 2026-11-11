@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import ArticleEditorPage from "../../../article/_page-content/article-editor-page";
 import MasterDataEditorPage from "../../../../../settings/master-data/[moduleKey]/master-data-editor-page";
 import SizeGroupRecordDetailPage from "./size-group-record-detail-page";
@@ -12,6 +14,12 @@ export default async function MasterDataRecordDetailPage({
 }) {
   const [resolvedParams, query] = await Promise.all([params, searchParams]);
   const formMode = getMasterRecordDetailMode(query.mode);
+  if (resolvedParams.moduleKey === "entity" && formMode === "view") {
+    const saved = typeof query.saved === "string" ? `?saved=${encodeURIComponent(query.saved)}` : "";
+    redirect(
+      `/dashboard/${encodeURIComponent(resolvedParams.workspaceId)}/organizations/${encodeURIComponent(resolvedParams.organizationId)}/admin/master-data/entity/${encodeURIComponent(resolvedParams.recordCode)}/divisions${saved}`,
+    );
+  }
   if (resolvedParams.moduleKey === "size-group") {
     return <SizeGroupRecordDetailPage
       params={Promise.resolve(resolvedParams)}

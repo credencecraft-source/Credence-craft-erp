@@ -24,6 +24,7 @@ const GENERAL_MASTER_DEFINITIONS: MasterDefinition[] = [
     text("node_code", "Storage Code", { required: true, unique: true }),
     text("node_name", "Name", { required: true, unique: true }),
     lookup("entity_id", "Legal Entity (Location/Site only)", "entity"),
+    lookup("master_location_id", "Operational Location (optional)", "location", { dependsOn: "entity_id" }),
     lookup("parent_node_id", "Parent Storage Node", "storage-node"),
   ], { labelField: "node_name", moduleGroup: "settings", moduleSubGroup: "general", moduleOrder: 3 }),
 ];

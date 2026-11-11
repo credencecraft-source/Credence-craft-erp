@@ -7,7 +7,7 @@ import {
   allocateSalesOrder,
   getSalesOrderAllocationData,
 } from "@/lib/services/distribution/advance-booking-allocation-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 type RouteContext = { params: Promise<{ quotationId: string }> };
 
@@ -38,9 +38,13 @@ export async function GET(request: Request, context: RouteContext) {
     const user = await requireSessionUser();
     const search = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_ORDERS");
     const { quotationId } = await context.params;
     return NextResponse.json(await getSalesOrderAllocationData(organization.id, quotationId));
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return errorResponse(error, "Unable to load Sales Order allocation.");
   }
 }
@@ -57,6 +61,12 @@ export async function POST(request: Request, context: RouteContext) {
     if (typeof body.organizationId !== "string" || !body.organizationId.trim()) {
       throw new Error("Select the organization for this Sales Order allocation.");
     }
+    const organization = await requireOrganizationContext(user.id, body.organizationId);
+    await requireOrganizationPermission(
+      user.id,
+      organization.id,
+      body.mode === "GENERAL" ? "MANAGE_FINISHED_GOODS_OUTWARD" : "UPDATE_FACTORY_PRODUCTION",
+    );
     let workOrderSelections: Array<{ orderId: string; workOrderId: string }> = [];
     if (body.workOrders !== undefined) {
       if (!Array.isArray(body.workOrders) || body.workOrders.length > 200) {
@@ -79,6 +89,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return errorResponse(error, "Unable to allocate this Sales Order.");
   }
 }

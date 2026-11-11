@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const transaction = {
     masterEntity: { findFirst: vi.fn() },
+    masterLocation: { findFirst: vi.fn() },
     storageNode: {
       count: vi.fn(),
       create: vi.fn(),
@@ -39,6 +40,7 @@ describe("organization storage hierarchy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.transaction.masterEntity.findFirst.mockResolvedValue({ id: "entity-1" });
+    mocks.transaction.masterLocation.findFirst.mockResolvedValue({ id: "location-1" });
     mocks.transaction.storageNode.count.mockResolvedValue(0);
     mocks.transaction.storageNode.create.mockImplementation(async ({ data }) => ({
       id: "node-created",
@@ -105,7 +107,7 @@ describe("organization storage hierarchy", () => {
       code: "STORE-1",
       name: "Fabric Store",
       parentId: "wrong-parent",
-    })).rejects.toThrow("A warehouse is required.");
+    })).rejects.toThrow("Select an active parent at a valid higher hierarchy level.");
     expect(mocks.transaction.storageNode.create).not.toHaveBeenCalled();
 
     mocks.transaction.storageNode.findFirst.mockResolvedValue(null);
@@ -153,6 +155,23 @@ describe("organization storage hierarchy", () => {
     )).rejects.toThrow("Select an active storage node belonging to this organization.");
   });
 
+  it("supports a Bin directly under a Location when intermediate levels are unused", async () => {
+    const hierarchy = [
+      { id: "bin-1", node_type: "BIN", parent_node_id: "site-1", parent_node_type: "LOCATION_SITE", entity_id: null, is_active: true },
+      { id: "site-1", node_type: "LOCATION_SITE", parent_node_id: null, parent_node_type: null, entity_id: "entity-1", is_active: true },
+    ];
+    mocks.transaction.storageNode.findFirst.mockImplementation(async ({ where }) =>
+      hierarchy.find((node) => node.id === where.id) ?? null,
+    );
+
+    await expect(getActiveBinPlacement(
+      mocks.transaction as never,
+      "org-1",
+      "bin-1",
+      "entity-1",
+    )).resolves.toMatchObject({ id: "bin-1", node_type: "BIN" });
+  });
+
   it("does not deactivate a node while it has active children", async () => {
     mocks.transaction.storageNode.findFirst.mockResolvedValue({
       id: "site-1",
@@ -187,37 +206,46 @@ describe("organization storage hierarchy", () => {
         organization_id: "org-1",
         is_active: true,
         node_type: "BIN",
-        parent: {
-          is: {
-            node_type: "RACK",
-            is_active: true,
-            parent: {
-              is: {
-                node_type: "SUB_STORE",
-                is_active: true,
-                parent: {
-                  is: {
-                    node_type: "WAREHOUSE",
-                    is_active: true,
-                    parent: {
-                      is: {
-                        node_type: "LOCATION_SITE",
-                        entity_id: "entity-1",
-                        is_active: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+        AND: [
+          expect.objectContaining({
+            OR: expect.arrayContaining([
+              expect.objectContaining({ node_type: "BIN", parent: expect.any(Object) }),
+            ]),
+          }),
+        ],
         OR: expect.arrayContaining([
           { node_code: { contains: "bin", mode: "insensitive" } },
           { node_name: { contains: "bin", mode: "insensitive" } },
         ]),
       }),
       take: 51,
+    }));
+  });
+
+  it("can search all storage hierarchy levels under the selected Entity", async () => {
+    await listStorageNodesForOrganization("org-1", {
+      siteEntityId: "entity-1",
+      search: "store",
+      limit: 50,
+    });
+
+    expect(mocks.storageNode.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-1",
+        AND: [expect.objectContaining({
+          OR: expect.arrayContaining([
+            { node_type: "LOCATION_SITE", entity_id: "entity-1", is_active: true },
+            expect.objectContaining({ node_type: "WAREHOUSE", parent: expect.any(Object) }),
+            expect.objectContaining({ node_type: "SUB_STORE", parent: expect.any(Object) }),
+            expect.objectContaining({ node_type: "RACK", parent: expect.any(Object) }),
+            expect.objectContaining({ node_type: "BIN", parent: expect.any(Object) }),
+          ]),
+        })],
+        OR: expect.arrayContaining([
+          { node_code: { contains: "store", mode: "insensitive" } },
+          { node_name: { contains: "store", mode: "insensitive" } },
+        ]),
+      }),
     }));
   });
 });

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationAccess, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   createFinishedGoodsCategoryHierarchy,
   FinishedGoodsCategoryHierarchyError,
@@ -31,6 +31,7 @@ export async function POST(
       return NextResponse.json({ error: "Organization not found." }, { status: 404 });
     }
     await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
     let body: unknown;
     try {

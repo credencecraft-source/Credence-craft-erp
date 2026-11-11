@@ -8,7 +8,10 @@ import {
   type OrderQrTemplateLayout,
   type OrderQrDisplayFieldStyle,
 } from "@/lib/services/orders/order-qr-template-contract";
-import type { PageSetupPrintSnapshot } from "@/lib/services/design-development/page-setup-template-contract";
+import {
+  getThermalRollLayout,
+  type PageSetupPrintSnapshot,
+} from "@/lib/services/design-development/page-setup-template-contract";
 
 export type OrderQrPrintOutputRecord = {
   orderNo: string;
@@ -135,6 +138,38 @@ export async function createOrderQrPrintPdf(
       Array.from({ length: item.quantity }, () => providedStickers[index]),
     )
     : providedStickers;
+  if (record.pageSetup?.printerType === "THERMAL") {
+    const roll = getThermalRollLayout(
+      record.pageSetup.paperWidthMm ?? 0,
+      stickers.length,
+      record.stickerWidthMm,
+      record.stickerLengthMm,
+      record.pageSetup,
+    );
+    if (!roll) {
+      throw new Error(
+        "The sticker does not fit the selected thermal roll width. Change the roll width, sticker size, or margins.",
+      );
+    }
+    const format: [number, number] = [roll.pageWidthMm, roll.pageLengthMm];
+    const orientation = roll.pageWidthMm >= roll.pageLengthMm
+      ? "landscape"
+      : "portrait";
+    const pdf = new jsPDF({ orientation, unit: "mm", format });
+    for (let index = 0; index < stickers.length; index += 1) {
+      const row = Math.floor(index / roll.columns);
+      const column = index % roll.columns;
+      pdf.addImage(
+        stickers[index],
+        "PNG",
+        roll.startXmm + column * (record.stickerWidthMm + record.pageSetup.horizontalGapMm),
+        roll.startYmm + row * (record.stickerLengthMm + record.pageSetup.verticalGapMm),
+        record.stickerWidthMm,
+        record.stickerLengthMm,
+      );
+    }
+    return pdf.output("blob");
+  }
   if (record.layout.printerType === "LASER" || record.pageSetup) {
     const grid = getA4StickerGrid(
       record.stickerWidthMm,
@@ -148,7 +183,9 @@ export async function createOrderQrPrintPdf(
       );
     }
     const orientation = grid.portrait ? "portrait" : "landscape";
-    const format = grid.paperSize.toLowerCase();
+    const format = grid.paperSize === "CUSTOM"
+      ? [grid.pageWidthMm, grid.pageHeightMm]
+      : grid.paperSize.toLowerCase();
     const pdf = new jsPDF({ orientation, unit: "mm", format });
     for (let index = 0; index < stickers.length; index += 1) {
       if (index > 0 && index % grid.count === 0) pdf.addPage(format, orientation);

@@ -25,6 +25,7 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     masterColor: delegate(),
     masterCurrencyType: delegate(),
     masterEntity: delegate(),
+    division: delegate(),
     rawMaterialStock: delegate(),
     rawMaterialStockBooking: delegate(),
     generalPurchaseOrderRequest: delegate(),
@@ -82,6 +83,7 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     gateEntry: { findMany: vi.fn() },
     inventoryReceipt: { findMany: vi.fn() },
     masterLocation: { findFirst: vi.fn(), count: vi.fn(), create: vi.fn() },
+    division: { findFirst: vi.fn().mockResolvedValue({ id: "division-1" }) },
     factoryWorkOrder: { findMany: vi.fn().mockResolvedValue([]) },
   };
   return {
@@ -235,6 +237,7 @@ beforeEach(() => {
   transactionMock.organizationDummyDataBatch.update.mockResolvedValue({});
   transactionMock.organizationDummyDataBatch.upsert.mockResolvedValue({ id: "batch-id", status: "EMPTY" });
   transactionMock.masterEntity.findFirst.mockResolvedValue({ id: "org-entity-id" });
+  transactionMock.division.findFirst.mockResolvedValue({ id: "org-division-id" });
   transactionMock.masterLocation.findFirst.mockResolvedValue({ id: "active-location-id" });
   transactionMock.masterProduct.findFirst.mockResolvedValue({ id: "finished-goods-id" });
   transactionMock.masterRawMaterialType.findFirst.mockResolvedValue({ id: "raw-material-type-id" });
@@ -629,6 +632,7 @@ describe("organization dummy data service", () => {
       data: expect.objectContaining({
         organization_id: organization.id,
         entity_id: "org-entity-id",
+        division_id: "org-division-id",
         location_name: "Sample Data Store - tch-id",
         is_active: true,
       }),

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createDomain: vi.fn(),
   listDomains: vi.fn(),
   verifyDomain: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/pos/public-online-store-service", () => ({
   createOrganizationOnlineStoreDomain: mocks.createDomain,
@@ -36,6 +38,7 @@ describe("POS online-store domain settings API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listDomains.mockResolvedValue([]);
     mocks.verifyDomain.mockResolvedValue({ id: "domain-1", hostname: "shop.example.com", status: "VERIFIED" });
     mocks.isVercelConfigured.mockReturnValue(false);
@@ -50,6 +53,11 @@ describe("POS online-store domain settings API", () => {
       "user-1",
       "public-org",
       ["OWNER", "ADMIN"],
+    );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "VIEW_POS_ONLINE_STORE",
     );
     expect(mocks.listDomains).toHaveBeenCalledWith("internal-org-1");
     await expect(response.json()).resolves.toMatchObject({
@@ -69,6 +77,11 @@ describe("POS online-store domain settings API", () => {
     );
 
     expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "MANAGE_POS_ONLINE_STORE",
+    );
     expect(mocks.createDomain).toHaveBeenCalledWith({
       organization: { id: "internal-org-1" },
       actorId: "user-1",
@@ -103,10 +116,32 @@ describe("POS online-store domain settings API", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "MANAGE_POS_ONLINE_STORE",
+    );
     expect(mocks.verifyDomain).toHaveBeenCalledWith({
       organization: { id: "internal-org-1" },
       actorId: "user-1",
       domainId: "domain-1",
     });
+  });
+
+  it("does not create domains when management permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(
+      new Error("Access denied: This role does not have the required permission."),
+    );
+    const response = await POST(
+      new Request("http://localhost/api/domains", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hostname: "shop.example.com", provider: "MANUAL" }),
+      }),
+      context,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.createDomain).not.toHaveBeenCalled();
   });
 });

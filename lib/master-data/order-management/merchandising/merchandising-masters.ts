@@ -1,7 +1,16 @@
 import { createMaster, lookup, text } from "@/lib/master-data/master-data-models";
 
 export const MERCHANDISING_MASTER_DEFINITIONS = [
-  createMaster("entity", "Entity", "Company and legal entity names.", [text("entity_name", "Entity Name", { required: true, unique: true })], { moduleGroup: "settings", moduleSubGroup: "general", moduleOrder: 1 }),
+  createMaster("entity", "Entity", "Company, registered GST, and address details.", [
+    text("entity_name", "Entity Name", { required: true, unique: true }),
+    text("gstin", "GSTIN"),
+    text("registered_address_line_1", "Registered Address Line 1"),
+    text("registered_address_line_2", "Registered Address Line 2"),
+    text("registered_city", "City"),
+    text("registered_state", "State"),
+    text("registered_postal_code", "Postal Code"),
+    text("registered_country", "Country"),
+  ], { moduleGroup: "settings", moduleSubGroup: "general", moduleOrder: 1 }),
   createMaster("category", "Finished Goods Category", "Finished goods category master.", [lookup("Product_Master", "Finished Goods Type", "product-master", { required: true }), text("Category_Name", "Finished Goods Category Name", { required: true, unique: true }), text("Maximum_Excess_Allowed", "Maximum Excess Allowed", { type: "percentage" })], { labelField: "Category_Name", moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 2 }),
   createMaster("sub-category", "Finished Goods Subcategory", "Finished goods subcategory values linked to a category.", [lookup("category", "Finished Goods Category", "category", { required: true }), text("sub_category", "Finished Goods Subcategory Name", { required: true, unique: true })], { labelField: "sub_category", moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 3 }),
   createMaster("brand", "Brand", "Brand or label master.", [text("Brand", "Brand", { required: true, unique: true }), text("Maximum_Allowed_Excess", "Maximum Allowed Excess", { type: "percentage" }), text("Auto_add_Excess_to_RM", "Auto add Excess to RM", { type: "checkbox" }), lookup("Pre_Order_Checklist1", "Pre Order Checklist", "pre-order-checklist")], { labelField: "Brand", moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 4 }),
@@ -44,7 +53,28 @@ export const MERCHANDISING_MASTER_DEFINITIONS = [
   createMaster("size-group", "Size Group", "Grouped size families with their mapped sizes.", [lookup("Brand1", "Brand", "brand", { required: true }), text("Size_Group", "Size Group", { required: true, unique: true }), lookup("Measurement_Chart1", "Measurement Chart", "measurement-chart"), lookup("Size", "Sizes", "size", { multiple: true, required: true })], { labelField: "Size_Group", moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 9 }),
   createMaster("size", "Size", "Reusable size values mapped to groups from the Size Group master.", [text("Size", "Size", { required: true, unique: true })], { moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 10 }),
   createMaster("category-type", "RM Category Type", "RM category type lookup values.", [text("Category_Type1", "RM Category Type", { required: true, unique: true }), text("Books_Item_ID", "Books Item ID")], { hidden: true, moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 11 }),
-  createMaster("measurement-chart", "Measurement Chart", "Measurement chart lookup values.", [text("Measurement_Chart", "Measurement Chart", { required: true, unique: true })], { moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 12 }),
+  createMaster("measurement-chart", "Measurement Chart", "Measurement chart templates with their ordered measurement-area subforms.", [
+    text("Measurement_Chart", "Measurement Chart", { required: true, unique: true }),
+    {
+      key: "Measurement_Areas",
+      label: "Measurement Areas",
+      type: "child-list",
+      childModuleKey: "measurement-chart-detail",
+      childFields: [
+        text("measurement_area_name", "Measurement Area", { required: true }),
+        text("minimum_value", "Min", { type: "decimal", required: true }),
+        text("maximum_value", "Max", { type: "decimal", required: true }),
+        lookup("size_id", "Size", "size", { required: true }),
+      ],
+    },
+  ], { moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 12 }),
+  createMaster("measurement-chart-detail", "Measurement Chart Area", "Ordered measurement-area rows with measurement ranges and mapped sizes belonging to a Measurement Chart template.", [
+    text("measurement_area_name", "Measurement Area", { required: true }),
+    text("minimum_value", "Min", { type: "decimal", required: true }),
+    text("maximum_value", "Max", { type: "decimal", required: true }),
+    lookup("size_id", "Size", "size", { required: true }),
+  ], { labelField: "measurement_area_name", hidden: true, moduleGroup: "order-management", moduleSubGroup: "merchandising" }),
+  createMaster("measurement-group", "Group Measurements", "Reusable groups for employee measurement records.", [text("group_name", "Group Name", { required: true, unique: true })], { labelField: "group_name", moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 16 }),
   createMaster("pre-order-checklist", "Pre Order Checklist", "Pre-order checklist lookup values.", [text("Pre_Order_Checklist", "Pre Order Checklist", { required: true, unique: true })], { moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 13 }),
   createMaster("merchandiser", "Merchandiser", "User and merchandiser assignment master.", [text("merchandiser", "Merchandiser", { required: true })], { moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 14 }),
   createMaster("order-volume", "Order Volume", "Order volume classifications.", [text("Order_Volume", "Order Volume", { required: true }), text("From", "From", { type: "number" }), text("To", "To", { type: "number" })], { moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 15 }),

@@ -13,18 +13,27 @@ import {
   DEFAULT_PAGE_SETUP_LAYOUT,
   PAGE_SETUP_GAP_MAX_MM,
   PAGE_SETUP_MARGIN_MAX_MM,
+  PAGE_SETUP_PAPER_MAX_MM,
+  PAGE_SETUP_PAPER_MIN_MM,
+  PAGE_SETUP_CUSTOM_PAPER_SIZE,
+  PAGE_SETUP_ROLL_PAPER_SIZE,
   DEFAULT_PAGE_SETUP_STICKER_LENGTH_MM,
   DEFAULT_PAGE_SETUP_STICKER_WIDTH_MM,
   PAGE_SETUP_ORIENTATIONS,
   PAGE_SETUP_PAPER_SIZES,
+  PAGE_SETUP_PRINTER_TYPES,
   type PageSetupOrientation,
   type PageSetupPaperSize,
+  type PageSetupPrinterType,
 } from "@/lib/services/design-development/page-setup-template-contract";
 
 type PageSetupTemplate = {
   id: string;
   name: string;
+  printerType: PageSetupPrinterType;
   paperSize: PageSetupPaperSize;
+  paperWidthMm: number | null;
+  paperLengthMm: number | null;
   orientation: PageSetupOrientation;
   stickerWidthMm: number;
   stickerLengthMm: number;
@@ -49,7 +58,10 @@ export default function PageSetupTemplateFormPage({
   const baseHref =
     `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/page-setup`;
   const [name, setName] = useState("");
+  const [printerType, setPrinterType] = useState<PageSetupPrinterType>("LASER");
   const [paperSize, setPaperSize] = useState<PageSetupPaperSize>("A4");
+  const [paperWidthMm, setPaperWidthMm] = useState("210");
+  const [paperLengthMm, setPaperLengthMm] = useState("297");
   const [orientation, setOrientation] = useState<PageSetupOrientation>("PORTRAIT");
   const [stickerWidthMm, setStickerWidthMm] = useState(
     String(DEFAULT_PAGE_SETUP_STICKER_WIDTH_MM),
@@ -85,7 +97,10 @@ export default function PageSetupTemplateFormPage({
       .then(({ template }) => {
         if (!active) return;
         setName(template.name);
+        setPrinterType(template.printerType);
         setPaperSize(template.paperSize);
+        setPaperWidthMm(String(template.paperWidthMm ?? 210));
+        setPaperLengthMm(String(template.paperLengthMm ?? 297));
         setOrientation(template.orientation);
         setStickerWidthMm(String(template.stickerWidthMm));
         setStickerLengthMm(String(template.stickerLengthMm));
@@ -127,7 +142,14 @@ export default function PageSetupTemplateFormPage({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name,
+            printerType,
             paperSize,
+            paperWidthMm: paperSize === PAGE_SETUP_CUSTOM_PAPER_SIZE || printerType === "THERMAL"
+              ? Number(paperWidthMm)
+              : null,
+            paperLengthMm: paperSize === PAGE_SETUP_CUSTOM_PAPER_SIZE
+              ? Number(paperLengthMm)
+              : null,
             orientation,
             stickerWidthMm: Number(stickerWidthMm),
             stickerLengthMm: Number(stickerLengthMm),
@@ -210,7 +232,14 @@ export default function PageSetupTemplateFormPage({
         <form className="space-y-6" onSubmit={handleSubmit}>
           <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.9fr)]">
             <PageSetupStickerSheetPreview
+              printerType={printerType}
               paperSize={paperSize}
+              paperWidthMm={paperSize === PAGE_SETUP_CUSTOM_PAPER_SIZE || printerType === "THERMAL"
+                ? Number(paperWidthMm)
+                : null}
+              paperLengthMm={paperSize === PAGE_SETUP_CUSTOM_PAPER_SIZE
+                ? Number(paperLengthMm)
+                : null}
               orientation={orientation}
               stickerWidthMm={Number(stickerWidthMm)}
               stickerLengthMm={Number(stickerLengthMm)}
@@ -232,28 +261,92 @@ export default function PageSetupTemplateFormPage({
                 maxLength={100}
                 required
               />
-              <div className="grid min-w-0 gap-4 sm:grid-cols-2">
-                <Select
-                  label="Paper Size"
-                  value={paperSize}
-                  onChange={(event) => setPaperSize(event.currentTarget.value as PageSetupPaperSize)}
-                >
-                  {PAGE_SETUP_PAPER_SIZES.map((size) => (
-                    <option key={size} value={size}>{size}</option>
-                  ))}
-                </Select>
-                <Select
-                  label="Orientation"
-                  value={orientation}
-                  onChange={(event) => setOrientation(event.currentTarget.value as PageSetupOrientation)}
-                >
-                  {PAGE_SETUP_ORIENTATIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option.charAt(0) + option.slice(1).toLowerCase()}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <Select
+                label="Printer Type"
+                value={printerType}
+                onChange={(event) => {
+                  const nextPrinterType = event.currentTarget.value as PageSetupPrinterType;
+                  setPrinterType(nextPrinterType);
+                  if (nextPrinterType === "THERMAL") {
+                    setPaperSize(PAGE_SETUP_ROLL_PAPER_SIZE);
+                    setOrientation("PORTRAIT");
+                  } else if (paperSize === PAGE_SETUP_ROLL_PAPER_SIZE) {
+                    setPaperSize("A4");
+                  }
+                }}
+              >
+                {PAGE_SETUP_PRINTER_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type === "LASER" ? "Laser (fixed sheet)" : "Thermal (roll)"}
+                  </option>
+                ))}
+              </Select>
+              {printerType === "LASER" ? (
+                <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+                  <Select
+                    label="Paper Size"
+                    value={paperSize}
+                    onChange={(event) => setPaperSize(event.currentTarget.value as PageSetupPaperSize)}
+                  >
+                    {PAGE_SETUP_PAPER_SIZES.map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                    <option value={PAGE_SETUP_CUSTOM_PAPER_SIZE}>Custom</option>
+                  </Select>
+                  <Select
+                    label="Orientation"
+                    value={orientation}
+                    onChange={(event) => setOrientation(event.currentTarget.value as PageSetupOrientation)}
+                  >
+                    {PAGE_SETUP_ORIENTATIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option.charAt(0) + option.slice(1).toLowerCase()}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              ) : (
+                <>
+                  <Input
+                    label="Roll Width (mm)"
+                    type="number"
+                    min={PAGE_SETUP_PAPER_MIN_MM}
+                    max={PAGE_SETUP_PAPER_MAX_MM}
+                    step="0.1"
+                    value={paperWidthMm}
+                    onChange={(event) => setPaperWidthMm(event.currentTarget.value)}
+                    required
+                  />
+                  <p className="text-sm text-[var(--erp-text-muted)]">
+                    Roll length is automatic. It is calculated from label quantity when you print;
+                    you only need to measure the roll width.
+                  </p>
+                </>
+              )}
+              {printerType === "LASER" && paperSize === PAGE_SETUP_CUSTOM_PAPER_SIZE && (
+                <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+                  <Input
+                    label="Paper Width (mm)"
+                    type="number"
+                    min={PAGE_SETUP_PAPER_MIN_MM}
+                    max={PAGE_SETUP_PAPER_MAX_MM}
+                    step="0.1"
+                    value={paperWidthMm}
+                    onChange={(event) => setPaperWidthMm(event.currentTarget.value)}
+                    required
+                  />
+                  <Input
+                    label="Paper Length (mm)"
+                    type="number"
+                    min={PAGE_SETUP_PAPER_MIN_MM}
+                    max={PAGE_SETUP_PAPER_MAX_MM}
+                    step="0.1"
+                    value={paperLengthMm}
+                    onChange={(event) => setPaperLengthMm(event.currentTarget.value)}
+                    required
+                  />
+                </div>
+              )}
               <div className="grid min-w-0 gap-4 sm:grid-cols-2">
                 <Input
                   label="Sticker Width (mm)"

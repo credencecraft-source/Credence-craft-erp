@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
+  requireOrganizationOrderManagementPermission: vi.fn(),
   listOrdersPage: vi.fn(),
   deleteOrders: vi.fn(),
 }));
@@ -13,6 +15,8 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
+  requireOrganizationOrderManagementPermission: mocks.requireOrganizationOrderManagementPermission,
 }));
 
 vi.mock("@/lib/services/orders/order-service", () => ({
@@ -31,6 +35,8 @@ describe("merchandising orders list API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
+    mocks.requireOrganizationOrderManagementPermission.mockResolvedValue(undefined);
     mocks.listOrdersPage.mockResolvedValue({ orders: [], nextCursor: null });
     mocks.deleteOrders.mockResolvedValue({ deletedCount: 1 });
   });
@@ -58,6 +64,19 @@ describe("merchandising orders list API", () => {
       undefined,
       { allowExpiredTrial: true },
     );
+  });
+
+  it("denies order reads when the member lacks VIEW_ORDERS", async () => {
+    mocks.requireOrganizationOrderManagementPermission.mockRejectedValueOnce(
+      new Error("Access denied: This role does not have the required Order Management permission."),
+    );
+
+    const response = await GET(new Request(
+      "http://localhost/api/orders?organizationId=public-org-id",
+    ));
+
+    expect(response.status).toBe(403);
+    expect(mocks.listOrdersPage).not.toHaveBeenCalled();
   });
 
   it("passes search and validated column filters to the tenant-scoped list service", async () => {

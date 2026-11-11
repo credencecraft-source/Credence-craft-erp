@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   getSalesOrderAllocationData: vi.fn(),
   allocateSalesOrder: vi.fn(),
 }));
@@ -13,6 +14,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/distribution/advance-booking-allocation-service", () => ({
@@ -29,6 +31,7 @@ describe("Sales Order allocation route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.getSalesOrderAllocationData.mockResolvedValue({ salesOrderNo: "SO-1", orders: [] });
     mocks.allocateSalesOrder.mockResolvedValue({
       mode: "GENERAL",
@@ -46,10 +49,11 @@ describe("Sales Order allocation route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_ORDERS");
     expect(mocks.getSalesOrderAllocationData).toHaveBeenCalledWith("internal-org-1", "sales-order-1");
   });
 
-  it("delegates General Stock authorization and bulk allocation to the service", async () => {
+  it("requires general-stock permission before delegating allocation", async () => {
     const response = await POST(
       new Request("http://localhost/api/distribution/quotations/sales-order-1/allocation", {
         method: "POST",
@@ -60,7 +64,7 @@ describe("Sales Order allocation route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.requireOrganizationContext).not.toHaveBeenCalled();
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "MANAGE_FINISHED_GOODS_OUTWARD");
     expect(mocks.allocateSalesOrder).toHaveBeenCalledWith(
       "user-1",
       "public-org",
@@ -70,7 +74,7 @@ describe("Sales Order allocation route", () => {
     );
   });
 
-  it("delegates Production authorization and validates source-order work orders", async () => {
+  it("requires production permission and validates source-order work orders", async () => {
     const response = await POST(
       new Request("http://localhost/api/distribution/quotations/sales-order-1/allocation", {
         method: "POST",
@@ -85,7 +89,7 @@ describe("Sales Order allocation route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.requireOrganizationContext).not.toHaveBeenCalled();
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "UPDATE_FACTORY_PRODUCTION");
     expect(mocks.allocateSalesOrder).toHaveBeenCalledWith(
       "user-1",
       "public-org",
@@ -107,6 +111,21 @@ describe("Sales Order allocation route", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.requireOrganizationContext).not.toHaveBeenCalled();
+    expect(mocks.allocateSalesOrder).not.toHaveBeenCalled();
+  });
+
+  it("denies stock allocation before calling the allocation service", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await POST(
+      new Request("http://localhost/api/distribution/quotations/sales-order-1/allocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId: "public-org", mode: "GENERAL" }),
+      }),
+      context,
+    );
+
+    expect(response.status).toBe(403);
     expect(mocks.allocateSalesOrder).not.toHaveBeenCalled();
   });
 });

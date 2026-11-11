@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { createSelectedOrdersWorkbook, SelectedOrdersWorkbookError } from "@/lib/services/orders/selected-orders-workbook-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
 
 export async function POST(request: Request) {
   const user = await requireSessionUser();
@@ -36,6 +39,7 @@ export async function POST(request: Request) {
 
   try {
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/bulk-order-creation", "view");
     const workbook = await createSelectedOrdersWorkbook(organization.id, orderIds);
     const workbookBody = new Uint8Array(workbook);
     return new NextResponse(workbookBody, {

@@ -126,6 +126,14 @@ type CustomerContactOption = {
   id: string;
   legal_name: string;
   display_name: string | null;
+  phone: string | null;
+};
+type ReturnCreditOption = {
+  id: string;
+  returnNumber: string;
+  returnDate: string;
+  invoiceNumber: string;
+  availableAmount: string;
 };
 type EntityOption = { id: string; label: string };
 type StoredFinanceDocument = {
@@ -173,6 +181,16 @@ export default function PosBarcodeBillingPage({
   const [entities, setEntities] = useState<EntityOption[]>([]);
   const [entityId, setEntityId] = useState("");
   const [customerContactId, setCustomerContactId] = useState("");
+  const [customerDisplayName, setCustomerDisplayName] = useState("");
+  const [returnCredits, setReturnCredits] = useState<ReturnCreditOption[]>([]);
+  const [returnCreditError, setReturnCreditError] = useState("");
+  const [returnCreditLoadedFor, setReturnCreditLoadedFor] = useState("");
+  const selectCustomer = (contactId: string) => {
+    setReturnCredits([]);
+    setReturnCreditError("");
+    setReturnCreditLoadedFor("");
+    setCustomerContactId(contactId);
+  };
   const [couponCode, setCouponCode] = useState("");
   const [purchaseRewardCheck, setPurchaseRewardCheck] = useState<{
     key: string;
@@ -184,10 +202,19 @@ export default function PosBarcodeBillingPage({
   const [taxMode] = useState<"LOCAL" | "INTERSTATE">("LOCAL");
   const otherCharges = "0";
   const [gstOptions, setGstOptions] = useState<GstOption[]>([]);
-  const [customerOptions, setCustomerOptions] = useState<CustomerContactOption[]>([]);
-  const [customerLoading, setCustomerLoading] = useState(true);
-  const [customerQuickCreate, setCustomerQuickCreate] = useState("");
+  const [customerMobile, setCustomerMobile] = useState("");
+  const [customerLookupStatus, setCustomerLookupStatus] = useState<
+    "idle" | "loading" | "matched" | "error"
+  >("idle");
+  const [customerLookupMessage, setCustomerLookupMessage] = useState("");
+  const [customerRegistrationOpen, setCustomerRegistrationOpen] = useState(false);
+  const [customerRegistrationName, setCustomerRegistrationName] = useState("");
+  const [customerRegistrationError, setCustomerRegistrationError] = useState("");
   const [customerSubmitting, setCustomerSubmitting] = useState(false);
+  const customerLookupKeyRef = useRef("");
+  const customerLookupControllerRef = useRef<AbortController | null>(null);
+  const customerNameInputRef = useRef<HTMLInputElement>(null);
+  const customerRegistrationMobile = useRef("");
   const [taxProfile, setTaxProfile] = useState<{
     cgstRate?: number | null;
     sgstRate?: number | null;
@@ -223,19 +250,6 @@ export default function PosBarcodeBillingPage({
         { cache: "no-store" },
       ).then((response) => response.json()),
       fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/contacts?limit=200&roleCode=CUSTOMER`,
-        { cache: "no-store" },
-      ).then(async (response) => {
-        const data = await response.json() as {
-          error?: string;
-          records?: CustomerContactOption[];
-        };
-        if (!response.ok || !Array.isArray(data.records)) {
-          throw new Error(data.error || "Unable to load customer contacts.");
-        }
-        return data.records;
-      }),
-      fetch(
         `/api/organizations/${encodeURIComponent(organizationId)}/master-data/entity?includeInactive=false&limit=200`,
         { cache: "no-store" },
       ).then(async (response) => {
@@ -250,17 +264,39 @@ export default function PosBarcodeBillingPage({
         );
       }),
     ])
-      .then(([gstData, taxData, customerData, entityData]) => {
+      .then(([gstData, taxData, entityData]) => {
         setGstOptions(Array.isArray(gstData) ? gstData : []);
         setTaxProfile(taxData.profile ?? null);
-        setCustomerOptions(customerData);
         setEntities(entityData);
       })
       .catch((loadError: unknown) => setError(
-        loadError instanceof Error ? loadError.message : "Unable to load POS tax and customer data.",
-      ))
-      .finally(() => setCustomerLoading(false));
+        loadError instanceof Error ? loadError.message : "Unable to load POS tax and Entity data.",
+      ));
   }, [organizationId]);
+
+  useEffect(() => {
+    if (!customerContactId) return;
+    const controller = new AbortController();
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/pos/sales/return-credits?customerContactId=${encodeURIComponent(customerContactId)}`,
+      { cache: "no-store", signal: controller.signal },
+    )
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; credits?: ReturnCreditOption[] };
+        if (!response.ok || !Array.isArray(data.credits)) {
+          throw new Error(data.error || "Unable to load sales-return credits.");
+        }
+        if (controller.signal.aborted) return;
+        setReturnCredits(data.credits);
+        setReturnCreditLoadedFor(customerContactId);
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) {
+          setReturnCreditError(cause instanceof Error ? cause.message : "Unable to load sales-return credits.");
+        }
+      });
+    return () => controller.abort();
+  }, [customerContactId, organizationId]);
 
   useEffect(() => {
     if (!entityId || !billLineKeys) return;
@@ -360,11 +396,76 @@ export default function PosBarcodeBillingPage({
     };
   }, [entityId, organizationId, stockSearch]);
 
-  const createCustomer = async () => {
-    const name = customerQuickCreate.trim();
+  const lookupCustomerByMobile = async () => {
+    const digits = customerMobile.replace(/\D/g, "");
+    const mobile = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+    if (!/^[6-9]\d{9}$/.test(mobile)) {
+      customerLookupControllerRef.current?.abort();
+      customerLookupKeyRef.current = "";
+      selectCustomer("");
+      setCustomerDisplayName("");
+      setCustomerLookupStatus("error");
+      setCustomerLookupMessage("Enter a valid 10-digit Indian mobile number.");
+      return;
+    }
+    if (customerLookupKeyRef.current === mobile) return;
+    customerLookupKeyRef.current = mobile;
+    customerLookupControllerRef.current?.abort();
+    const controller = new AbortController();
+    customerLookupControllerRef.current = controller;
+    setCustomerMobile(mobile);
+    customerRegistrationMobile.current = mobile;
+    selectCustomer("");
+    setCustomerDisplayName("");
+    setCustomerLookupMessage("");
+    setCustomerLookupStatus("loading");
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/contacts?mobile=${encodeURIComponent(mobile)}`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const data = await response.json() as {
+        error?: string;
+        records?: CustomerContactOption[];
+      };
+      if (!response.ok || !Array.isArray(data.records)) {
+        throw new Error(data.error || "Unable to look up this customer.");
+      }
+      if (controller.signal.aborted) return;
+      if (data.records.length > 1) {
+        customerLookupKeyRef.current = "";
+        setCustomerLookupStatus("error");
+        setCustomerLookupMessage("More than one customer account uses this mobile number. Resolve the duplicate in Customer Master.");
+        return;
+      }
+      const contact = data.records[0];
+      if (contact) {
+        selectCustomer(contact.id);
+        setCustomerDisplayName(contact.display_name || contact.legal_name);
+        setCustomerLookupStatus("matched");
+        return;
+      }
+      setCustomerRegistrationName("");
+      setCustomerRegistrationError("");
+      setCustomerLookupStatus("idle");
+      setCustomerRegistrationOpen(true);
+    } catch (lookupError) {
+      if (controller.signal.aborted) return;
+      customerLookupKeyRef.current = "";
+      setCustomerLookupStatus("error");
+      setCustomerLookupMessage(
+        lookupError instanceof Error ? lookupError.message : "Unable to look up this customer.",
+      );
+    }
+  };
+
+  const createCustomer = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = customerRegistrationName.trim();
+    const mobile = customerRegistrationMobile.current;
     if (!name || customerSubmitting) return;
     setCustomerSubmitting(true);
-    setError("");
+    setCustomerRegistrationError("");
     try {
       const response = await fetch(
         `/api/organizations/${encodeURIComponent(organizationId)}/contacts`,
@@ -374,6 +475,7 @@ export default function PosBarcodeBillingPage({
         body: JSON.stringify({
           legalName: name,
           displayName: name,
+          phone: mobile,
           isActive: true,
           roles: ["CUSTOMER"],
           taxRegistrations: [],
@@ -387,6 +489,7 @@ export default function PosBarcodeBillingPage({
         id?: string;
         legal_name?: string;
         display_name?: string | null;
+        phone?: string | null;
       };
       if (!response.ok || !data.id || !data.legal_name) {
         throw new Error(data.error || "Unable to create customer contact.");
@@ -395,15 +498,16 @@ export default function PosBarcodeBillingPage({
         id: data.id,
         legal_name: data.legal_name,
         display_name: data.display_name ?? null,
+        phone: data.phone ?? mobile,
       };
-      setCustomerOptions((current) => [...current, createdContact]
-        .sort((left, right) =>
-          (left.display_name || left.legal_name).localeCompare(right.display_name || right.legal_name),
-        ));
-      setCustomerContactId(createdContact.id);
-      setCustomerQuickCreate("");
+      selectCustomer(createdContact.id);
+      setCustomerDisplayName(createdContact.display_name || createdContact.legal_name);
+      customerLookupKeyRef.current = mobile;
+      setCustomerLookupStatus("matched");
+      setCustomerLookupMessage("");
+      setCustomerRegistrationOpen(false);
     } catch (createError) {
-      setError(
+      setCustomerRegistrationError(
         createError instanceof Error
           ? createError.message
           : "Unable to create customer contact.",
@@ -602,11 +706,37 @@ export default function PosBarcodeBillingPage({
       grandTotal: totals.subtotal + taxAmount + charges,
     };
   }, [billLines, gstOptions, otherCharges, taxMode, taxProfile, visibleOffersByStock]);
+  const creditApplicationResult = returnCredits.reduce<{
+    applications: Array<{ returnId: string; amount: string }>;
+    remainingCents: number;
+  }>((result, credit) => {
+    if (result.remainingCents <= 0) return result;
+    const availableCents = Math.round(Number(credit.availableAmount) * 100);
+    if (!Number.isSafeInteger(availableCents) || availableCents <= 0) return result;
+    const amountCents = Math.min(availableCents, result.remainingCents);
+    return {
+      applications: [...result.applications, {
+        returnId: credit.id,
+        amount: (amountCents / 100).toFixed(2),
+      }],
+      remainingCents: result.remainingCents - amountCents,
+    };
+  }, { applications: [], remainingCents: Math.round(grandTotal * 100) });
+  const selectedReturnCreditApplications = creditApplicationResult.applications;
+  const storeCreditAppliedCents = selectedReturnCreditApplications.reduce(
+    (total, application) => total + Math.round(Number(application.amount) * 100),
+    0,
+  );
+  const storeCreditAvailableAmount = returnCredits.reduce((total, credit) => {
+    const availableCents = Math.round(Number(credit.availableAmount) * 100);
+    return total + (Number.isSafeInteger(availableCents) && availableCents > 0 ? availableCents : 0);
+  }, 0) / 100;
+  const amountDue = Math.max(0, Math.round(grandTotal * 100) - storeCreditAppliedCents) / 100;
   const base = `/dashboard/${workspaceId}/organizations/${organizationId}/pos`;
-  const selectedCustomerName = customerOptions.find((option) => option.id === customerContactId);
-  const customerName = selectedCustomerName
-    ? selectedCustomerName.display_name || selectedCustomerName.legal_name
-    : "";
+  const customerName = customerDisplayName;
+  const returnCreditLoading = Boolean(
+    customerContactId && returnCreditLoadedFor !== customerContactId && !returnCreditError,
+  );
   const purchaseRewardCheckKey = [
     organizationId,
     invoiceDate,
@@ -676,6 +806,7 @@ export default function PosBarcodeBillingPage({
           requestKey: saleRequestKey.current || (saleRequestKey.current = crypto.randomUUID()),
           entityId,
           couponCode: couponCode.trim() || null,
+          returnCreditApplications: selectedReturnCreditApplications,
           lines: billLines.map((line) => ({
             stockId: line.record.id,
             stockType: line.record.stock_type,
@@ -698,6 +829,8 @@ export default function PosBarcodeBillingPage({
           totalAmount?: string;
           appliedCouponCode?: string | null;
           issuedCouponCode?: string | null;
+          storeCreditAppliedAmount?: string;
+          amountDue?: string;
         };
       };
       if (!response.ok || !data.invoice?.invoiceNo) {
@@ -715,7 +848,7 @@ export default function PosBarcodeBillingPage({
           sourceModule: "POS",
           sourceRecordId: data.invoice.id ?? "",
           date: invoiceDate,
-          party: customerName || "Walk-in customer",
+          party: customerName || "Customer not linked",
           amount: Number(data.invoice.subtotal ?? subtotal),
           tax: Number(data.invoice.taxAmount ?? taxAmount),
           net: Number(data.invoice.totalAmount ?? grandTotal),
@@ -752,28 +885,33 @@ export default function PosBarcodeBillingPage({
         <Section className="flex min-h-[calc(100vh-2rem)] flex-col gap-4">
           <div className="sticky top-0 z-20 flex flex-wrap items-center border-b border-[var(--erp-border)] bg-[var(--erp-surface)]/95 pb-4 backdrop-blur">
             <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 xl:flex-nowrap">
-              <div className="grid min-w-0 flex-1 grid-cols-2 gap-1 sm:grid-cols-3 xl:grid-cols-6">
+              <div className="grid min-w-0 flex-1 grid-cols-2 gap-1 sm:grid-cols-4 xl:grid-cols-8">
                 <SummaryAmount label="Taxable value" value={subtotal} compact />
                 <SummaryAmount label="CGST" value={taxBreakdown.cgst} compact />
                 <SummaryAmount label="SGST" value={taxBreakdown.sgst} compact />
                 <SummaryAmount label="IGST" value={taxBreakdown.igst} compact />
                 <SummaryAmount label="Other charges" value={charges} compact />
+                <SummaryAmount label="Store credit" value={storeCreditAvailableAmount} compact />
                 <SummaryAmount
                   label="Grand total"
                   value={grandTotal}
                   strong
                   compact
                 />
+                <SummaryAmount label="Amount due" value={amountDue} compact />
               </div>
               <Button
                 type="button"
                 onClick={() => void saveInvoice()}
                 disabled={
                   billLines.length === 0
+                  || !customerContactId
                   || billLines.some((line) => line.quantity < 1)
                   || savingInvoice
                   || visibleOfferLookupLoading
                   || Boolean(visibleOfferLookupError)
+                  || returnCreditLoading
+                  || Boolean(returnCreditError)
                 }
                 className="shrink-0 rounded-lg px-4 py-2 text-sm font-semibold"
               >
@@ -785,7 +923,37 @@ export default function PosBarcodeBillingPage({
             <div>
               <h2 className="text-sm font-semibold text-[var(--erp-text)]">Invoice details</h2>
             </div>
-            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-[minmax(9rem,0.7fr)_minmax(26rem,2fr)_minmax(9rem,0.7fr)_minmax(12rem,1fr)]">
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_minmax(9rem,0.7fr)_minmax(12rem,1fr)_minmax(12rem,1fr)]">
+              <Input
+                id="customer-mobile"
+                label="Customer mobile number"
+                type="tel"
+                value={customerMobile}
+                onChange={(event) => {
+                  customerLookupControllerRef.current?.abort();
+                  customerLookupKeyRef.current = "";
+                  setCustomerMobile(event.target.value);
+                  selectCustomer("");
+                  setCustomerDisplayName("");
+                  setCustomerLookupStatus("idle");
+                  setCustomerLookupMessage("");
+                }}
+                onBlur={() => {
+                  if (customerMobile.trim()) void lookupCustomerByMobile();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void lookupCustomerByMobile();
+                  }
+                }}
+                inputMode="tel"
+                autoComplete="tel"
+                maxLength={20}
+                placeholder="Enter mobile number"
+                hint="Existing customers are selected automatically; new numbers prompt for a name."
+                required
+              />
               <Select
                 id="entity-select"
                 label="Entity / Store"
@@ -808,55 +976,6 @@ export default function PosBarcodeBillingPage({
                   <option key={entity.id} value={entity.id}>{entity.label}</option>
                 ))}
               </Select>
-              <div className="min-w-0 space-y-1">
-                <label htmlFor="customer-select" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  Customer
-                </label>
-                <div className="flex min-w-0 flex-col gap-2 xl:flex-row">
-                  <div className="min-w-0 xl:w-[42%] xl:shrink-0">
-                    <Select
-                      id="customer-select"
-                      value={customerContactId}
-                      onChange={(event) => setCustomerContactId(event.target.value)}
-                    >
-                      <option value="">
-                        {customerLoading ? "Loading customers..." : "Walk-in customer"}
-                      </option>
-                      {customerOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.display_name || option.legal_name}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div className="flex min-w-0 flex-1 gap-2">
-                    <div className="min-w-0 flex-1">
-                      <Input
-                        value={customerQuickCreate}
-                        onChange={(event) => setCustomerQuickCreate(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            void createCustomer();
-                          }
-                        }}
-                        className="w-full min-w-0"
-                        placeholder="New customer name"
-                        aria-label="New customer name"
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void createCustomer()}
-                      disabled={!customerQuickCreate.trim() || customerSubmitting}
-                  >
-                    {customerSubmitting ? "Adding..." : "Add customer"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
               <Input
                 id="invoice-date"
                 label="Invoice date"
@@ -874,6 +993,24 @@ export default function PosBarcodeBillingPage({
                 maxLength={60}
               />
             </div>
+            {customerLookupStatus === "loading" ? (
+              <p role="status" className="text-sm text-[var(--erp-muted)]">Checking customer mobile…</p>
+            ) : customerLookupStatus === "matched" ? (
+              <p role="status" className="text-sm text-[var(--erp-muted)]">
+                Customer account: <span className="font-semibold text-[var(--erp-text)]">{customerDisplayName}</span>
+              </p>
+            ) : customerLookupStatus === "error" ? (
+              <p role="alert" className="text-sm text-[var(--erp-danger)]">
+                {customerLookupMessage}
+                <Button type="button" variant="secondary" size="sm" onClick={() => void lookupCustomerByMobile()} className="ml-2">
+                  Retry
+                </Button>
+              </p>
+            ) : !customerContactId ? (
+              <p role="status" className="text-sm text-[var(--erp-muted)]">
+                Enter a customer mobile number to continue.
+              </p>
+            ) : null}
             {billLines.length > 0 && (
               <p className="text-xs text-[var(--erp-muted)]">
                 Remove all bill items to change the Entity / Store.
@@ -1232,6 +1369,64 @@ export default function PosBarcodeBillingPage({
           onAdd={addToBill}
         />
       )}
+      <Modal
+        open={customerRegistrationOpen}
+        onClose={() => {
+          if (!customerSubmitting) {
+            customerLookupKeyRef.current = "";
+            setCustomerLookupStatus("idle");
+            setCustomerRegistrationOpen(false);
+          }
+        }}
+        ariaLabelledBy="pos-customer-registration-title"
+        size="square"
+        closeOnBackdrop={!customerSubmitting}
+        initialFocusRef={customerNameInputRef}
+        className="flex flex-col overflow-hidden p-0"
+      >
+        <form onSubmit={(event) => void createCustomer(event)} className="flex min-h-0 flex-col">
+          <div className="border-b border-[var(--erp-border)] px-6 py-5">
+            <p className="erp-eyebrow">Customer account</p>
+            <h2 id="pos-customer-registration-title" className="erp-card-title mt-1">
+              Register customer
+            </h2>
+            <p className="mt-2 text-sm text-[var(--erp-muted)]">
+              No customer account was found for mobile number {customerMobile}.
+            </p>
+          </div>
+          <div className="space-y-4 p-6">
+            <Input
+              ref={customerNameInputRef}
+              label="Customer name"
+              value={customerRegistrationName}
+              onChange={(event) => setCustomerRegistrationName(event.target.value)}
+              required
+              maxLength={200}
+              autoComplete="name"
+            />
+            {customerRegistrationError ? (
+              <p role="alert" className="text-sm font-medium text-red-700">{customerRegistrationError}</p>
+            ) : null}
+          </div>
+          <div className="flex justify-end gap-3 border-t border-[var(--erp-border)] px-6 py-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                customerLookupKeyRef.current = "";
+                setCustomerLookupStatus("idle");
+                setCustomerRegistrationOpen(false);
+              }}
+              disabled={customerSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={customerSubmitting}>
+              {customerSubmitting ? "Creating account..." : "Create customer"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </Page>
   );
 }
@@ -1325,7 +1520,7 @@ function SalesInvoicePrint({
               Bill To
             </p>
             <p className="mt-1 font-semibold text-slate-900">
-              {customer || "Walk-in customer"}
+              {customer || "Customer not linked"}
             </p>
           </div>
           <div className="sm:text-right">

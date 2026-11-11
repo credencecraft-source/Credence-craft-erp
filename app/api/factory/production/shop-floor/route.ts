@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   acceptShopFloorTransfer,
   assignWorkToBatch,
@@ -22,12 +22,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Process name is too long." }, { status: 400 });
     }
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_FACTORY_PRODUCTION");
     const board = params.get("summary") === "true"
       ? await listShopFloorBoardSummary(organization.id, workOrderId, user.id)
       : await listShopFloorBoard(organization.id, workOrderId, user.id, processName);
     return NextResponse.json(board);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the shop-floor board." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the shop-floor board." }, { status });
   }
 }
 
@@ -47,6 +49,7 @@ export async function POST(request: Request) {
     };
 
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "UPDATE_FACTORY_PRODUCTION");
     const action = String(body.action ?? "").trim();
 
     if (action === "assign") {
@@ -92,6 +95,7 @@ export async function POST(request: Request) {
 
     throw new Error("Select a valid shop-floor action.");
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update the shop-floor board." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update the shop-floor board." }, { status });
   }
 }

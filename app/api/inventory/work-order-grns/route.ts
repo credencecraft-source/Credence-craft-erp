@@ -10,9 +10,15 @@ import {
   listWorkOrdersForReceiving,
   WorkOrderGrnDeletionConflictError,
 } from "@/lib/services/inventory/work-order-grn-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
 
 function errorResponse(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.startsWith("Access denied:")) {
+    return NextResponse.json({ error: error.message }, { status: 403 });
+  }
   if (error instanceof WorkOrderGrnDeletionConflictError) {
     return NextResponse.json({ error: error.message, issues: error.issues }, { status: 409 });
   }
@@ -38,6 +44,7 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_INVENTORY_RECEIPTS");
     if (searchParams.get("workOrders") === "true") {
       const limitValue = searchParams.get("limit");
       const limit = limitValue ? Number(limitValue) : undefined;
@@ -90,6 +97,7 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_INVENTORY_RECEIPTS");
     if (!Array.isArray(body.lines) || body.lines.length > 200) {
       throw new Error("Submit a valid list of work-order size quantities.");
     }
@@ -133,6 +141,7 @@ export async function DELETE(request: Request) {
       String(payload.organizationId ?? ""),
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "DELETE_INVENTORY_RECEIPTS");
     const rawGrnIds = payload.grnIds;
     if (
       !Array.isArray(rawGrnIds)

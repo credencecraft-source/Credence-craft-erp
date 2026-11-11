@@ -5,7 +5,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { saveRmGrnVerificationInTransaction } from "@/lib/services/inventory/rm-grn-verification-service";
 
 type ReceiptLineInput = {
@@ -264,6 +264,7 @@ export async function DELETE(request: Request) {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "", ["OWNER", "ADMIN", "INVENTORY"]);
+    await requireOrganizationPermission(user.id, organization.id, "DELETE_INVENTORY_RECEIPTS");
     const receiptId = searchParams.get("receiptId") ?? "";
     const assetOnlyParameter = searchParams.get("isAssetPurchase");
     if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
@@ -480,6 +481,10 @@ export async function DELETE(request: Request) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
       return NextResponse.json({ error: "Inventory changed while deleting this GRN. Reload the record and try again." }, { status: 409 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete GRN records." }, { status: 400 });
+    const denied = error instanceof Error && error.message.startsWith("Access denied:");
+    return NextResponse.json(
+      { error: denied ? "You do not have permission to delete inventory receipts." : error instanceof Error ? error.message : "Unable to delete GRN records." },
+      { status: denied ? 403 : 400 },
+    );
   }
 }

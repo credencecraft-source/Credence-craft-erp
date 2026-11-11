@@ -22,8 +22,10 @@ const { prismaMock, transactionMock, requirePlatformSessionAdmin, requirePlatfor
     merchandisingOrderProcessStep: { deleteMany: vi.fn() },
     eRPSoftware: { create: vi.fn() },
     eRPModule: { createMany: vi.fn() },
-    organizationRoleDefinition: { createMany: vi.fn() },
-    organizationRolePermission: { createMany: vi.fn() },
+    organizationRoleDefinition: { create: vi.fn(), createMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    organizationRolePermission: { createMany: vi.fn(), deleteMany: vi.fn(), findMany: vi.fn() },
+    organizationMembership: { create: vi.fn(), update: vi.fn(), groupBy: vi.fn() },
+    auditEvent: { create: vi.fn() },
     masterGstType: { createMany: vi.fn() },
     masterGst: { findMany: vi.fn(), createMany: vi.fn() },
     masterRawMaterialType: { createMany: vi.fn() },
@@ -46,7 +48,9 @@ const { prismaMock, transactionMock, requirePlatformSessionAdmin, requirePlatfor
       count: vi.fn(),
       updateMany: vi.fn(),
     },
-    organizationMembership: { findFirst: vi.fn() },
+    organizationMembership: { findFirst: vi.fn(), groupBy: vi.fn() },
+    organizationRoleDefinition: { findUnique: vi.fn() },
+    organizationRolePermission: { findMany: vi.fn() },
   };
   const requirePlatformSessionAdmin = vi.fn();
   const requirePlatformSessionSuperAdmin = vi.fn();
@@ -69,6 +73,10 @@ import {
 import {
   archiveOrganization,
   countOrganizationsForUser,
+  createOrganizationRole,
+  updateOrganizationMember,
+  getOrganizationForUserWithPermission,
+  getOrganizationEffectivePermissions,
   hasOrganizationsForUser,
   createOrganization,
   deleteOrganizationFromPlatform,
@@ -76,11 +84,20 @@ import {
   getOrganizationInternalIdForUser,
   getOrganizationDeletionEligibility,
   listWorkspaceOrganizationPage,
+  updateOrganizationRolePermissions,
+  updateOrganizationRole,
   restoreOrganization,
+  requireOrganizationPermission,
+  requireOrganizationOrderManagementPermission,
   updateOrganizationApprovalStatus,
   updateOrganizationApprovalStatusWithTransition,
 } from "./organization-service";
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
+import {
+  getOrganizationModuleAccessPermission,
+  getOrganizationModuleNavigationItems,
+  getOrganizationOrderManagementPermission,
+} from "@/lib/organizations/organization-permission-registry";
 
 const organization = {
   id: "org-internal-id",
@@ -345,6 +362,399 @@ describe("organization directory identifiers", () => {
 
     expect(page.organizations[0].organization_number).toBe("0000000123");
     expect(() => JSON.stringify(page)).not.toThrow();
+  });
+
+  describe("organization permission evaluation", () => {
+    it("returns the API role shape after creating a custom role", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "OWNER",
+      });
+      transactionMock.organizationRoleDefinition.create.mockResolvedValue({
+        id: "custom-role-id",
+        role_key: "PRODUCTION_MANAGER",
+        label: "Production Manager",
+        is_system: false,
+      });
+
+      await expect(createOrganizationRole(
+        "org-public-id",
+        "owner-user-id",
+        "Production Manager",
+        [],
+      )).resolves.toEqual({
+        role: "PRODUCTION_MANAGER",
+        label: "Production Manager",
+        isSystem: false,
+        permissions: [],
+      });
+      expect(transactionMock.organizationRolePermission.createMany).toHaveBeenCalledWith({
+        data: expect.arrayContaining([
+          expect.objectContaining({ permission: "DENY:MANAGE_ROLES" }),
+        ]),
+      });
+    });
+
+    it("denies a default permission when the role has an explicit denial marker", async () => {
+      prismaMock.organization.findFirst.mockResolvedValue({
+        id: "org-internal-id",
+        memberships: [{ role: "ADMIN" }],
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: "MANAGE_USERS" },
+        { permission: "DENY:VIEW_REPORTS" },
+      ]);
+
+      await expect(getOrganizationForUserWithPermission(
+        "workspace-user-id",
+        "org-public-id",
+        "VIEW_REPORTS",
+      )).rejects.toThrow("Access denied: This role does not have the required permission.");
+    });
+
+    it("uses the same deny-by-default evaluation in organization service authorization", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: "MANAGE_USERS" },
+        { permission: "DENY:VIEW_REPORTS" },
+      ]);
+
+      await expect(requireOrganizationPermission(
+        "admin-user-id",
+        "org-public-id",
+        "VIEW_REPORTS",
+      )).rejects.toThrow("Access denied: This role does not have the required permission.");
+    });
+
+    it("keeps legacy order access until a resource-specific action is explicitly denied", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([]);
+
+      await expect(requireOrganizationOrderManagementPermission(
+        "admin-user-id",
+        "org-public-id",
+        "merchandising/order",
+        "create",
+      )).resolves.toMatchObject({ organization_id: "org-internal-id", role: "ADMIN" });
+
+      const createPermission = getOrganizationOrderManagementPermission("merchandising/order", "create");
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: `DENY:${createPermission}` },
+      ]);
+      await expect(requireOrganizationOrderManagementPermission(
+        "admin-user-id",
+        "org-public-id",
+        "merchandising/order",
+        "create",
+      )).rejects.toThrow("Access denied: This role does not have the required Order Management permission.");
+    });
+
+    it("expands legacy order permissions into resource actions without overriding explicit denials", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      const deletePermission = getOrganizationOrderManagementPermission("merchandising/order", "delete");
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: `DENY:${deletePermission}` },
+      ]);
+
+      const permissions = await getOrganizationEffectivePermissions("admin-user-id", "org-public-id");
+
+      expect(permissions).toContain(getOrganizationOrderManagementPermission("merchandising/order", "create"));
+      expect(permissions).not.toContain(deletePermission);
+    });
+
+    it("keeps role-management access for legacy administrator roles unless explicitly denied", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([]);
+
+      await expect(requireOrganizationPermission(
+        "admin-user-id",
+        "org-public-id",
+        "MANAGE_ROLES",
+      )).resolves.toMatchObject({ organization_id: "org-internal-id", role: "ADMIN" });
+
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: "DENY:MANAGE_ROLES" },
+      ]);
+      await expect(requireOrganizationPermission(
+        "admin-user-id",
+        "org-public-id",
+        "MANAGE_ROLES",
+      )).rejects.toThrow("Access denied: This role does not have the required permission.");
+    });
+
+    it("returns effective permissions after applying explicit denials to built-in defaults", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: "DENY:VIEW_ORDERS" },
+      ]);
+
+      const permissions = await getOrganizationEffectivePermissions("admin-user-id", "org-public-id");
+
+      expect(permissions).toContain("MANAGE_ROLES");
+      expect(permissions).toContain("VIEW_INVENTORY_STOCK");
+      expect(permissions).not.toContain("VIEW_ORDERS");
+      expect(permissions).toContain("ACCESS_MODULE_ORDER_MANAGEMENT");
+    });
+
+    it("applies a module denial independently of granular permissions", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: `DENY:${getOrganizationModuleAccessPermission("order-management")}` },
+      ]);
+
+      const permissions = await getOrganizationEffectivePermissions("admin-user-id", "org-public-id");
+
+      expect(permissions).not.toContain("ACCESS_MODULE_ORDER_MANAGEMENT");
+      expect(permissions).toContain("ACCESS_MODULE_FACTORY_MANAGEMENT");
+      expect(permissions).toContain("VIEW_ORDERS");
+    });
+
+    it("applies a sidebar-item denial independently of other items in the same module", async () => {
+      const orderManagementItem = getOrganizationModuleNavigationItems("order-management")
+        .find((item) => item.key === "merchandising")
+        ?.children.find((item) => item.key === "order");
+      expect(orderManagementItem).toBeTruthy();
+      if (!orderManagementItem) throw new Error("Order Management route mapping is missing.");
+
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: `DENY:${orderManagementItem.accessPermission}` },
+      ]);
+
+      const permissions = await getOrganizationEffectivePermissions("admin-user-id", "org-public-id");
+
+      expect(permissions).not.toContain(orderManagementItem.accessPermission);
+      expect(permissions).toContain("ACCESS_SUBMODULE:order-management:merchandising/bulk-order-creation");
+      expect(permissions).toContain("ACCESS_MODULE_ORDER_MANAGEMENT");
+    });
+
+    it("preserves built-in Purchase Order responsibilities while requiring explicit custom-role grants", async () => {
+      prismaMock.organizationMembership.findFirst
+        .mockResolvedValueOnce({
+          id: "viewer-membership",
+          organization_id: "org-internal-id",
+          role: "VIEWER",
+        })
+        .mockResolvedValueOnce({
+          id: "approver-membership",
+          organization_id: "org-internal-id",
+          role: "APPROVER",
+        })
+        .mockResolvedValueOnce({
+          id: "custom-membership",
+          organization_id: "org-internal-id",
+          role: "CUSTOM_PROCUREMENT",
+        });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([]);
+
+      await expect(requireOrganizationPermission(
+        "viewer-user",
+        "org-public-id",
+        "VIEW_PURCHASE_ORDERS",
+      )).resolves.toMatchObject({ role: "VIEWER" });
+      await expect(requireOrganizationPermission(
+        "approver-user",
+        "org-public-id",
+        "APPROVE_PURCHASE_ORDERS",
+      )).resolves.toMatchObject({ role: "APPROVER" });
+      await expect(requireOrganizationPermission(
+        "custom-user",
+        "org-public-id",
+        "VIEW_PURCHASE_ORDERS",
+      )).rejects.toThrow("Access denied: This role does not have the required permission.");
+    });
+
+    it("persists explicit denial markers when a role permission is revoked", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      prismaMock.organizationRoleDefinition.findUnique.mockResolvedValue({
+        id: "admin-role-id",
+        role_key: "ADMIN",
+        is_system: true,
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: "VIEW_REPORTS" },
+        { permission: "MANAGE_USERS" },
+        { permission: "MANAGE_ROLES" },
+      ]);
+      transactionMock.organizationMembership.groupBy.mockResolvedValue([
+        { role: "ADMIN", _count: { _all: 1 } },
+        { role: "OWNER", _count: { _all: 1 } },
+      ]);
+      transactionMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: "VIEW_REPORTS" },
+        { permission: "MANAGE_USERS" },
+        { permission: "MANAGE_ROLES" },
+      ]);
+
+      await expect(updateOrganizationRolePermissions(
+        "org-public-id",
+        "admin-user-id",
+        "ADMIN",
+        ["VIEW_ORDERS"],
+      )).resolves.toEqual({ role: "ADMIN", permissions: ["VIEW_ORDERS"] });
+
+      expect(transactionMock.organizationRolePermission.deleteMany).toHaveBeenCalledWith({
+        where: { organization_id: "org-internal-id", role: "ADMIN" },
+      });
+      expect(transactionMock.organizationRolePermission.createMany).toHaveBeenCalledWith({
+        data: expect.arrayContaining([
+          expect.objectContaining({ organization_id: "org-internal-id", role: "ADMIN", permission: "VIEW_ORDERS" }),
+          expect.objectContaining({ organization_id: "org-internal-id", role: "ADMIN", permission: "DENY:VIEW_REPORTS" }),
+          expect.objectContaining({ organization_id: "org-internal-id", role: "ADMIN", permission: "DENY:MANAGE_USERS" }),
+          expect.objectContaining({ organization_id: "org-internal-id", role: "ADMIN", permission: "DENY:MANAGE_ROLES" }),
+        ]),
+      });
+      expect(transactionMock.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          module: "ORGANIZATION_ACCESS",
+          action: "ROLE_PERMISSIONS_UPDATED",
+          user_id: "admin-user-id",
+        }),
+      }));
+    });
+
+    it("prevents revoking role-management access from the last active administrator role", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "ADMIN",
+      });
+      prismaMock.organizationRoleDefinition.findUnique.mockResolvedValue({
+        id: "admin-role-id",
+        role_key: "ADMIN",
+        is_system: true,
+      });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { role: "ADMIN", permission: "MANAGE_ROLES" },
+      ]);
+      transactionMock.organizationMembership.groupBy.mockResolvedValue([
+        { role: "ADMIN", _count: { _all: 1 } },
+      ]);
+      transactionMock.organizationRolePermission.findMany.mockResolvedValue([
+        { role: "ADMIN", permission: "MANAGE_ROLES" },
+      ]);
+
+      await expect(updateOrganizationRolePermissions(
+        "org-public-id",
+        "admin-user-id",
+        "ADMIN",
+        ["VIEW_ORDERS"],
+      )).rejects.toThrow("Keep role-management access for at least one active organization administrator.");
+
+      expect(transactionMock.organizationRolePermission.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("applies the administrator recovery guard when updating a custom role", async () => {
+      prismaMock.organizationMembership.findFirst.mockResolvedValue({
+        id: "membership-id",
+        organization_id: "org-internal-id",
+        role: "OWNER",
+      });
+      prismaMock.organizationRoleDefinition.findUnique.mockResolvedValue({
+        id: "custom-role-id",
+        role_key: "CUSTOM_ADMIN",
+        label: "Custom admin",
+        is_system: false,
+      });
+      transactionMock.organizationMembership.groupBy.mockResolvedValue([
+        { role: "CUSTOM_ADMIN", _count: { _all: 1 } },
+      ]);
+      transactionMock.organizationRolePermission.findMany.mockResolvedValue([
+        { role: "CUSTOM_ADMIN", permission: "MANAGE_ROLES" },
+      ]);
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { role: "CUSTOM_ADMIN", permission: "MANAGE_ROLES" },
+      ]);
+
+      await expect(updateOrganizationRole(
+        "org-public-id",
+        "owner-user-id",
+        "CUSTOM_ADMIN",
+        "Custom Admin",
+        ["VIEW_ORDERS"],
+      )).rejects.toThrow("Keep role-management access for at least one active organization administrator.");
+
+      expect(transactionMock.organizationRolePermission.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("audits tenant-scoped member role changes in the same transaction", async () => {
+      prismaMock.organizationMembership.findFirst
+        .mockResolvedValueOnce({
+          id: "actor-membership",
+          organization_id: "org-internal-id",
+          role: "ADMIN",
+        })
+        .mockResolvedValueOnce({
+          id: "member-membership",
+          role: "VIEWER",
+          is_active: true,
+        });
+      prismaMock.organizationRolePermission.findMany.mockResolvedValue([
+        { permission: "MANAGE_USERS" },
+      ]);
+      prismaMock.organizationRoleDefinition.findUnique.mockResolvedValue({
+        id: "viewer-role-id",
+      });
+      transactionMock.organizationMembership.update.mockResolvedValue({
+        id: "member-membership",
+        organization_id: "org-internal-id",
+        role: "FINANCE",
+        is_active: true,
+      });
+
+      await expect(updateOrganizationMember(
+        "member-membership",
+        "org-public-id",
+        "admin-user-id",
+        { role: "FINANCE", is_active: true },
+      )).resolves.toMatchObject({ role: "FINANCE", is_active: true });
+
+      expect(transactionMock.organizationMembership.update).toHaveBeenCalledWith({
+        where: { id: "member-membership", organization_id: "org-internal-id" },
+        data: { role: "FINANCE", is_active: true },
+      });
+      expect(transactionMock.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          organization_id: "org-internal-id",
+          user_id: "admin-user-id",
+          action: "MEMBERSHIP_UPDATED",
+          details: expect.objectContaining({ previous_role: "VIEWER", role: "FINANCE" }),
+        }),
+      }));
+    });
   });
 });
 

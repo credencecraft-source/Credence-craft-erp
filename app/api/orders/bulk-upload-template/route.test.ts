@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { requireSessionUser, requireOrganizationContext, createSelectedOrdersWorkbook } = vi.hoisted(() => ({
+const { requireSessionUser, requireOrganizationContext, requireOrganizationPermission, requireOrganizationOrderManagementPermission, createSelectedOrdersWorkbook } = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
+  requireOrganizationOrderManagementPermission: vi.fn(),
   createSelectedOrdersWorkbook: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser }));
-vi.mock("@/lib/services/organizations/organization-service", () => ({ requireOrganizationContext }));
+vi.mock("@/lib/services/organizations/organization-service", () => ({ requireOrganizationContext, requireOrganizationPermission, requireOrganizationOrderManagementPermission }));
 vi.mock("@/lib/services/orders/selected-orders-workbook-service", () => ({
   createSelectedOrdersWorkbook,
   SelectedOrdersWorkbookError: class SelectedOrdersWorkbookError extends Error {},
@@ -28,6 +30,7 @@ describe("selected-order workbook API", () => {
     vi.clearAllMocks();
     requireSessionUser.mockResolvedValue({ id: "user-id", workspace_id: "workspace-id" });
     requireOrganizationContext.mockResolvedValue({ id: "internal-organization-id" });
+    requireOrganizationPermission.mockResolvedValue(undefined);
     createSelectedOrdersWorkbook.mockResolvedValue(Buffer.from("workbook"));
   });
 
@@ -35,6 +38,9 @@ describe("selected-order workbook API", () => {
     const response = await POST(makeRequest({ orderIds: ["order-1", "order-2"] }));
 
     expect(requireOrganizationContext).toHaveBeenCalledWith("user-id", "public-org", ["OWNER", "ADMIN", "MERCHANDISING"]);
+    expect(requireOrganizationOrderManagementPermission).toHaveBeenCalledWith(
+      "user-id", "internal-organization-id", "merchandising/bulk-order-creation", "view",
+    );
     expect(createSelectedOrdersWorkbook).toHaveBeenCalledWith("internal-organization-id", ["order-1", "order-2"]);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("spreadsheetml.sheet");

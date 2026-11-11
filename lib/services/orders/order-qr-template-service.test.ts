@@ -39,8 +39,8 @@ import {
 
 const pageSetupRow = {
   id: "setup-1",
-  name: "A3 STOCK",
-  paper_size: "A3",
+  name: "CUSTOM STOCK",
+  paper_size: "C:120.00:200.00",
   orientation: "LANDSCAPE",
   sticker_width_mm: 50,
   sticker_length_mm: 30,
@@ -199,8 +199,11 @@ describe("order QR template service", () => {
             },
             pageSetup: {
               id: "setup-1",
-              name: "A3 STOCK",
-              paperSize: "A3",
+              name: "CUSTOM STOCK",
+              printerType: "LASER",
+              paperSize: "CUSTOM",
+              paperWidthMm: 120,
+              paperLengthMm: 200,
               orientation: "LANDSCAPE",
               stickerWidthMm: 50,
               stickerLengthMm: 30,
@@ -215,6 +218,47 @@ describe("order QR template service", () => {
           qr_size: 256,
           sticker_width_mm: 50,
           sticker_length_mm: 30,
+        }),
+      }),
+    );
+  });
+
+  it("uses the selected thermal Page Setup as the authoritative template printer mode", async () => {
+    mocks.transaction.designDevelopmentPageSetupTemplate.findFirst.mockResolvedValue({
+      ...pageSetupRow,
+      paper_size: "T:58.00",
+    });
+
+    await createOrderQrTemplate("internal-org-1", "user-1", {
+      name: "THERMAL TAG",
+      type: "ORDER_TAGS",
+      pageSetupTemplateId: "setup-1",
+      qrFieldKey: "orderNo",
+      displayFields: ["orderNo"],
+      displayFieldStyles: {},
+      layout: {
+        qr: { x: 3, y: 25 },
+        fields: { orderNo: { x: 44, y: 16 } },
+        printerType: "LASER",
+        pdfPaperSize: "A4_AUTO",
+      },
+      qrSize: 256,
+      stickerWidthMm: 50,
+      stickerLengthMm: 30,
+    });
+
+    expect(mocks.transaction.merchandisingOrderQrTemplate.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          display_field_styles: expect.objectContaining({
+            layout: expect.objectContaining({ printerType: "BARCODE" }),
+            pageSetup: expect.objectContaining({
+              printerType: "THERMAL",
+              paperSize: "ROLL",
+              paperWidthMm: 58,
+              paperLengthMm: null,
+            }),
+          }),
         }),
       }),
     );
@@ -243,6 +287,7 @@ describe("order QR template service", () => {
     expect(mocks.transaction.designDevelopmentPageSetupTemplate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { organization_id: "internal-org-1", id: "foreign-setup" },
+        select: expect.objectContaining({ paper_size: true }),
       }),
     );
     expect(mocks.transaction.merchandisingOrderQrTemplate.create).not.toHaveBeenCalled();
@@ -308,7 +353,10 @@ describe("order QR template service", () => {
         pageSetup: {
           id: "setup-1",
           name: "A3 STOCK",
+          printerType: "LASER",
           paperSize: "A3",
+          paperWidthMm: null,
+          paperLengthMm: null,
           orientation: "LANDSCAPE",
           stickerWidthMm: 50,
           stickerLengthMm: 30,
@@ -374,7 +422,10 @@ describe("order QR template service", () => {
             pageSetup: {
               id: "setup-1",
               name: "A3 STOCK",
+              printerType: "LASER",
               paperSize: "A3",
+              paperWidthMm: null,
+              paperLengthMm: null,
               orientation: "LANDSCAPE",
               stickerWidthMm: 50,
               stickerLengthMm: 30,

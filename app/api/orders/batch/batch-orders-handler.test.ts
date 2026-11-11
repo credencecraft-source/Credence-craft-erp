@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
+  requireOrganizationOrderManagementPermission: vi.fn(),
   createOrdersAtomically: vi.fn(),
 }));
 
@@ -12,6 +14,8 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
+  requireOrganizationOrderManagementPermission: mocks.requireOrganizationOrderManagementPermission,
 }));
 
 vi.mock("@/lib/services/orders/order-service", () => ({
@@ -26,6 +30,8 @@ describe("batch merchandising order API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
+    mocks.requireOrganizationOrderManagementPermission.mockResolvedValue(undefined);
     mocks.createOrdersAtomically.mockResolvedValue([
       { id: "order-1", orderNo: "OD-1", finalStatus: "Draft" },
       { id: "order-2", orderNo: "OD-2", finalStatus: "Draft" },
@@ -72,6 +78,24 @@ describe("batch merchandising order API", () => {
       expect(response.status).toBe(400);
     }
     expect(mocks.requireOrganizationContext).not.toHaveBeenCalled();
+    expect(mocks.createOrdersAtomically).not.toHaveBeenCalled();
+  });
+
+  it("denies batch creation when CREATE_ORDERS is missing", async () => {
+    mocks.requireOrganizationOrderManagementPermission.mockRejectedValueOnce(
+      new Error("Access denied: This role does not have the required Order Management permission."),
+    );
+
+    const response = await POST(new Request(
+      "http://localhost/api/orders/batch?organizationId=public-org-id",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orders: [{ entityName: "Factory" }] }),
+      },
+    ));
+
+    expect(response.status).toBe(403);
     expect(mocks.createOrdersAtomically).not.toHaveBeenCalled();
   });
 

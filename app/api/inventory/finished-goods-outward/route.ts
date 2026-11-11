@@ -17,7 +17,7 @@ import {
   unpickFinishedGoodsOutwardLine,
   deleteFinishedGoodsOutwardPackingList,
 } from "@/lib/services/inventory/finished-goods-outward-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 type StockType = "SKU" | "GENERAL" | "ALLOCATED";
 const stockTypes: StockType[] = ["SKU", "GENERAL", "ALLOCATED"];
@@ -135,6 +135,11 @@ export async function POST(request: Request) {
       ? ["OWNER", "ADMIN", "MERCHANDISING"]
       : ["OWNER", "ADMIN", "INVENTORY"];
     const organization = await requireOrganizationContext(user.id, organizationId, requesterRoles);
+    await requireOrganizationPermission(
+      user.id,
+      organization.id,
+      action === "request-bookings" ? "REQUEST_FINISHED_GOODS_OUTWARD" : "MANAGE_FINISHED_GOODS_OUTWARD",
+    );
     const actor = { organizationId: organization.id, actorId: user.id, actorName: user.full_name };
 
     if (action === "request") {

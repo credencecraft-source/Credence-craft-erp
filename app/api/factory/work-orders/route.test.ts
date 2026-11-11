@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createWorkOrder: vi.fn(),
   createWorkOrders: vi.fn(),
   deleteWorkOrders: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/factory/work-order-service", () => ({
@@ -51,6 +53,7 @@ describe("factory work-orders route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.createWorkOrder.mockResolvedValue({ id: "work-order-1" });
     mocks.createWorkOrders.mockResolvedValue([{ id: "work-order-1" }]);
     mocks.deleteWorkOrders.mockResolvedValue(undefined);
@@ -74,11 +77,8 @@ describe("factory work-orders route", () => {
     }));
 
     expect(response.status).toBe(201);
-    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
-      "user-1",
-      "public-org",
-      ["OWNER", "ADMIN", "MERCHANDISING"],
-    );
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "public-org", "CREATE_WORK_ORDERS");
     expect(mocks.createWorkOrder).toHaveBeenCalledWith("internal-org-1", "user-1", "ORD-1", [
       { sourceFinishedGoodsId: "size-1", quantity: 5 },
     ]);
@@ -131,11 +131,8 @@ describe("factory work-orders route", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ deleted: ["work-order-1", "work-order-2"] });
-    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
-      "user-1",
-      "public-org",
-      ["OWNER", "ADMIN", "MERCHANDISING"],
-    );
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "public-org", "DELETE_WORK_ORDERS");
     expect(mocks.deleteWorkOrders).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
@@ -152,5 +149,15 @@ describe("factory work-orders route", () => {
     expect(response.status).toBe(400);
     expect(mocks.requireOrganizationContext).not.toHaveBeenCalled();
     expect(mocks.deleteWorkOrders).not.toHaveBeenCalled();
+  });
+
+  it("denies work-order reads without the dedicated view permission", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+
+    const response = await GET(new Request("http://localhost/api/factory/work-orders?organizationId=public-org"));
+
+    expect(response.status).toBe(403);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "public-org", "VIEW_WORK_ORDERS");
+    expect(mocks.listWorkOrders).not.toHaveBeenCalled();
   });
 });

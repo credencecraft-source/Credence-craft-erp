@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   deleteUnusedContacts: vi.fn(),
   listContacts: vi.fn(),
   listContactReportPage: vi.fn(),
+  findCustomerContactsByMobile: vi.fn(),
   getContactRoleCounts: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ vi.mock("@/lib/services/master-data/contact-master-service", () => ({
   deleteUnusedContacts: mocks.deleteUnusedContacts,
   listContacts: mocks.listContacts,
   listContactReportPage: mocks.listContactReportPage,
+  findCustomerContactsByMobile: mocks.findCustomerContactsByMobile,
   getContactRoleCounts: mocks.getContactRoleCounts,
 }));
 vi.mock("@/lib/database/database-errors", () => ({
@@ -40,6 +42,7 @@ describe("organization contact master API", () => {
     mocks.getOrganizationForUserWithPermission.mockResolvedValue({ id: "internal-org-1" });
     mocks.listContacts.mockResolvedValue([]);
     mocks.listContactReportPage.mockResolvedValue({ records: [], hasMore: false });
+    mocks.findCustomerContactsByMobile.mockResolvedValue([]);
     mocks.getContactRoleCounts.mockResolvedValue({ total: 0, uncategorized: 0 });
     mocks.createContact.mockResolvedValue({ id: "contact-1", code: "ACME-01" });
     mocks.deactivateContacts.mockResolvedValue({ deactivatedCount: 2 });
@@ -104,6 +107,7 @@ describe("organization contact master API", () => {
       DISTRIBUTOR: 5,
       DEALER: 27,
     });
+
     const response = await GET(
       new Request("http://localhost/api/organizations/public-org/contacts?summary=true"),
       { params: Promise.resolve({ organizationId: "public-org" }) },
@@ -112,6 +116,25 @@ describe("organization contact master API", () => {
     expect(response.status).toBe(200);
     expect(mocks.getContactRoleCounts).toHaveBeenCalledWith("internal-org-1");
     await expect(response.json()).resolves.toMatchObject({ total: 800, DISTRIBUTOR: 5 });
+  });
+
+  it("finds a customer account by mobile through the authorized organization", async () => {
+    mocks.findCustomerContactsByMobile.mockResolvedValue([{
+      id: "customer-1",
+      legal_name: "Customer One",
+      display_name: "CUSTOMER ONE",
+      phone: "9876543210",
+    }]);
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/contacts?mobile=9876543210"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.findCustomerContactsByMobile).toHaveBeenCalledWith("internal-org-1", "9876543210");
+    await expect(response.json()).resolves.toMatchObject({
+      records: [{ id: "customer-1", phone: "9876543210" }],
+    });
   });
 
   it("rejects invalid contact pagination", async () => {

@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { requireSessionUser, requireOrganizationContext, createArticleBasedOrders } = vi.hoisted(() => ({
+const { requireSessionUser, requireOrganizationContext, requireOrganizationPermission, requireOrganizationOrderManagementPermission, createArticleBasedOrders } = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
+  requireOrganizationOrderManagementPermission: vi.fn(),
   createArticleBasedOrders: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser }));
-vi.mock("@/lib/services/organizations/organization-service", () => ({ requireOrganizationContext }));
+vi.mock("@/lib/services/organizations/organization-service", () => ({ requireOrganizationContext, requireOrganizationPermission, requireOrganizationOrderManagementPermission }));
 vi.mock("@/lib/services/orders/article-based-order-service", () => ({ createArticleBasedOrders }));
 vi.mock("@/lib/database/database-errors", () => ({
   DATABASE_UNAVAILABLE_MESSAGE: "Database unavailable.",
@@ -31,6 +33,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireSessionUser.mockResolvedValue({ id: "user-id" });
   requireOrganizationContext.mockResolvedValue({ id: "internal-organization-id" });
+  requireOrganizationPermission.mockResolvedValue(undefined);
+  requireOrganizationOrderManagementPermission.mockResolvedValue(undefined);
   createArticleBasedOrders.mockResolvedValue([{ id: "order-id", orderNo: "OD-17", orderQty: 15 }]);
 });
 
@@ -44,6 +48,9 @@ describe("POST /api/orders/from-article", () => {
       "user-id",
       "public-organization-id",
       ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    expect(requireOrganizationOrderManagementPermission).toHaveBeenCalledWith(
+      "user-id", "internal-organization-id", "merchandising/order", "create",
     );
     expect(createArticleBasedOrders).toHaveBeenCalledWith("internal-organization-id", requestBody, "user-id");
     expect(await response.json()).toEqual({
@@ -77,6 +84,15 @@ describe("POST /api/orders/from-article", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "Organization access denied." });
+    expect(createArticleBasedOrders).not.toHaveBeenCalled();
+  });
+
+  it("denies order creation before calling the service when permission is missing", async () => {
+    requireOrganizationOrderManagementPermission.mockRejectedValue(new Error("Access denied: This role does not have the required Order Management permission."));
+
+    const response = await POST(makeRequest({ articleId: "article-id", colors: [] }));
+
+    expect(response.status).toBe(403);
     expect(createArticleBasedOrders).not.toHaveBeenCalled();
   });
 

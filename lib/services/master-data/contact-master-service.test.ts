@@ -61,6 +61,7 @@ import {
   createContact,
   deactivateContacts,
   deleteUnusedContacts,
+  findCustomerContactsByMobile,
   getContact,
   getContactCount,
   getContactRoleCounts,
@@ -131,6 +132,34 @@ describe("contact master numbering", () => {
     expect(mocks.tx.contact.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "org-1", id: "contact-1" },
     }));
+  });
+
+  it("finds customer accounts by normalized mobile within the organization", async () => {
+    mocks.queryRaw.mockResolvedValue([{ id: "customer-1" }]);
+    mocks.tx.contact.findMany.mockResolvedValue([{
+      id: "customer-1",
+      legal_name: "CUSTOMER ONE",
+      display_name: "CUSTOMER ONE",
+      phone: "+91 98765-43210",
+    }]);
+
+    await expect(findCustomerContactsByMobile("org-1", "+91 98765 43210")).resolves.toEqual([
+      expect.objectContaining({ id: "customer-1", phone: "+91 98765-43210" }),
+    ]);
+    expect(mocks.tx.contact.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-1",
+        is_active: true,
+        roles: { some: { role_code: "CUSTOMER", is_active: true } },
+      }),
+    }));
+  });
+
+  it("rejects invalid Indian mobile numbers without querying contacts", async () => {
+    await expect(findCustomerContactsByMobile("org-1", "1234")).rejects.toThrow(
+      "Enter a valid 10-digit Indian mobile number.",
+    );
+    expect(mocks.queryRaw).not.toHaveBeenCalled();
   });
 
   it("assigns sequential organization-scoped codes atomically", async () => {

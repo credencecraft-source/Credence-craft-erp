@@ -3,13 +3,17 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/database/prisma-client";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 const movementTypes = new Set(["CHALLAN", "VISITOR", "STAFF", "COURIER", "OTHER"]);
 const directions = new Set(["INWARD", "OUTWARD"]);
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function errorStatus(error: unknown) {
+  return error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
 }
 
 function purchaseOrderWhere(organizationId: string, purchaseOrderNo: string) {
@@ -24,6 +28,7 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_GATE_ENTRIES");
     const challanNo = text(searchParams.get("challanNo"));
     const entryId = text(searchParams.get("entryId"));
 
@@ -48,7 +53,7 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ entries });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load gate entries." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load gate entries." }, { status: errorStatus(error) });
   }
 }
 
@@ -57,6 +62,7 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const body = await request.json() as Record<string, unknown>;
     const organization = await requireOrganizationContext(user.id, text(body.organizationId));
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_GATE_ENTRIES");
     const direction = text(body.direction).toUpperCase();
     const movementType = text(body.movementType).toUpperCase();
     const personName = text(body.personName);
@@ -98,7 +104,7 @@ export async function POST(request: Request) {
       nextStep: movementType === "CHALLAN" ? "INVENTORY_RECEIVING" : "SECURITY_HANDOFF",
     }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save gate entry." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save gate entry." }, { status: errorStatus(error) });
   }
 }
 
@@ -109,6 +115,7 @@ export async function DELETE(request: Request) {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const organizationId = text(searchParams.get("organizationId") || body.organizationId);
     const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationPermission(user.id, organizationId, "DELETE_GATE_ENTRIES");
     const rawIds = Array.isArray(body.entryIds) ? body.entryIds : Array.isArray(body.ids) ? body.ids : [];
     const entryIds = rawIds.map((id) => String(id).trim()).filter(Boolean);
 
@@ -125,6 +132,6 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ ok: true, deletedCount: result.count });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete gate entries." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete gate entries." }, { status: errorStatus(error) });
   }
 }

@@ -25,7 +25,7 @@ export async function PATCH(
   try {
     const params = await context.params;
     nodeId = params.nodeId;
-    organization = await requireOrganizationPermission(user.id, params.organizationId, "MANAGE_MASTER_DATA");
+    organization = await requireOrganizationPermission(user.id, params.organizationId, "MANAGE_STORAGE_NODES");
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Access denied:")) {
       return NextResponse.json({ error: error.message }, { status: 403 });

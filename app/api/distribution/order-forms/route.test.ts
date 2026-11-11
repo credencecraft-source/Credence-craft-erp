@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createDistributionOrderFormFromBookings: vi.fn(),
   deleteDistributionOrderForms: vi.fn(),
   listDistributionOrderForms: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/distribution/quotation-service", () => ({
   createDistributionOrderFormFromBookings: mocks.createDistributionOrderFormFromBookings,
@@ -18,7 +20,7 @@ vi.mock("@/lib/services/distribution/quotation-service", () => ({
   listDistributionOrderForms: mocks.listDistributionOrderForms,
 }));
 
-import { DELETE, GET } from "./route";
+import { DELETE, GET, POST } from "./route";
 
 const deleteRequest = (body: unknown) => new Request("http://localhost/api/distribution/order-forms", {
   method: "DELETE",
@@ -35,6 +37,7 @@ describe("distribution Order Form API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listDistributionOrderForms.mockResolvedValue({ orderForms: [], nextCursor: null });
     mocks.deleteDistributionOrderForms.mockResolvedValue([
       { id: "order-form-1", orderFormNo: "OF-1" },
@@ -127,5 +130,17 @@ describe("distribution Order Form API", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.deleteDistributionOrderForms).not.toHaveBeenCalled();
+  });
+
+  it("requires order-creation permission before creating an Order Form", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await POST(new Request("http://localhost/api/distribution/order-forms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organizationId: "public-org", bookingIds: ["booking-1"] }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.createDistributionOrderFormFromBookings).not.toHaveBeenCalled();
   });
 });

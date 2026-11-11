@@ -6,10 +6,15 @@ import { useRouter } from "next/navigation";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
+import {
+  getPageSetupPaperSizeLabel,
+  parseStoredPageSetupPaperSize,
+} from "@/lib/services/design-development/page-setup-template-contract";
 
 type PageSetupReportRow = {
   id: string;
   name: string;
+  printerType: string;
   paperSize: string;
   orientation: string;
   stickerSize: string;
@@ -21,7 +26,10 @@ type PageSetupReportRow = {
 type ApiPageSetupTemplate = {
   id: string;
   name: string;
+  printerType: string;
   paperSize: string;
+  paperWidthMm: number | null;
+  paperLengthMm: number | null;
   orientation: string;
   stickerWidthMm: number;
   stickerLengthMm: number;
@@ -36,6 +44,7 @@ type ApiPageSetupTemplate = {
 
 const fields: Array<{ key: keyof PageSetupReportRow; label: string }> = [
   { key: "name", label: "Template Name" },
+  { key: "printerType", label: "Printer Type" },
   { key: "paperSize", label: "Paper Size" },
   { key: "orientation", label: "Orientation" },
   { key: "stickerSize", label: "Sticker Size" },
@@ -80,21 +89,30 @@ export default function PageSetupTemplatesPage({
       })
       .then(({ templates }) => {
         if (!active) return;
-        setRecords(templates.map((template) => ({
-          id: template.id,
-          name: template.name,
-          paperSize: template.paperSize,
-          orientation: template.orientation,
-          stickerSize: `${template.stickerWidthMm} × ${template.stickerLengthMm} mm`,
-          margins: [
-            template.marginTopMm,
-            template.marginBottomMm,
-            template.marginLeftMm,
-            template.marginRightMm,
-          ].join(" / "),
-          stickerGaps: `${template.horizontalGapMm} / ${template.verticalGapMm}`,
-          updatedAt: new Date(template.updatedAt).toLocaleDateString(),
-        })));
+        setRecords(templates.map((template) => {
+          const paperSize = parseStoredPageSetupPaperSize(template.paperSize);
+          if (!paperSize) throw new Error("A Page Setup template has an invalid paper size.");
+          return {
+            id: template.id,
+            name: template.name,
+            printerType: paperSize.printerType === "THERMAL" ? "Thermal" : "Laser",
+            paperSize: paperSize.printerType === "THERMAL"
+              ? `Roll · ${paperSize.paperWidthMm} mm wide · automatic length`
+              : paperSize.paperWidthMm !== null && paperSize.paperLengthMm !== null
+                ? `${getPageSetupPaperSizeLabel(paperSize.paperSize)} · ${paperSize.paperWidthMm} × ${paperSize.paperLengthMm} mm`
+                : getPageSetupPaperSizeLabel(paperSize.paperSize),
+            orientation: paperSize.printerType === "THERMAL" ? "Not applicable" : template.orientation,
+            stickerSize: `${template.stickerWidthMm} × ${template.stickerLengthMm} mm`,
+            margins: [
+              template.marginTopMm,
+              template.marginBottomMm,
+              template.marginLeftMm,
+              template.marginRightMm,
+            ].join(" / "),
+            stickerGaps: `${template.horizontalGapMm} / ${template.verticalGapMm}`,
+            updatedAt: new Date(template.updatedAt).toLocaleDateString(),
+          };
+        }));
         setLoadError("");
       })
       .catch((error: unknown) => {

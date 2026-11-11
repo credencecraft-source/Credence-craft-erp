@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
+  requireOrganizationOrderManagementPermission: vi.fn(),
   getGroupedPurchaseOrder: vi.fn(),
   approveGroupedPurchaseOrder: vi.fn(),
   deleteGroupedPurchaseOrder: vi.fn(),
@@ -12,7 +14,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
-vi.mock("@/lib/services/organizations/organization-service", () => ({ requireOrganizationContext: mocks.requireOrganizationContext }));
+vi.mock("@/lib/services/organizations/organization-service", () => ({
+  requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
+  requireOrganizationOrderManagementPermission: mocks.requireOrganizationOrderManagementPermission,
+}));
 vi.mock("@/lib/services/orders/grouped-purchase-order-service", () => ({
   approveGroupedPurchaseOrder: mocks.approveGroupedPurchaseOrder,
   deleteGroupedPurchaseOrder: mocks.deleteGroupedPurchaseOrder,
@@ -31,6 +37,8 @@ describe("Grouped PO detail endpoint", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
+    mocks.requireOrganizationOrderManagementPermission.mockResolvedValue(undefined);
     mocks.getGroupedPurchaseOrder.mockResolvedValue({ id: "group-1" });
   });
 
@@ -73,6 +81,19 @@ describe("Grouped PO detail endpoint", () => {
     }), { params: Promise.resolve({ groupedPurchaseOrderId: "group-1" }) });
 
     expect(response.status).toBe(400);
+    expect(mocks.deleteGroupedPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("does not delete a Grouped PO without DELETE_PURCHASE_ORDERS", async () => {
+    mocks.requireOrganizationOrderManagementPermission.mockRejectedValue(
+      new Error("Access denied: DELETE_PURCHASE_ORDERS permission is required."),
+    );
+
+    const response = await DELETE(new Request("http://localhost/api/orders/procurement/group-1?organizationId=public-org", {
+      method: "DELETE",
+    }), { params: Promise.resolve({ groupedPurchaseOrderId: "group-1" }) });
+
+    expect(response.status).toBe(403);
     expect(mocks.deleteGroupedPurchaseOrder).not.toHaveBeenCalled();
   });
 });

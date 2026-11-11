@@ -8,7 +8,10 @@ import OrderQrPrintSheetPreview from "./order-qr-print-sheet-preview";
 const pageSetup: PageSetupPrintSnapshot = {
   id: "setup-1",
   name: "A4 MARGIN TEST",
+  printerType: "LASER",
   paperSize: "A4",
+  paperWidthMm: null,
+  paperLengthMm: null,
   orientation: "PORTRAIT",
   stickerWidthMm: 50,
   stickerLengthMm: 30,
@@ -56,5 +59,31 @@ describe("OrderQrPrintSheetPreview", () => {
 
     expect(markup).toContain("The sticker does not fit inside this Page Setup");
     expect(markup).not.toContain('role="img"');
+  });
+
+  it("previews a thermal roll using the requested label count and automatic length", () => {
+    const markup = renderToStaticMarkup(createElement(OrderQrPrintSheetPreview, {
+      pageSetup: {
+        ...pageSetup,
+        name: "58MM ROLL",
+        printerType: "THERMAL",
+        paperSize: "ROLL",
+        paperWidthMm: 58,
+        paperLengthMm: null,
+        marginTopMm: 5,
+        marginBottomMm: 5,
+        marginLeftMm: 3,
+        marginRightMm: 3,
+        horizontalGapMm: 2,
+        verticalGapMm: 2,
+      },
+      stickerDataUrl: "data:image/png;base64,AA==",
+      stickerWidthMm: 25,
+      stickerLengthMm: 30,
+      quantity: 3,
+    }));
+
+    expect(markup).toContain("Thermal roll · 58 mm wide × 72 mm calculated length");
+    expect(markup.match(/aria-hidden="true"/g)).toHaveLength(3);
   });
 });

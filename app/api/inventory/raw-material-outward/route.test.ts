@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createWorkOrderMaterialRequest: vi.fn(),
   acceptRawMaterialOutwardRequest: vi.fn(),
   markRawMaterialOutwardItemPicked: vi.fn(),
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/inventory/raw-material-outward-service", () => ({
   createWorkOrderMaterialRequest: mocks.createWorkOrderMaterialRequest,
@@ -50,6 +52,7 @@ describe("raw-material-outward route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue(user);
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.createWorkOrderMaterialRequest.mockResolvedValue({ id: "request-1", request_no: "RMR-1" });
     mocks.listRawMaterialOutwardWorkflow.mockResolvedValue({ requests: [], boxes: [], shipments: [] });
   });
@@ -76,6 +79,11 @@ describe("raw-material-outward route", () => {
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "REQUEST_RAW_MATERIAL_OUTWARD",
+    );
     expect(mocks.createWorkOrderMaterialRequest).toHaveBeenCalledWith({
       organizationId: "internal-org-1",
       actorId: "user-1",
@@ -87,6 +95,19 @@ describe("raw-material-outward route", () => {
 
   it("rejects an unauthorized factory request without calling the service", async () => {
     mocks.requireOrganizationContext.mockRejectedValue(new Error("Access denied: insufficient organization permissions."));
+
+    const response = await POST(jsonRequest({
+      organizationId: "public-org",
+      action: "request",
+      workOrderId: "wo-1",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.createWorkOrderMaterialRequest).not.toHaveBeenCalled();
+  });
+
+  it("denies material requests when the dedicated request permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
 
     const response = await POST(jsonRequest({
       organizationId: "public-org",
@@ -181,6 +202,11 @@ describe("raw-material-outward route", () => {
       "user-1",
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
+    );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "MANAGE_RAW_MATERIAL_OUTWARD",
     );
     expect(mocks.deleteRawMaterialOutwardShipment).toHaveBeenCalledWith({
       organizationId: "internal-org-1",

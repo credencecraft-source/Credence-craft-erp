@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { createDistributionMasterQuotations } from "@/lib/services/distribution/quotation-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 export async function POST(request: Request) {
   try {
@@ -16,6 +16,7 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     if (!Array.isArray(body.quotationIds) || body.quotationIds.some((id) => typeof id !== "string")) {
       throw new Error("Select regular quotations to create a sales order.");
     }
@@ -52,7 +53,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to create the sales order." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }

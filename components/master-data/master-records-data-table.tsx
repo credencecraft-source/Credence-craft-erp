@@ -748,6 +748,10 @@ export function MasterRecordsTable({
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(record.id)}`);
       return;
     }
+    if (moduleKey === "entity") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/entity/${encodeURIComponent(record.value_id)}/divisions`);
+      return;
+    }
     if (moduleKey === "gold-seal") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(record.value_id)}`);
       return;
@@ -1093,6 +1097,14 @@ export function MasterRecordsTable({
 
   const getLookupOptions = (field: MasterFieldDefinition, values: Record<string, unknown>) => {
     const options = articleLookupOptions[field.lookupModuleKey ?? ""] ?? emptyMasterLookupOptions;
+    if (moduleKey === "storage-node" && field.key === "master_location_id") {
+      const entityValue = String(values.entity_id ?? "").trim();
+      if (!entityValue) return [];
+      const entityOption = (articleLookupOptions.entity ?? emptyMasterLookupOptions)
+        .find((option) => option.id === entityValue || option.value_id === entityValue);
+      const entityIds = new Set([entityValue, entityOption?.id, entityOption?.value_id].filter(Boolean));
+      return options.filter((option) => entityIds.has(String(option.fields?.entity_id ?? "")));
+    }
     if (!field.dependsOn) return options;
 
     const parentField = masterFieldByKey.get(field.dependsOn);
@@ -1109,14 +1121,15 @@ export function MasterRecordsTable({
     allowQuickCreate = false,
   ) => {
     const storageNodeLevel = String(values.node_type ?? "");
-    const storageParentType: Record<string, string> = {
-      WAREHOUSE: "LOCATION_SITE",
-      SUB_STORE: "WAREHOUSE",
-      RACK: "SUB_STORE",
-      BIN: "RACK",
+    const storageParentTypes: Record<string, string[]> = {
+      WAREHOUSE: ["LOCATION_SITE"],
+      SUB_STORE: ["LOCATION_SITE", "WAREHOUSE"],
+      RACK: ["LOCATION_SITE", "WAREHOUSE", "SUB_STORE"],
+      BIN: ["LOCATION_SITE", "WAREHOUSE", "SUB_STORE", "RACK"],
     };
     if (moduleKey === "storage-node" && formMode === "create"
       && ((field.key === "entity_id" && storageNodeLevel !== "LOCATION_SITE")
+        || (field.key === "master_location_id" && storageNodeLevel !== "LOCATION_SITE")
         || (field.key === "parent_node_id" && storageNodeLevel === "LOCATION_SITE"))) {
       return <input key={field.key} type="hidden" name={`field_${field.key}`} value="" />;
     }
@@ -1218,8 +1231,9 @@ export function MasterRecordsTable({
         : value;
       let options = getLookupOptions(field, values);
       if (moduleKey === "storage-node" && field.key === "parent_node_id") {
-        const requiredParentType = storageParentType[storageNodeLevel];
-        options = options.filter((option) => option.fields?.node_type === requiredParentType);
+        const validParentTypes = storageParentTypes[storageNodeLevel] ?? [];
+        options = options.filter((option) =>
+          validParentTypes.includes(String(option.fields?.node_type ?? "")));
       }
       if (field.multiple) {
         const rawSelectedValues = Array.isArray(selectedValue)
@@ -1510,9 +1524,9 @@ export function MasterRecordsTable({
           <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter((row) => Object.values(row).some((item) => String(item ?? "").trim() !== "")))} />
           <div className="space-y-2">
               {normalizedValues.map((childValue, index) => (
-                <div key={`${field.key}-${index}`} className={`grid min-w-0 rounded-lg border border-slate-200 bg-white sm:grid-cols-[2.5rem_minmax(0,1fr)_auto] ${moduleKey === "article" ? "items-center gap-2 p-2" : "items-end gap-3 p-3"}`}>
+                <div key={`${field.key}-${index}`} className={`grid min-w-0 rounded-lg border border-slate-200 bg-white ${moduleKey === "measurement-chart" ? "sm:grid-cols-[2rem_minmax(0,1fr)_auto] items-end gap-2 p-2" : "sm:grid-cols-[2.5rem_minmax(0,1fr)_auto]"} ${moduleKey === "article" ? "items-center gap-2 p-2" : moduleKey === "measurement-chart" ? "" : "items-end gap-3 p-3"}`}>
                   <span className={`flex items-center justify-center text-sm font-semibold tabular-nums text-slate-500 ${moduleKey === "article" ? "h-8 self-center" : "h-10 self-end"}`}>{index + 1}</span>
-                  <div className={`grid min-w-0 ${moduleKey === "article" ? "gap-2 sm:grid-cols-2 xl:grid-cols-3" : "gap-3 sm:grid-cols-2"}`}>
+                  <div className={`grid min-w-0 ${moduleKey === "article" ? "gap-2 sm:grid-cols-2 xl:grid-cols-3" : moduleKey === "measurement-chart" ? "gap-2 xl:grid-cols-4" : "gap-3 sm:grid-cols-2"}`}>
                     {childFields.map((childField) => {
                     const childValueForField = childValue[childField.key] ?? "";
                     if (moduleKey === "article" && childField.key === "variant_code") return null;
@@ -1543,7 +1557,7 @@ export function MasterRecordsTable({
                               { value: "", label: `Select ${childField.label}` },
                               ...(articleLookupOptions[childField.lookupModuleKey ?? ""] ?? []).map((option) => ({ value: option.label, label: option.label })),
                             ]}
-                            className={moduleKey === "article" ? "h-9 px-2 py-1.5 text-sm" : undefined}
+                            className={moduleKey === "article" || moduleKey === "measurement-chart" ? "h-9 px-2 py-1.5 text-sm" : undefined}
                           />
                           {allowQuickCreate && moduleKey === "article" && childField.lookupModuleKey && (
                             <Button
@@ -1563,7 +1577,7 @@ export function MasterRecordsTable({
                         </div>
                       );
                     }
-                    return <Input key={childField.key} label={childField.label} required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} step={childField.type === "decimal" ? "0.0001" : childField.type === "percentage" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => onChange(event.target.value)} className={moduleKey === "article" ? "h-9 px-2 py-1.5 text-sm" : undefined} />;
+                    return <Input key={childField.key} label={childField.label} required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} min={moduleKey === "measurement-chart" && childField.type === "decimal" ? "0" : undefined} max={moduleKey === "measurement-chart" && childField.type === "decimal" ? "9999.99" : undefined} step={childField.type === "decimal" ? moduleKey === "measurement-chart" ? "0.01" : "0.0001" : childField.type === "percentage" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => onChange(event.target.value)} className={moduleKey === "article" || moduleKey === "measurement-chart" ? "h-9 px-2 py-1.5 text-sm" : undefined} />;
                   })}
                 </div>
                 <Button

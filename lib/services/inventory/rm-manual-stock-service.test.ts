@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
     transaction,
     prismaTransaction: vi.fn((callback: (database: typeof transaction) => unknown) => callback(transaction)),
     createAuditEvent: vi.fn(),
-    getActiveBinPlacement: vi.fn(),
+    getActiveStoragePlacement: vi.fn(),
     StorageNodeError,
   };
 });
@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: { $transaction: mocks.prismaTransaction } }));
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({ createAuditEvent: mocks.createAuditEvent }));
 vi.mock("@/lib/services/inventory/storage-node-service", () => ({
-  getActiveBinPlacement: mocks.getActiveBinPlacement,
+  getActiveStoragePlacement: mocks.getActiveStoragePlacement,
   StorageNodeError: mocks.StorageNodeError,
 }));
 
@@ -34,7 +34,7 @@ describe("manual raw-material stock addition", () => {
     vi.clearAllMocks();
     mocks.transaction.masterRawMaterial.findFirst.mockResolvedValue({ id: "material-1", raw_material_name: "Cotton", is_asset: false });
     mocks.transaction.masterLocation.findFirst.mockResolvedValue({ id: "location-1", entity_id: "entity-1", location_name: "Store" });
-    mocks.getActiveBinPlacement.mockResolvedValue({ id: "bin-1", node_code: "BIN-01" });
+    mocks.getActiveStoragePlacement.mockResolvedValue({ id: "bin-1", node_code: "BIN-01" });
     mocks.transaction.rawMaterialStock.create.mockResolvedValue({ id: "stock-1" });
     mocks.createAuditEvent.mockResolvedValue({});
   });
@@ -57,11 +57,12 @@ describe("manual raw-material stock addition", () => {
     expect(mocks.transaction.masterLocation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "location-1", organization_id: "internal-org-1", is_active: true, entity: { is_active: true } },
     }));
-    expect(mocks.getActiveBinPlacement).toHaveBeenCalledWith(
+    expect(mocks.getActiveStoragePlacement).toHaveBeenCalledWith(
       mocks.transaction,
       "internal-org-1",
       "bin-1",
       "entity-1",
+      "location-1",
     );
     expect(mocks.transaction.rawMaterialStock.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -146,8 +147,8 @@ describe("manual raw-material stock addition", () => {
   });
 
   it("does not post stock when the selected Bin is not a legal active placement", async () => {
-    mocks.getActiveBinPlacement.mockRejectedValue(new mocks.StorageNodeError(
-      "Select a Bin under a Location/Site associated with the selected Entity.",
+    mocks.getActiveStoragePlacement.mockRejectedValue(new mocks.StorageNodeError(
+      "Select a storage location under a Location/Site associated with the selected Entity.",
     ));
 
     await expect(addRawMaterialStockManually({
@@ -158,10 +159,26 @@ describe("manual raw-material stock addition", () => {
       storageNodeId: "bin-1",
       quantity: "1",
       reason: "Opening balance",
-    })).rejects.toThrow("Select a Bin under a Location/Site associated with the selected Entity.");
+    })).rejects.toThrow("Select a storage location under a Location/Site associated with the selected Entity.");
 
     expect(mocks.transaction.rawMaterialStock.create).not.toHaveBeenCalled();
     expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("allows stock at the selected operational location without a storage placement", async () => {
+    await addRawMaterialStockManually({
+      organizationId: "internal-org-1",
+      userId: "user-1",
+      rawMaterialId: "material-1",
+      locationId: "location-1",
+      quantity: "3",
+      reason: "Location-level stock",
+    });
+
+    expect(mocks.getActiveStoragePlacement).not.toHaveBeenCalled();
+    expect(mocks.transaction.rawMaterialStock.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ location_id: "location-1", storage_node_id: null }),
+    }));
   });
 
   it("rejects zero and excessive precision before opening a transaction", async () => {

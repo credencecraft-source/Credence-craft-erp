@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   createStorageNode,
   listStorageNodesForOrganization,
@@ -32,7 +32,7 @@ export async function GET(
   try {
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
-    const organization = await requireOrganizationContext(user.id, organizationId);
+    const organization = await requireOrganizationPermission(user.id, organizationId, "VIEW_STORAGE_NODES");
     const { searchParams } = new URL(request.url);
     const nodeTypeValue = searchParams.get("nodeType") || undefined;
     if (nodeTypeValue && !STORAGE_NODE_TYPES.includes(nodeTypeValue as StorageNodeType)) {
@@ -47,8 +47,8 @@ export async function GET(
       return NextResponse.json({ error: "Storage node search must contain between 2 and 100 characters." }, { status: 400 });
     }
     const siteEntityId = searchParams.get("siteEntityId")?.trim() || undefined;
-    if (siteEntityId && (siteEntityId.length > 100 || nodeTypeValue !== "BIN")) {
-      return NextResponse.json({ error: "A valid site Entity is required when searching Bins." }, { status: 400 });
+    if (siteEntityId && siteEntityId.length > 100) {
+      return NextResponse.json({ error: "A valid site Entity is required when searching storage locations." }, { status: 400 });
     }
     const cursor = searchParams.get("cursor")?.trim() || undefined;
     const resultLimit = Math.min(limit + 1, 500);
@@ -92,7 +92,7 @@ export async function POST(
   let organization;
   try {
     const { organizationId } = await context.params;
-    organization = await requireOrganizationPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
+    organization = await requireOrganizationPermission(user.id, organizationId, "MANAGE_STORAGE_NODES");
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Access denied:")) {
       return NextResponse.json({ error: error.message }, { status: 403 });
@@ -117,6 +117,7 @@ export async function POST(
       name: body.name,
       parentId: body.parentId,
       entityId: body.entityId,
+      masterLocationId: body.masterLocationId,
     });
     return NextResponse.json({ node }, { status: 201 });
   } catch (error) {

@@ -31,7 +31,10 @@ import {
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
 } from "@/lib/services/orders/order-qr-template-contract";
-import type { PageSetupPrintSnapshot } from "@/lib/services/design-development/page-setup-template-contract";
+import {
+  getPageSetupPaperSizeLabel,
+  type PageSetupPrintSnapshot,
+} from "@/lib/services/design-development/page-setup-template-contract";
 
 export default function BarcodeQrCodeTemplateCreatePage({
   workspaceId,
@@ -253,7 +256,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
         setDisplayFields(loadedDisplayFields);
         setSelectedStyleField(loadedDisplayFields[0] ?? loadedFields[0].key);
         setDisplayFieldStyles(template.displayFieldStyles);
-        setLayout({ ...template.layout, printerType: "LASER" });
+        setLayout(template.layout);
         setPageSetupTemplateId(template.pageSetup?.id ?? "");
         savedPageSetupRef.current = template.pageSetup;
         const pageSetup = template.pageSetup;
@@ -597,7 +600,10 @@ export default function BarcodeQrCodeTemplateCreatePage({
                 if (pageSetup) {
                   setStickerWidthMm(pageSetup.stickerWidthMm);
                   setStickerLengthMm(pageSetup.stickerLengthMm);
-                  setLayout((current) => ({ ...current, printerType: "LASER" }));
+                  setLayout((current) => ({
+                    ...current,
+                    printerType: pageSetup.printerType === "THERMAL" ? "BARCODE" : "LASER",
+                  }));
                 }
                 setSaveError("");
               }}
@@ -609,7 +615,9 @@ export default function BarcodeQrCodeTemplateCreatePage({
               </option>
               {pageSetupOptions.map((pageSetup) => (
                 <option key={pageSetup.id} value={pageSetup.id}>
-                  {pageSetup.name} · {pageSetup.paperSize} {pageSetup.orientation.toLowerCase()}
+                  {pageSetup.name} · {pageSetup.printerType === "THERMAL"
+                    ? `Thermal roll · ${pageSetup.paperWidthMm} mm wide`
+                    : `${getPageSetupPaperSizeLabel(pageSetup.paperSize)} ${pageSetup.orientation.toLowerCase()}`}
                 </option>
               ))}
             </Select>
@@ -643,7 +651,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
             {selectedPageSetup && (
               <p className="text-sm text-[var(--erp-text-muted)]" role="status">
                 Sticker size {selectedPageSetup.stickerWidthMm} × {selectedPageSetup.stickerLengthMm} mm ·{" "}
-                {selectedPageSetup.paperSize} {selectedPageSetup.orientation.toLowerCase()} sheet. These dimensions and margins are fixed by the selected Page Setup.
+                {getPageSetupPaperSizeLabel(selectedPageSetup.paperSize)} {selectedPageSetup.orientation.toLowerCase()} sheet. These dimensions and margins are fixed by the selected Page Setup.
               </p>
             )}
             </Card>
@@ -819,7 +827,9 @@ export default function BarcodeQrCodeTemplateCreatePage({
           <p className="text-xs text-[var(--erp-text-muted)]">
             Drag the QR code and each display field to position them. Use arrow keys for precision.
             {" "}Sticker: {stickerWidthMm} × {stickerLengthMm} mm · {selectedPageSetup
-              ? `${selectedPageSetup.paperSize} ${selectedPageSetup.orientation.toLowerCase()} sheet`
+              ? selectedPageSetup.printerType === "THERMAL"
+                ? `Thermal roll · ${selectedPageSetup.paperWidthMm} mm wide`
+                : `${getPageSetupPaperSizeLabel(selectedPageSetup.paperSize)} ${selectedPageSetup.orientation.toLowerCase()} sheet`
               : "Select Page Setup"}
             {" "}· QR field: {getQrTemplateFieldLabel(qrFieldKey)}
           </p>
@@ -841,6 +851,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
                 stickerDataUrl={currentPrintStickerPreview.dataUrl}
                 stickerWidthMm={stickerWidthMm}
                 stickerLengthMm={stickerLengthMm}
+                quantity={6}
               />
             )}
           </Card>

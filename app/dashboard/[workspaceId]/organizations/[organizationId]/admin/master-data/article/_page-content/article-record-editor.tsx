@@ -79,6 +79,7 @@ export default function ArticleRecordEditor({
   updateAction,
   error,
   saved,
+  returnToUniformManagement = false,
 }: {
   workspaceId: string;
   organizationId: string;
@@ -90,6 +91,7 @@ export default function ArticleRecordEditor({
   updateAction: ArticleFormAction;
   error?: string;
   saved?: string;
+  returnToUniformManagement?: boolean;
 }) {
   const editing = record !== null;
   const router = useRouter();
@@ -440,6 +442,7 @@ export default function ArticleRecordEditor({
           <input type="hidden" name="organizationId" value={organizationId} />
           <input type="hidden" name="moduleKey" value="article" />
           <input type="hidden" name="returnToArticleDetail" value="true" />
+          {returnToUniformManagement ? <input type="hidden" name="returnToUniformManagement" value="true" /> : null}
           {editing ? <input type="hidden" name="valueId" value={record.value_id} /> : null}
           <input type="hidden" name="field_variants" value={JSON.stringify(variants)} />
           <input type="hidden" name="articleSizePrices" value={JSON.stringify(sizePriceRows)} />

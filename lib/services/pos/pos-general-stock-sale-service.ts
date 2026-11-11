@@ -50,6 +50,7 @@ type CreatePosSaleInput = {
   invoiceDate: string;
   customer?: string | null;
   customerContactId?: string | null;
+  returnCreditApplications?: Array<{ returnId: string; amount: string }>;
   couponCode?: string | null;
   salesChannel?: "COUNTER" | "ONLINE_STORE";
   shippingAddress?: PosInvoiceShippingAddress | null;
@@ -213,6 +214,9 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
   if (salesChannel !== "COUNTER" && salesChannel !== "ONLINE_STORE") {
     throw new Error("Select a valid POS sales channel.");
   }
+  if (salesChannel === "COUNTER" && !input.customerContactId?.trim()) {
+    throw new Error("Select a registered customer before posting a POS invoice.");
+  }
   const shippingAddress = input.shippingAddress ?? null;
   if (salesChannel === "ONLINE_STORE" && !shippingAddress) {
     throw new Error("A shipping address is required for an online-store sale.");
@@ -262,6 +266,24 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     : null;
   if (requestedCustomer && requestedCustomer.length > 255) {
     throw new Error("Customer name must be 255 characters or fewer.");
+  }
+  const returnCreditApplications = input.returnCreditApplications ?? [];
+  if (!Array.isArray(returnCreditApplications) || returnCreditApplications.length > 50) {
+    throw new Error("Apply no more than 50 sales-return credits to one invoice.");
+  }
+  const normalizedReturnCreditApplications = returnCreditApplications.map((application) => {
+    if (!application || typeof application.returnId !== "string") {
+      throw new Error("Select a valid sales-return credit.");
+    }
+    const returnId = application.returnId.trim();
+    if (!returnId || returnId.length > 100) throw new Error("Select a valid sales-return credit.");
+    const amount = parseDecimal(application.amount, "Applied return credit", 2);
+    if (amount.isZero()) throw new Error("Applied return credit must be greater than zero.");
+    return { returnId, amount };
+  });
+  if (new Set(normalizedReturnCreditApplications.map(({ returnId }) => returnId)).size
+    !== normalizedReturnCreditApplications.length) {
+    throw new Error("A sales-return credit can only be selected once per invoice.");
   }
 
   const normalizedLines = input.lines.map((line) => {
@@ -313,6 +335,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         igst_amount: true,
         tax_amount: true,
         total_amount: true,
+        store_credit_applied_amount: true,
         coupon_discount_amount: true,
         shipping_address: true,
         entity: { select: { entity_name: true } },
@@ -334,6 +357,8 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         igstAmount: existingInvoice.igst_amount.toFixed(2),
         taxAmount: existingInvoice.tax_amount.toFixed(2),
         totalAmount: existingInvoice.total_amount.toFixed(2),
+        storeCreditAppliedAmount: existingInvoice.store_credit_applied_amount.toFixed(2),
+        amountDue: existingInvoice.total_amount.minus(existingInvoice.store_credit_applied_amount).toFixed(2),
         couponDiscountAmount: existingInvoice.coupon_discount_amount.toFixed(2),
         appliedCouponCode: existingInvoice.couponRedemption?.coupon_code ?? null,
         issuedCouponCode: existingInvoice.issuedCoupon?.coupon_code ?? null,
@@ -706,6 +731,42 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       };
     });
     assertMoneyRange(totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst), "Invoice total");
+    const invoiceTotal = money(totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst));
+    const storeCreditAppliedAmount = money(normalizedReturnCreditApplications.reduce(
+      (total, application) => total.plus(application.amount),
+      new Prisma.Decimal(0),
+    ));
+    if (storeCreditAppliedAmount.gt(invoiceTotal)) {
+      throw new Error("Applied sales-return credit cannot exceed the invoice total.");
+    }
+    if (normalizedReturnCreditApplications.length > 0) {
+      if (!customerContact) {
+        throw new Error("Sales-return credit can only be applied to an invoice for the same registered customer.");
+      }
+      const eligibleReturns = await transaction.posSalesReturn.findMany({
+        where: {
+          organization_id: input.organizationId,
+          id: { in: normalizedReturnCreditApplications.map(({ returnId }) => returnId) },
+          settlement_type: "STORE_CREDIT",
+          store_credit_balance_amount: { gt: 0 },
+          invoice: {
+            is: {
+              organization_id: input.organizationId,
+              customer_contact_id: customerContact.id,
+            },
+          },
+        },
+        select: { id: true, store_credit_balance_amount: true },
+      });
+      const eligibleReturnById = new Map(eligibleReturns.map((record) => [record.id, record]));
+      for (const application of normalizedReturnCreditApplications) {
+        const eligibleReturn = eligibleReturnById.get(application.returnId);
+        if (!eligibleReturn?.store_credit_balance_amount
+          || application.amount.gt(eligibleReturn.store_credit_balance_amount)) {
+          throw new Error("A selected sales-return credit is unavailable, belongs to another customer, or exceeds its remaining balance.");
+        }
+      }
+    }
 
     const invoiceNo = await reserveProcurementDocumentNumber(
       input.organizationId,
@@ -743,11 +804,36 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         igst_amount: totals.igst,
         tax_amount: totals.cgst.plus(totals.sgst).plus(totals.igst),
         coupon_discount_amount: couponDiscountAmount,
-        total_amount: totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst),
+        store_credit_applied_amount: storeCreditAppliedAmount,
+        total_amount: invoiceTotal,
         created_by: input.actorId ?? "PUBLIC_STORE",
       },
       select: { id: true },
     });
+
+    for (const application of normalizedReturnCreditApplications) {
+      const updatedReturn = await transaction.posSalesReturn.updateMany({
+        where: {
+          id: application.returnId,
+          organization_id: input.organizationId,
+          settlement_type: "STORE_CREDIT",
+          store_credit_balance_amount: { gte: application.amount },
+        },
+        data: { store_credit_balance_amount: { decrement: application.amount } },
+      });
+      if (updatedReturn.count !== 1) {
+        throw new Error("A selected sales-return credit was applied elsewhere. Refresh and retry.");
+      }
+      await transaction.posSalesReturnCreditApplication.create({
+        data: {
+          organization_id: input.organizationId,
+          return_id: application.returnId,
+          invoice_id: invoice.id,
+          amount: application.amount,
+          applied_by: input.actorId ?? "PUBLIC_STORE",
+        },
+      });
+    }
 
     if (redemption) {
       if (redemption.couponIssueId) {
@@ -933,6 +1019,11 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         totalAmount: totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst).toFixed(2),
         couponCode: redemption?.couponCode ?? null,
         couponDiscountAmount: couponDiscountAmount.toFixed(2),
+        storeCreditAppliedAmount: storeCreditAppliedAmount.toFixed(2),
+        returnCreditApplications: normalizedReturnCreditApplications.map((application) => ({
+          returnId: application.returnId,
+          amount: application.amount.toFixed(2),
+        })),
         issuedCouponCode,
         offers: pricingLines.flatMap(({ selectedOffer, offerDiscountAmount }) => selectedOffer ? [{
           offerCode: selectedOffer.offer_code,
@@ -964,7 +1055,9 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       sgstAmount: totals.sgst.toFixed(2),
       igstAmount: totals.igst.toFixed(2),
       taxAmount: totals.cgst.plus(totals.sgst).plus(totals.igst).toFixed(2),
-      totalAmount: totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst).toFixed(2),
+      totalAmount: invoiceTotal.toFixed(2),
+      storeCreditAppliedAmount: storeCreditAppliedAmount.toFixed(2),
+      amountDue: invoiceTotal.minus(storeCreditAppliedAmount).toFixed(2),
       couponDiscountAmount: couponDiscountAmount.toFixed(2),
       appliedCouponCode: redemption?.couponCode ?? null,
       issuedCouponCode,

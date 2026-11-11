@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { createOrdersAtomically, type CreateOrderInput } from "@/lib/services/orders/order-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
 
 const MAX_BATCH_ORDER_COUNT = 500;
 
@@ -43,6 +46,7 @@ export async function POST(request: Request) {
       organizationId,
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/bulk-order-creation", "create");
     const orders = await createOrdersAtomically(
       organization.id,
       body.orders as CreateOrderInput[],
@@ -67,6 +71,9 @@ export async function POST(request: Request) {
         errorName: error instanceof Error ? error.name : "UnknownError",
       });
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: "You do not have permission to create orders." }, { status: 403 });
     }
     const message = error instanceof Error ? error.message : "Unable to create the order batch.";
     return NextResponse.json({ error: message }, { status: 400 });

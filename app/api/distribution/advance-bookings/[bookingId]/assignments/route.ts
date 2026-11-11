@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { assignAdvanceBookingToWorkOrder } from "@/lib/services/distribution/advance-booking-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 type RouteContext = { params: Promise<{ bookingId: string }> };
 
@@ -17,6 +17,7 @@ export async function POST(request: Request, context: RouteContext) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "UPDATE_FACTORY_PRODUCTION");
     const { bookingId } = await context.params;
     if (!Array.isArray(body.lines) || body.lines.length === 0 || body.lines.length > 200) {
       throw new Error("Submit the size-wise quantities to assign.");
@@ -53,6 +54,7 @@ export async function POST(request: Request, context: RouteContext) {
       });
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to assign advance booking." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to assign advance booking." }, { status });
   }
 }

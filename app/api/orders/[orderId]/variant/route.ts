@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createVariantOrder, prepareVariantOrder, toDateOnly } from "@/lib/services/orders/order-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
 
 export async function GET(
   request: Request,
@@ -16,11 +19,12 @@ export async function GET(
     }
 
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "view");
     const preparation = await prepareVariantOrder(organization.id, orderId, user.id);
     return NextResponse.json(preparation);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to prepare order variant.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }
 
@@ -37,6 +41,7 @@ export async function POST(
     }
 
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "create");
     const body = await request.json();
     const order = await createVariantOrder(organization.id, orderId, body, user.id);
     return NextResponse.json({
@@ -45,6 +50,6 @@ export async function POST(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to create order variant.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }

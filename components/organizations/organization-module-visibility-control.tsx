@@ -15,6 +15,7 @@ import {
   Lock,
   Package,
   PanelsTopLeft,
+  Shirt,
   Truck,
 } from "lucide-react";
 import Button from "@/components/ui/Button";
@@ -35,6 +36,7 @@ const moduleIcons = {
   "design-development": BriefcaseBusiness,
   "factory-management": Factory,
   "quality-management-system": Boxes,
+  "uniform-management": Shirt,
   "finance-management": Landmark,
   "inventory-management": Package,
   distribution: Truck,

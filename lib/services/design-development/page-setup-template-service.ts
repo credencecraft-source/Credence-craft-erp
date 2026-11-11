@@ -1,7 +1,11 @@
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
-import type { PageSetupTemplateInput } from "./page-setup-template-contract";
+import {
+  parseStoredPageSetupPaperSize,
+  serializePageSetupPaperSize,
+  type PageSetupTemplateInput,
+} from "./page-setup-template-contract";
 
 const templateFields = {
   id: true,
@@ -43,10 +47,12 @@ function mapTemplate(template: {
   created_at: Date;
   updated_at: Date;
 }) {
+  const paperSize = parseStoredPageSetupPaperSize(template.paper_size);
+  if (!paperSize) throw new Error("The saved Page Setup paper size is invalid.");
   return {
     id: template.id,
     name: template.name,
-    paperSize: template.paper_size,
+    ...paperSize,
     orientation: template.orientation,
     stickerWidthMm: typeof template.sticker_width_mm === "number"
       ? template.sticker_width_mm
@@ -125,7 +131,12 @@ export async function createPageSetupTemplate(
       data: {
         organization_id: membership.organization_id,
         name: normalizeUppercase(input.name.trim()),
-        paper_size: input.paperSize,
+        paper_size: serializePageSetupPaperSize(
+          input.printerType,
+          input.paperSize,
+          input.paperWidthMm,
+          input.paperLengthMm,
+        ),
         orientation: input.orientation,
         sticker_width_mm: input.stickerWidthMm,
         sticker_length_mm: input.stickerLengthMm,
@@ -159,7 +170,12 @@ export async function updatePageSetupTemplate(
       where: { organization_id: membership.organization_id, id: templateId },
       data: {
         name: normalizeUppercase(input.name.trim()),
-        paper_size: input.paperSize,
+        paper_size: serializePageSetupPaperSize(
+          input.printerType,
+          input.paperSize,
+          input.paperWidthMm,
+          input.paperLengthMm,
+        ),
         orientation: input.orientation,
         sticker_width_mm: input.stickerWidthMm,
         sticker_length_mm: input.stickerLengthMm,

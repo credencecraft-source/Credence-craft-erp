@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { prisma } from "@/lib/database/prisma-client";
 
@@ -29,6 +29,7 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const body = await request.json() as UpdateBody;
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "UPDATE_FACTORY_PRODUCTION");
     const updateLevel = body.updateLevel === "OPERATION" ? "OPERATION" : "PROCESS";
     const completedQty = positiveInteger(body.completedQty);
     const sizeLines = (body.sizeLines ?? [])
@@ -203,6 +204,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, productionUpdate });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save production update." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save production update." }, { status });
   }
 }

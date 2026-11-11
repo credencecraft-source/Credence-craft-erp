@@ -17,6 +17,26 @@ import {
   type OrganizationTrialAccessSnapshot,
 } from "@/lib/services/platform/organization-trial-service";
 import { ensureDefaultProcessTemplate } from "./organization-process-template-service";
+import {
+  evaluateOrganizationPermission,
+  ORGANIZATION_PERMISSION_DENY_PREFIX,
+} from "./organization-permission-evaluator";
+import {
+  ORGANIZATION_MODULE_ACCESS_PERMISSION_BY_KEY,
+  getLegacyOrganizationModuleAccessPermissions,
+  getLegacyOrganizationModuleSubmoduleAccessPermissions,
+  getLegacyOrganizationOrderManagementPermissions,
+  getOrganizationOrderManagementLegacyPermission,
+  getOrganizationOrderManagementPermission,
+  isOrganizationModuleAccessPermission,
+  isOrganizationOrderManagementPermission,
+  isOrganizationSubmoduleAccessPermission,
+  ORGANIZATION_PERMISSIONS,
+  type OrganizationOrderManagementAction,
+  type OrganizationOrderManagementResource,
+  type OrganizationPermissionKey,
+} from "@/lib/organizations/organization-permission-registry";
+import { normalizeUppercase } from "@/lib/utilities/text-case";
 
 export type OrganizationCreateInput = {
   workspaceUserId: string;
@@ -43,17 +63,17 @@ export type OrganizationContext = {
 
 export const SYSTEM_ORGANIZATION_ROLES = ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING", "APPROVER", "VIEWER"] as const;
 export type OrganizationRole = string;
-export const ORGANIZATION_PERMISSIONS = ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "MANAGE_ROLES", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "APPROVE_ORDERS", "VIEW_ORDERS", "VIEW_FACTORY_PRODUCTION", "UPDATE_FACTORY_PRODUCTION", "MANAGE_FACTORY_PRODUCTION"] as const;
-export type OrganizationPermission = (typeof ORGANIZATION_PERMISSIONS)[number];
+export { ORGANIZATION_PERMISSIONS };
+export type OrganizationPermission = OrganizationPermissionKey;
 const INDIAN_STATES = ["Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi"] as const;
 const SYSTEM_ROLE_LABELS: Record<string, string> = { OWNER: "Owner", ADMIN: "Administrator", FINANCE: "Finance", MERCHANDISING: "Merchandising", APPROVER: "Approver", VIEWER: "Viewer" };
 const DEFAULT_ROLE_PERMISSIONS: Record<string, OrganizationPermission[]> = {
   OWNER: [...ORGANIZATION_PERMISSIONS],
-  ADMIN: ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "VIEW_ORDERS", "VIEW_FACTORY_PRODUCTION", "UPDATE_FACTORY_PRODUCTION", "MANAGE_FACTORY_PRODUCTION"],
-  FINANCE: ["VIEW_REPORTS", "VIEW_ORDERS"],
-  MERCHANDISING: ["CREATE_ORDERS", "VIEW_ORDERS", "MANAGE_MASTER_DATA"],
-  APPROVER: ["APPROVE_ORDERS", "VIEW_ORDERS"],
-  VIEWER: ["VIEW_ORDERS", "VIEW_REPORTS"],
+  ADMIN: ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "MANAGE_ROLES", "MANAGE_TAX_RULES", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "SHARE_ORDERS", "VIEW_ORDERS", "UPDATE_ORDERS", "DELETE_ORDERS", "VIEW_POS_SALES", "VIEW_POS_SALES_RETURNS", "VIEW_FACTORY_PRODUCTION", "UPDATE_FACTORY_PRODUCTION", "MANAGE_FACTORY_PRODUCTION", "VIEW_WORK_ORDERS", "CREATE_WORK_ORDERS", "UPDATE_WORK_ORDERS", "DELETE_WORK_ORDERS", "VIEW_PURCHASE_ORDERS", "CREATE_PURCHASE_ORDERS", "UPDATE_PURCHASE_ORDERS", "DELETE_PURCHASE_ORDERS", "SUBMIT_PURCHASE_ORDERS_FOR_APPROVAL", "SHARE_PURCHASE_ORDERS", "APPROVE_PURCHASE_ORDERS", "REJECT_PURCHASE_ORDERS", "ADJUST_RAW_MATERIAL_STOCK", "VIEW_INVENTORY_STOCK", "CREATE_FINISHED_GOODS_STOCK", "ADJUST_FINISHED_GOODS_STOCK", "RESERVE_RAW_MATERIAL_STOCK", "REQUEST_RAW_MATERIAL_OUTWARD", "MANAGE_RAW_MATERIAL_OUTWARD", "REQUEST_FINISHED_GOODS_OUTWARD", "MANAGE_FINISHED_GOODS_OUTWARD", "VIEW_STORAGE_NODES", "MANAGE_STORAGE_NODES", "VIEW_GATE_ENTRIES", "CREATE_GATE_ENTRIES", "VIEW_POS_OFFERS", "MANAGE_POS_OFFERS", "VIEW_POS_COUPONS", "MANAGE_POS_COUPONS", "VIEW_POS_ONLINE_STORE", "MANAGE_POS_ONLINE_STORE", "VIEW_INVENTORY_RECEIPTS", "MANAGE_INVENTORY_RECEIPTS", "VIEW_POS_PURCHASE_RECORDS", "MANAGE_POS_PURCHASE_RECORDS", "DELETE_POS_PURCHASE_RECORDS", "POST_POS_PURCHASE_BILLS"],
+  FINANCE: ["MANAGE_TAX_RULES", "VIEW_REPORTS", "VIEW_ORDERS", "VIEW_PURCHASE_ORDERS", "VIEW_INVENTORY_STOCK", "VIEW_STORAGE_NODES", "VIEW_POS_SALES", "VIEW_POS_SALES_RETURNS", "VIEW_POS_OFFERS", "MANAGE_POS_OFFERS", "VIEW_POS_COUPONS", "MANAGE_POS_COUPONS", "VIEW_POS_PURCHASE_RECORDS", "MANAGE_POS_PURCHASE_RECORDS", "DELETE_POS_PURCHASE_RECORDS", "POST_POS_PURCHASE_BILLS"],
+  MERCHANDISING: ["CREATE_ORDERS", "SHARE_ORDERS", "VIEW_ORDERS", "UPDATE_ORDERS", "DELETE_ORDERS", "MANAGE_MASTER_DATA", "VIEW_FACTORY_PRODUCTION", "UPDATE_FACTORY_PRODUCTION", "VIEW_WORK_ORDERS", "CREATE_WORK_ORDERS", "UPDATE_WORK_ORDERS", "DELETE_WORK_ORDERS", "VIEW_PURCHASE_ORDERS", "CREATE_PURCHASE_ORDERS", "UPDATE_PURCHASE_ORDERS", "DELETE_PURCHASE_ORDERS", "SUBMIT_PURCHASE_ORDERS_FOR_APPROVAL", "SHARE_PURCHASE_ORDERS", "RESERVE_RAW_MATERIAL_STOCK", "REQUEST_RAW_MATERIAL_OUTWARD", "REQUEST_FINISHED_GOODS_OUTWARD", "VIEW_STORAGE_NODES", "MANAGE_STORAGE_NODES", "VIEW_POS_PURCHASE_RECORDS", "MANAGE_POS_PURCHASE_RECORDS", "DELETE_POS_PURCHASE_RECORDS"],
+  APPROVER: ["APPROVE_ORDERS", "VIEW_ORDERS", "VIEW_PURCHASE_ORDERS", "APPROVE_PURCHASE_ORDERS", "REJECT_PURCHASE_ORDERS", "VIEW_STORAGE_NODES"],
+  VIEWER: ["VIEW_ORDERS", "VIEW_REPORTS", "VIEW_PURCHASE_ORDERS", "VIEW_STORAGE_NODES"],
 };
 function roleKeyFromLabel(label: string) {
   return label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 90);
@@ -82,18 +102,75 @@ export async function isOrganizationRole(organizationId: string, role: unknown) 
 
 export async function createOrganizationRole(organizationId: string, workspaceUserId: string, label: string, permissions: string[]) {
   const membership = await requireOrganizationPermission(workspaceUserId, organizationId, "MANAGE_ROLES");
-  const cleanLabel = label.trim();
+  const cleanLabel = normalizeUppercase(label.trim());
   const roleKey = roleKeyFromLabel(cleanLabel);
   if (cleanLabel.length < 2 || !roleKey || roleKey === "OWNER") throw new Error("Enter a valid role name that is not Owner.");
-  const validPermissions = permissions.filter((permission): permission is OrganizationPermission => ORGANIZATION_PERMISSIONS.includes(permission as OrganizationPermission));
+  const validPermissions = validateOrganizationPermissions(permissions);
   const role = await prisma.$transaction(async (transaction) => {
     const created = await transaction.organizationRoleDefinition.create({ data: { organization_id: membership.organization_id, role_key: roleKey, label: cleanLabel, is_system: false } });
-    if (validPermissions.length > 0) {
-      await transaction.organizationRolePermission.createMany({ data: validPermissions.map((permission) => ({ id: randomUUID(), organization_id: membership.organization_id, role: roleKey, permission })) });
-    }
+    await transaction.organizationRolePermission.createMany({
+      data: buildOrganizationRolePermissionRows(membership.organization_id, roleKey, validPermissions),
+    });
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: membership.organization_id,
+        user_id: workspaceUserId,
+        module: "ORGANIZATION_ACCESS",
+        action: "ROLE_CREATED",
+        entity_type: "OrganizationRoleDefinition",
+        entity_id: created.id,
+        details: { role_key: roleKey, permissions: validPermissions },
+      },
+    });
     return created;
   });
-  return { ...role, permissions: validPermissions };
+  return { role: role.role_key, label: role.label, isSystem: role.is_system, permissions: validPermissions };
+}
+
+function validateOrganizationPermissions(permissions: string[]) {
+  const uniquePermissions = [...new Set(permissions)];
+  if (uniquePermissions.some((permission) => !ORGANIZATION_PERMISSIONS.includes(permission as OrganizationPermission))) {
+    throw new Error("The permission list contains an unsupported permission.");
+  }
+  return uniquePermissions as OrganizationPermission[];
+}
+
+function buildOrganizationRolePermissionRows(
+  organizationId: string,
+  role: string,
+  permissions: readonly OrganizationPermission[],
+) {
+  const granted = new Set(permissions);
+  return [
+    ...permissions.map((permission) => ({
+      id: randomUUID(),
+      organization_id: organizationId,
+      role,
+      permission,
+    })),
+    ...ORGANIZATION_PERMISSIONS
+      .filter((permission) => !granted.has(permission))
+      .map((permission) => ({
+        id: randomUUID(),
+        organization_id: organizationId,
+        role,
+        permission: `${ORGANIZATION_PERMISSION_DENY_PREFIX}${permission}`,
+      })),
+  ];
+}
+
+async function replaceOrganizationRolePermissions(
+  transaction: Prisma.TransactionClient,
+  organizationId: string,
+  role: string,
+  permissions: readonly OrganizationPermission[],
+) {
+  await transaction.organizationRolePermission.deleteMany({
+    where: { organization_id: organizationId, role },
+  });
+  await transaction.organizationRolePermission.createMany({
+    data: buildOrganizationRolePermissionRows(organizationId, role, permissions),
+  });
 }
 
 function getDatabaseSchemaError(error: unknown) {
@@ -422,18 +499,18 @@ export async function getOrganizationForUserWithPermission(
   });
   const role = organization?.memberships[0]?.role;
   if (!organization || !role) return null;
-  if (role !== "OWNER" && !(DEFAULT_ROLE_PERMISSIONS[role] || []).includes(permission)) {
-    const granted = await prisma.organizationRolePermission.findUnique({
-      where: {
-        organization_id_role_permission: {
-          organization_id: organization.id,
-          role,
-          permission,
-        },
-      },
-      select: { id: true },
+  if (role !== "OWNER") {
+    const stored = await prisma.organizationRolePermission.findMany({
+      where: { organization_id: organization.id, role },
+      select: { permission: true },
     });
-    if (!granted) throw new Error("Access denied: This role does not have the required permission.");
+    const evaluation = evaluateOrganizationPermission({
+      role,
+      permission,
+      storedPermissions: stored.map((item) => item.permission),
+      defaultPermissions: DEFAULT_ROLE_PERMISSIONS[role] || [],
+    });
+    if (!evaluation.allowed) throw new Error("Access denied: This role does not have the required permission.");
   }
   return { id: organization.id };
 }
@@ -603,7 +680,7 @@ export async function restoreOrganization(organizationId: string, workspaceUserI
 }
 
 export async function listOrganizationMembers(organizationId: string, workspaceUserId: string) {
-  const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
+  const membership = await requireOrganizationPermission(workspaceUserId, organizationId, "MANAGE_USERS");
 
   return prisma.organizationMembership.findMany({
     where: {
@@ -630,19 +707,33 @@ export async function addOrganizationMember(input: {
   role: string;
   actorUserId: string;
 }) {
-  const actorMembership = await requireOrganizationAccess(input.actorUserId, input.organizationId, ["OWNER", "ADMIN"]);
+  const actorMembership = await requireOrganizationPermission(input.actorUserId, input.organizationId, "MANAGE_USERS");
   if (input.role === "OWNER" || !(await isOrganizationRole(actorMembership.organization_id, input.role))) {
     throw new Error("The selected organization role is not available.");
   }
 
-  return prisma.organizationMembership.create({
-    data: {
-      id: randomUUID(),
-      organization_id: actorMembership.organization_id,
-      workspace_user_id: input.workspaceUserId,
-      role: input.role,
-      is_active: true,
-    },
+  return prisma.$transaction(async (transaction) => {
+    const membership = await transaction.organizationMembership.create({
+      data: {
+        id: randomUUID(),
+        organization_id: actorMembership.organization_id,
+        workspace_user_id: input.workspaceUserId,
+        role: input.role,
+        is_active: true,
+      },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: actorMembership.organization_id,
+        user_id: input.actorUserId,
+        module: "ORGANIZATION_ACCESS",
+        action: "MEMBERSHIP_CREATED",
+        entity_type: "OrganizationMembership",
+        entity_id: membership.id,
+        details: { role: input.role, is_active: true },
+      },
+    });
+    return membership;
   });
 }
 
@@ -652,10 +743,10 @@ export async function updateOrganizationMember(
   actorUserId: string,
   data: { role?: string; is_active?: boolean }
 ) {
-  const actorMembership = await requireOrganizationAccess(actorUserId, organizationId, ["OWNER", "ADMIN"]);
+  const actorMembership = await requireOrganizationPermission(actorUserId, organizationId, "MANAGE_USERS");
   const targetMembership = await prisma.organizationMembership.findFirst({
     where: { id: membershipId, organization_id: actorMembership.organization_id },
-    select: { id: true, role: true },
+    select: { id: true, role: true, is_active: true },
   });
 
   if (!targetMembership) {
@@ -670,12 +761,31 @@ export async function updateOrganizationMember(
     throw new Error("The selected organization role is not available.");
   }
 
-  return prisma.organizationMembership.update({
-    where: { id: membershipId, organization_id: actorMembership.organization_id },
-    data: {
-      ...data,
-      role: data.role,
-    },
+  return prisma.$transaction(async (transaction) => {
+    const updated = await transaction.organizationMembership.update({
+      where: { id: membershipId, organization_id: actorMembership.organization_id },
+      data: {
+        ...data,
+        role: data.role,
+      },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: actorMembership.organization_id,
+        user_id: actorUserId,
+        module: "ORGANIZATION_ACCESS",
+        action: "MEMBERSHIP_UPDATED",
+        entity_type: "OrganizationMembership",
+        entity_id: membershipId,
+        details: {
+          previous_role: targetMembership.role,
+          role: data.role ?? targetMembership.role,
+          previous_is_active: targetMembership.is_active,
+          is_active: data.is_active ?? targetMembership.is_active,
+        },
+      },
+    });
+    return updated;
   });
 }
 
@@ -782,45 +892,239 @@ export async function requireOrganizationContext(
 
 export async function listOrganizationRolePermissions(organizationId: string, workspaceUserId: string) {
   const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
+  const stored = await prisma.organizationRolePermission.findMany({
+    where: { organization_id: membership.organization_id },
+    orderBy: [{ role: "asc" }, { permission: "asc" }],
+  });
   if (membership.role !== "OWNER") {
-    const readableRole = await prisma.organizationRolePermission.findFirst({
-      where: { organization_id: membership.organization_id, role: membership.role, permission: { in: ["MANAGE_ROLES", "MANAGE_USERS"] } },
-    });
-    if (!readableRole && !(DEFAULT_ROLE_PERMISSIONS[membership.role] || []).some((permission) => permission === "MANAGE_ROLES" || permission === "MANAGE_USERS")) {
+    const storedPermissions = stored
+      .filter((item) => item.role === membership.role)
+      .map((item) => item.permission);
+    const canManageRoles = ["MANAGE_ROLES", "MANAGE_USERS"].some((permission) =>
+      evaluateOrganizationPermission({
+        role: membership.role,
+        permission,
+        storedPermissions,
+        defaultPermissions: DEFAULT_ROLE_PERMISSIONS[membership.role] || [],
+      }).allowed,
+    );
+    if (!canManageRoles) {
       throw new Error("Access denied: This role cannot view organization roles.");
     }
   }
   const roles = await ensureOrganizationRoleDefinitions(membership.organization_id);
-  const stored = await prisma.organizationRolePermission.findMany({ where: { organization_id: membership.organization_id }, orderBy: [{ role: "asc" }, { permission: "asc" }] });
+  const memberCounts = await prisma.organizationMembership.groupBy({
+    by: ["role"],
+    where: { organization_id: membership.organization_id, is_active: true },
+    _count: { _all: true },
+  });
   return roles.map((role) => ({
     role: role.role_key,
     label: role.label,
     isSystem: role.is_system,
-    permissions: stored.some((item) => item.role === role.role_key)
-      ? stored.filter((item) => item.role === role.role_key).map((item) => item.permission)
-      : DEFAULT_ROLE_PERMISSIONS[role.role_key] || [],
+    userCount: memberCounts.find((item) => item.role === role.role_key)?._count._all || 0,
+    permissions: getConfiguredRolePermissions(role.role_key, stored
+      .filter((item) => item.role === role.role_key)
+      .map((item) => item.permission)),
   }));
+}
+
+function resolveOrganizationRolePermissions(
+  role: string,
+  storedPermissions: readonly string[],
+  defaultPermissions: readonly OrganizationPermission[],
+) {
+  const evaluate = (permission: OrganizationPermission) => evaluateOrganizationPermission({
+    role,
+    permission,
+    storedPermissions,
+    defaultPermissions,
+  });
+  const effectiveCorePermissions = ORGANIZATION_PERMISSIONS.filter((permission) =>
+    !isOrganizationModuleAccessPermission(permission)
+    && !isOrganizationSubmoduleAccessPermission(permission)
+    && !isOrganizationOrderManagementPermission(permission)
+    && evaluate(permission).allowed,
+  );
+  const legacyOrderManagementPermissions = new Set(
+    getLegacyOrganizationOrderManagementPermissions(effectiveCorePermissions),
+  );
+  const legacyModuleAccessPermissions = new Set(
+    getLegacyOrganizationModuleAccessPermissions(effectiveCorePermissions),
+  );
+  const effectiveModuleAccessPermissions = Object.values(ORGANIZATION_MODULE_ACCESS_PERMISSION_BY_KEY)
+    .filter((permission) => {
+      const result = evaluate(permission);
+      if (result.reason === "explicit-denial") return false;
+      return result.allowed || legacyModuleAccessPermissions.has(permission);
+    });
+  const legacySubmoduleAccessPermissions = new Set(
+    getLegacyOrganizationModuleSubmoduleAccessPermissions(effectiveModuleAccessPermissions),
+  );
+
+  return ORGANIZATION_PERMISSIONS.filter((permission) => {
+    const result = evaluate(permission);
+    if (isOrganizationOrderManagementPermission(permission)) {
+      if (result.reason === "explicit-denial") return false;
+      return result.allowed || legacyOrderManagementPermissions.has(permission);
+    }
+    if (isOrganizationModuleAccessPermission(permission)) {
+      return effectiveModuleAccessPermissions.includes(permission);
+    }
+    if (isOrganizationSubmoduleAccessPermission(permission)) {
+      if (result.reason === "explicit-denial") return false;
+      return result.allowed || legacySubmoduleAccessPermissions.has(permission);
+    }
+    return result.allowed;
+  });
+}
+
+function getConfiguredRolePermissions(role: string, storedPermissions: readonly string[]) {
+  return resolveOrganizationRolePermissions(
+    role,
+    storedPermissions,
+    DEFAULT_ROLE_PERMISSIONS[role] || [],
+  );
+}
+
+async function ensureOrganizationRoleAdminRecovery(
+  transaction: Prisma.TransactionClient,
+  organizationId: string,
+  role: string,
+  permissions: readonly OrganizationPermission[],
+) {
+  if (permissions.includes("MANAGE_ROLES")) return;
+  const activeMembershipsByRole = await transaction.organizationMembership.groupBy({
+    by: ["role"],
+    where: { organization_id: organizationId, is_active: true },
+    _count: { _all: true },
+  });
+  if (!activeMembershipsByRole.some((item) => item.role === role && item._count._all > 0)) return;
+
+  const storedPermissions = await transaction.organizationRolePermission.findMany({
+    where: { organization_id: organizationId },
+    select: { role: true, permission: true },
+  });
+  const hasOtherRoleAdmin = activeMembershipsByRole.some((item) => {
+    if (item.role === role || item._count._all === 0) return false;
+    if (item.role === "OWNER") return true;
+    const permissionsForRole = storedPermissions
+      .filter((storedPermission) => storedPermission.role === item.role)
+      .map((storedPermission) => storedPermission.permission);
+    return evaluateOrganizationPermission({
+      role: item.role,
+      permission: "MANAGE_ROLES",
+      storedPermissions: permissionsForRole,
+      defaultPermissions: DEFAULT_ROLE_PERMISSIONS[item.role] || [],
+    }).allowed;
+  });
+  if (!hasOtherRoleAdmin) {
+    throw new Error("Keep role-management access for at least one active organization administrator.");
+  }
 }
 
 export async function updateOrganizationRolePermissions(organizationId: string, workspaceUserId: string, role: string, permissions: string[]) {
   const membership = await requireOrganizationPermission(workspaceUserId, organizationId, "MANAGE_ROLES");
   const roleDefinition = await prisma.organizationRoleDefinition.findUnique({ where: { organization_id_role_key: { organization_id: membership.organization_id, role_key: role } } });
   if (!roleDefinition) throw new Error("The selected organization role was not found.");
-  const validPermissions = permissions.filter((permission): permission is OrganizationPermission => ORGANIZATION_PERMISSIONS.includes(permission as OrganizationPermission));
+  const validPermissions = validateOrganizationPermissions(permissions);
   if (role === "OWNER") throw new Error("Owner permissions cannot be changed.");
-  await prisma.$transaction([
-    prisma.organizationRolePermission.deleteMany({ where: { organization_id: membership.organization_id, role } }),
-    ...(validPermissions.length > 0 ? [prisma.organizationRolePermission.createMany({ data: validPermissions.map((permission) => ({ id: randomUUID(), organization_id: membership.organization_id, role, permission })) })] : []),
-  ]);
+  await prisma.$transaction(async (transaction) => {
+    await ensureOrganizationRoleAdminRecovery(transaction, membership.organization_id, role, validPermissions);
+    const previous = await transaction.organizationRolePermission.findMany({
+      where: { organization_id: membership.organization_id, role },
+      select: { permission: true },
+    });
+    const previousPermissions = previous
+      .map((item) => item.permission)
+      .filter((permission) => !permission.startsWith(ORGANIZATION_PERMISSION_DENY_PREFIX));
+    await replaceOrganizationRolePermissions(transaction, membership.organization_id, role, validPermissions);
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: membership.organization_id,
+        user_id: workspaceUserId,
+        module: "ORGANIZATION_ACCESS",
+        action: "ROLE_PERMISSIONS_UPDATED",
+        entity_type: "OrganizationRoleDefinition",
+        entity_id: roleDefinition.id,
+        details: { role_key: role, previous_permissions: previousPermissions, permissions: validPermissions },
+      },
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   return { role, permissions: validPermissions };
 }
 
 export async function requireOrganizationPermission(workspaceUserId: string, organizationId: string, permission: OrganizationPermission) {
   const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
   if (membership.role === "OWNER") return membership;
-  const granted = await prisma.organizationRolePermission.findUnique({ where: { organization_id_role_permission: { organization_id: membership.organization_id, role: membership.role, permission } } });
-  if (!granted && !(DEFAULT_ROLE_PERMISSIONS[membership.role] || []).includes(permission)) throw new Error("Access denied: This role does not have the required permission.");
+  const stored = await prisma.organizationRolePermission.findMany({
+    where: { organization_id: membership.organization_id, role: membership.role },
+    select: { permission: true },
+  });
+  const evaluation = evaluateOrganizationPermission({
+    role: membership.role,
+    permission,
+    storedPermissions: stored.map((item) => item.permission),
+    defaultPermissions: DEFAULT_ROLE_PERMISSIONS[membership.role] || [],
+  });
+  if (!evaluation.allowed) throw new Error("Access denied: This role does not have the required permission.");
   return membership;
+}
+
+export async function requireOrganizationOrderManagementPermission(
+  workspaceUserId: string,
+  organizationId: string,
+  resource: OrganizationOrderManagementResource,
+  action: OrganizationOrderManagementAction,
+) {
+  const permission = getOrganizationOrderManagementPermission(resource, action);
+  const legacyPermission = getOrganizationOrderManagementLegacyPermission(resource, action);
+  if (!permission || !legacyPermission) {
+    throw new Error("Access denied: This Order Management action is not available for the selected module.");
+  }
+
+  const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
+  if (membership.role === "OWNER") return membership;
+  const stored = await prisma.organizationRolePermission.findMany({
+    where: { organization_id: membership.organization_id, role: membership.role },
+    select: { permission: true },
+  });
+  const storedPermissions = stored.map((item) => item.permission);
+  const scopedEvaluation = evaluateOrganizationPermission({
+    role: membership.role,
+    permission,
+    storedPermissions,
+    defaultPermissions: DEFAULT_ROLE_PERMISSIONS[membership.role] || [],
+  });
+  if (scopedEvaluation.allowed) return membership;
+  if (scopedEvaluation.reason === "explicit-denial") {
+    throw new Error("Access denied: This role does not have the required Order Management permission.");
+  }
+
+  const legacyEvaluation = evaluateOrganizationPermission({
+    role: membership.role,
+    permission: legacyPermission,
+    storedPermissions,
+    defaultPermissions: DEFAULT_ROLE_PERMISSIONS[membership.role] || [],
+  });
+  if (!legacyEvaluation.allowed) {
+    throw new Error("Access denied: This role does not have the required Order Management permission.");
+  }
+  return membership;
+}
+
+export async function getOrganizationEffectivePermissions(workspaceUserId: string, organizationId: string) {
+  const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
+  if (membership.role === "OWNER") return [...ORGANIZATION_PERMISSIONS];
+  const stored = await prisma.organizationRolePermission.findMany({
+    where: { organization_id: membership.organization_id, role: membership.role },
+    select: { permission: true },
+  });
+  return resolveOrganizationRolePermissions(
+    membership.role,
+    stored.map((item) => item.permission),
+    DEFAULT_ROLE_PERMISSIONS[membership.role] || [],
+  );
 }
 
 export async function updateOrganizationRole(organizationId: string, workspaceUserId: string, roleKey: string, label: string, permissions: string[]) {
@@ -828,10 +1132,39 @@ export async function updateOrganizationRole(organizationId: string, workspaceUs
   const role = await prisma.organizationRoleDefinition.findUnique({ where: { organization_id_role_key: { organization_id: membership.organization_id, role_key: roleKey } } });
   if (!role) throw new Error("The selected organization role was not found.");
   if (role.is_system) throw new Error("Built-in roles cannot be renamed.");
-  const cleanLabel = label.trim();
+  const cleanLabel = normalizeUppercase(label.trim());
   if (cleanLabel.length < 2) throw new Error("Enter a valid role name.");
-  await prisma.organizationRoleDefinition.update({ where: { id: role.id }, data: { label: cleanLabel } });
-  return updateOrganizationRolePermissions(organizationId, workspaceUserId, roleKey, permissions);
+  const validPermissions = validateOrganizationPermissions(permissions);
+  await prisma.$transaction(async (transaction) => {
+    await ensureOrganizationRoleAdminRecovery(transaction, membership.organization_id, roleKey, validPermissions);
+    const previous = await transaction.organizationRolePermission.findMany({
+      where: { organization_id: membership.organization_id, role: roleKey },
+      select: { permission: true },
+    });
+    const previousPermissions = previous
+      .map((item) => item.permission)
+      .filter((permission) => !permission.startsWith(ORGANIZATION_PERMISSION_DENY_PREFIX));
+    await transaction.organizationRoleDefinition.update({ where: { id: role.id }, data: { label: cleanLabel } });
+    await replaceOrganizationRolePermissions(transaction, membership.organization_id, roleKey, validPermissions);
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: membership.organization_id,
+        user_id: workspaceUserId,
+        module: "ORGANIZATION_ACCESS",
+        action: "ROLE_UPDATED",
+        entity_type: "OrganizationRoleDefinition",
+        entity_id: role.id,
+        details: {
+          role_key: roleKey,
+          previous_label: role.label,
+          label: cleanLabel,
+          previous_permissions: previousPermissions,
+          permissions: validPermissions,
+        },
+      },
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  return { role: roleKey, label: cleanLabel, isSystem: role.is_system, permissions: validPermissions };
 }
 
 export async function deleteOrganizationRole(organizationId: string, workspaceUserId: string, roleKey: string) {
@@ -844,7 +1177,23 @@ export async function deleteOrganizationRole(organizationId: string, workspaceUs
     prisma.organizationInvitation.count({ where: { organization_id: membership.organization_id, role: roleKey, status: "PENDING", expires_at: { gt: new Date() } } }),
   ]);
   if (memberCount > 0 || invitationCount > 0) throw new Error("Reassign members and cancel pending invitations before deleting this role.");
-  await prisma.organizationRoleDefinition.delete({ where: { id: role.id } });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.organizationRolePermission.deleteMany({
+      where: { organization_id: membership.organization_id, role: roleKey },
+    });
+    await transaction.organizationRoleDefinition.delete({ where: { id: role.id } });
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: membership.organization_id,
+        user_id: workspaceUserId,
+        module: "ORGANIZATION_ACCESS",
+        action: "ROLE_DELETED",
+        entity_type: "OrganizationRoleDefinition",
+        entity_id: role.id,
+        details: { role_key: roleKey, label: role.label },
+      },
+    });
+  });
   return { deleted: true, role: roleKey };
 }
 

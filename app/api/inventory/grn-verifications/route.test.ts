@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   getRmGrnVerification: vi.fn(),
   assertAssetPurchaseReceiptLine: vi.fn(),
   getRmGrnVerificationAllocation: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/inventory/rm-grn-verification-service", () => ({
@@ -54,6 +56,7 @@ describe("RM GRN Verification route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
   });
 
   it("loads a line only after authenticating and resolving the route organization", async () => {
@@ -62,6 +65,7 @@ describe("RM GRN Verification route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_INVENTORY_RECEIPTS");
     expect(mocks.getRmGrnVerification).toHaveBeenCalledWith("internal-org-1", "line-1");
   });
 
@@ -171,6 +175,7 @@ describe("RM GRN Verification route", () => {
 
     expect(response.status).toBe(201);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org", ["OWNER", "ADMIN", "INVENTORY"]);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "MANAGE_INVENTORY_RECEIPTS");
     expect(mocks.saveRmGrnVerification).toHaveBeenCalledWith("internal-org-1", "line-1", {
       verifiedQuantity: "42",
       approvedQuantity: "40",
@@ -224,5 +229,25 @@ describe("RM GRN Verification route", () => {
       verifiedQuantity: "6",
       approvedQuantity: "5",
     }, "user-1");
+  });
+
+  it("does not save verification when the dedicated receiving permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(
+      new Error("Access denied: This role does not have the required permission."),
+    );
+    const response = await POST(new Request("http://localhost/api/inventory/grn-verifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        receiptLineId: "line-1",
+        verifiedQuantity: "42",
+        approvedQuantity: "42",
+        allocations: [],
+      }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.saveRmGrnVerification).not.toHaveBeenCalled();
   });
 });

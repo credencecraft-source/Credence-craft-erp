@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { verifyWorkOrderInventoryGrnLine } from "@/lib/services/inventory/work-order-grn-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 type RouteContext = { params: Promise<{ grnId: string; lineId: string }> };
 
@@ -32,6 +32,7 @@ export async function POST(request: Request, context: RouteContext) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_INVENTORY_RECEIPTS");
     const { grnId, lineId } = await context.params;
     const result = await verifyWorkOrderInventoryGrnLine(
       organization.id,
@@ -63,7 +64,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to verify Work Order GRN." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }

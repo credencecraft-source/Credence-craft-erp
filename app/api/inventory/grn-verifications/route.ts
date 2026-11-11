@@ -5,9 +5,15 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import { assertAssetPurchaseReceiptLine, getRmGrnVerification, getRmGrnVerificationAllocation, getRmGrnVerificationDraftsForPurchaseOrder, InvalidActualCountError, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "@/lib/services/inventory/rm-grn-verification-service";
 import { getStockVerificationDetails, listPendingStockVerificationTasks, saveStockGroupVerification } from "@/lib/services/inventory/rm-stock-verification-service";
 import { getRawMaterialPickSummariesForGroupedLines } from "@/lib/services/inventory/raw-material-outward-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
 
 function errorResponse(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.startsWith("Access denied:")) {
+    return NextResponse.json({ error: error.message }, { status: 403 });
+  }
   if (error instanceof RmGrnVerificationNotFoundError) {
     return NextResponse.json({ error: error.message }, { status: 404 });
   }
@@ -36,6 +42,7 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_INVENTORY_RECEIPTS");
     const assetOnlyParameter = searchParams.get("isAssetPurchase");
     if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
       return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
@@ -111,6 +118,7 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_INVENTORY_RECEIPTS");
     const receiptLineId = String(body.receiptLineId ?? "").trim();
     const stockGroupedPurchaseOrderId = String(body.sourceGroupedPurchaseOrderId ?? "").trim();
     if (body.assetPurchaseOnly !== undefined && typeof body.assetPurchaseOnly !== "boolean") {

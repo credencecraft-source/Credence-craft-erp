@@ -114,7 +114,7 @@ export default function SalesInvoicePage({
   const renderCell = (fieldKey: string, record: SavedPosInvoice) => {
     switch (fieldKey) {
       case "customer":
-        return record.customer || "Walk-in customer";
+        return record.customer || "Customer not linked";
       case "quantity":
         return record.lines.reduce((sum, line) => sum + line.quantity, 0);
       case "subtotal":
@@ -221,7 +221,7 @@ function InvoicePreview({
               Bill To
             </p>
             <p className="mt-2 text-sm font-bold text-slate-950">
-              {invoice.customer || "Walk-in customer"}
+              {invoice.customer || "Customer not linked"}
             </p>
           </div>
           <div className="px-8 py-5 print:px-0">

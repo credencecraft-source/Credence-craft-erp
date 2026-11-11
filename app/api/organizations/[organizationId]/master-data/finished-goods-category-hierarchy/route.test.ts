@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   getOrganizationForUser: vi.fn(),
   requireOrganizationAccess: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createFinishedGoodsCategoryHierarchy: vi.fn(),
 }));
 
@@ -13,6 +14,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   getOrganizationForUser: mocks.getOrganizationForUser,
   requireOrganizationAccess: mocks.requireOrganizationAccess,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/master-data/finished-goods-category-hierarchy-service", () => ({
   createFinishedGoodsCategoryHierarchy: mocks.createFinishedGoodsCategoryHierarchy,
@@ -47,6 +49,7 @@ beforeEach(() => {
     organization_id: "public-org",
   });
   mocks.requireOrganizationAccess.mockResolvedValue({ role: "ADMIN" });
+  mocks.requireOrganizationPermission.mockResolvedValue(undefined);
   mocks.createFinishedGoodsCategoryHierarchy.mockResolvedValue({
     category: "INDIGO DENIM",
     subcategory: "COORD SET",
@@ -74,6 +77,17 @@ describe("Finished Goods Category hierarchy API", () => {
     mocks.requireOrganizationAccess.mockRejectedValueOnce(new Error("Access denied: Insufficient permissions."));
     const insufficientRole = await POST(request(validPayload), context);
     expect(insufficientRole.status).toBe(403);
+    expect(mocks.createFinishedGoodsCategoryHierarchy).not.toHaveBeenCalled();
+  });
+
+  it("requires master-data permission before creating hierarchy records", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValueOnce(
+      new Error("Access denied: MANAGE_MASTER_DATA permission is required."),
+    );
+
+    const response = await POST(request(validPayload), context);
+
+    expect(response.status).toBe(403);
     expect(mocks.createFinishedGoodsCategoryHierarchy).not.toHaveBeenCalled();
   });
 

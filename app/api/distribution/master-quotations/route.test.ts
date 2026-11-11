@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createDistributionMasterQuotations: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/distribution/quotation-service", () => ({
   createDistributionMasterQuotations: mocks.createDistributionMasterQuotations,
@@ -27,6 +29,7 @@ describe("distribution master quotation API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.createDistributionMasterQuotations.mockResolvedValue([{ id: "master-1" }]);
   });
 
@@ -136,6 +139,18 @@ describe("distribution master quotation API", () => {
     }));
 
     expect(response.status).toBe(400);
+    expect(mocks.createDistributionMasterQuotations).not.toHaveBeenCalled();
+  });
+
+  it("requires order-creation permission before creating Sales Orders", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await POST(new Request("http://localhost/api/distribution/master-quotations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organizationId: "public-org", quotationIds: ["quotation-1"], vendorId: "vendor-1" }),
+    }));
+
+    expect(response.status).toBe(403);
     expect(mocks.createDistributionMasterQuotations).not.toHaveBeenCalled();
   });
 });

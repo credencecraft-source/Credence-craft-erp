@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   reverseAdvanceBookingFulfillment: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/distribution/quotation-booking-fulfillment-service", () => ({
   reverseAdvanceBookingFulfillment: mocks.reverseAdvanceBookingFulfillment,
@@ -31,6 +33,7 @@ describe("advance booking fulfillment reversal API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.reverseAdvanceBookingFulfillment.mockResolvedValue({
       bookingId: "booking-1",
       bookingNo: "BK-12",
@@ -48,6 +51,7 @@ describe("advance booking fulfillment reversal API", () => {
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "MANAGE_FINISHED_GOODS_OUTWARD");
     expect(mocks.reverseAdvanceBookingFulfillment).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
@@ -72,5 +76,13 @@ describe("advance booking fulfillment reversal API", () => {
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+  });
+
+  it("denies reversal before changing fulfillment inventory", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await POST(request({ organizationId: "public-org" }), context);
+
+    expect(response.status).toBe(403);
+    expect(mocks.reverseAdvanceBookingFulfillment).not.toHaveBeenCalled();
   });
 });

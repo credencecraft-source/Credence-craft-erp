@@ -282,7 +282,6 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
       setStorageSearchError("");
       try {
         const query = new URLSearchParams({
-          nodeType: "BIN",
           siteEntityId,
           search,
           limit: "50",
@@ -292,7 +291,7 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
           { cache: "no-store", signal: controller.signal },
         );
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload?.error || "Unable to search storage Bins.");
+        if (!response.ok) throw new Error(payload?.error || "Unable to search storage locations.");
         if (!controller.signal.aborted) {
           setStorageOptions(Array.isArray(payload?.nodes) ? payload.nodes
             .filter((item: { is_active?: boolean; fields?: Record<string, unknown> }) => item.is_active !== false && Boolean(item.fields?.site_entity_id))
@@ -653,7 +652,7 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
       >
         <div className="border-b border-slate-200 px-6 py-4">
           <h2 id="manual-stock-dialog-title" className="text-base font-bold text-slate-950">{stage === "assets-stock" ? "Add Asset Stock" : "Add Raw Material Stock"}</h2>
-          <p className="mt-1 text-xs text-slate-500">Select the existing stock location and a Bin under a Site for the same Entity.</p>
+          <p className="mt-1 text-xs text-slate-500">Select a stock location. Storage placement is optional and may be at any configured hierarchy level.</p>
         </div>
         <form onSubmit={submitManualStock} className="grid gap-4 p-6 sm:grid-cols-2">
           <>
@@ -684,7 +683,7 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
                 {locationOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </Select>
               <Input
-                label="Search Storage Bins"
+                label="Search Storage Locations"
                 value={storageSearch}
                 onChange={(event) => {
                   setStorageSearch(event.target.value);
@@ -697,20 +696,19 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
                 autoComplete="off"
               />
               <Select
-                label="Storage Bin"
+                label="Storage Placement (Optional)"
                 value={manualStockForm.storageNodeId}
                 onChange={(event) => setManualStockForm((current) => ({ ...current, storageNodeId: event.target.value }))}
-                required
                 disabled={manualOptionsLoading || storageSearchLoading || !selectedStockLocation || availableStorageOptions.length === 0}
               >
                 <option value="">
                   {storageSearchLoading
-                    ? "Searching Bins..."
+                    ? "Searching storage..."
                     : storageSearch.trim().length < 2
-                      ? "Search for a Bin"
+                      ? "Search storage locations"
                       : availableStorageOptions.length
                         ? "Select a matching Bin"
-                        : "No matching active Bins"}
+                        : "No matching active storage"}
                 </option>
                 {availableStorageOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </Select>

@@ -17,7 +17,7 @@ const { prismaMock, models } = vi.hoisted(() => {
   });
   const modelNames = [
     "masterArticle", "masterArticleVariant", "masterArticleSize", "masterBrand", "masterBuyer", "masterCategory", "masterCategoryType", "masterColor",
-    "masterCurrencyType", "masterEntity", "masterGoldSeal", "masterGoldSealVariant", "masterGst", "masterGstType",
+    "masterCurrencyType", "masterEntity", "division", "masterGoldSeal", "masterGoldSealVariant", "masterGst", "masterGstType",
     "masterHsn", "masterLocation", "masterMeasurementChart", "masterMerchandiser", "masterOperation",
     "masterOperationTemplate", "masterOperationTemplateStep", "masterOrderVolume", "masterPreOrderChecklist",
     "masterProcess", "masterProcessTemplate", "masterProcessTemplateStep", "masterProduct", "masterRawMaterial",
@@ -41,6 +41,9 @@ const { prismaMock, models } = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: prismaMock }));
+vi.mock("@/lib/services/platform/inventory-location-restriction-service", () => ({
+  enforceInventoryLocationLimit: vi.fn().mockResolvedValue(undefined),
+}));
 
 import {
   assertNoDummyMasterReferences,
@@ -441,6 +444,79 @@ describe("raw-material type asset classification", () => {
 });
 
 describe("create-only master insertion", () => {
+  it("persists one Entity GSTIN and registered address and keeps a default Division", async () => {
+    models.masterEntity.create.mockResolvedValue({ id: "entity-1" });
+
+    await createMasterValueForOrganization("org-id", "entity", {
+      label: "Acme Manufacturing",
+      fields: {
+        entity_name: "Acme Manufacturing",
+        gstin: "29ABCDE1234F1Z5",
+        registered_address_line_1: "12 Industrial Road",
+        registered_city: "Bengaluru",
+        registered_state: "Karnataka",
+        registered_postal_code: "560001",
+        registered_country: "India",
+      },
+    });
+
+    expect(models.masterEntity.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        gstin: "29ABCDE1234F1Z5",
+        registered_address_line_1: "12 INDUSTRIAL ROAD",
+        registered_city: "BENGALURU",
+        registered_state: "KARNATAKA",
+        registered_postal_code: "560001",
+        registered_country: "INDIA",
+      }),
+    }));
+    expect(models.division.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id_entity_id_division_code: {
+          organization_id: "org-id",
+          entity_id: "entity-1",
+          division_code: "DEFAULT",
+        },
+      },
+    }));
+  });
+
+  it("rejects an invalid Entity GSTIN before creating the Entity", async () => {
+    await expect(createMasterValueForOrganization("org-id", "entity", {
+      label: "Acme Manufacturing",
+      fields: {
+        entity_name: "Acme Manufacturing",
+        gstin: "NOT-A-GSTIN",
+        registered_state: "Karnataka",
+      },
+    })).rejects.toThrow("Enter a valid GSTIN.");
+
+    expect(models.masterEntity.create).not.toHaveBeenCalled();
+  });
+
+  it("creates each Location under the Entity's organization-scoped Division", async () => {
+    models.masterEntity.findFirst.mockResolvedValue({ id: "entity-1" });
+    models.division.findFirst.mockResolvedValue({ id: "division-1" });
+    models.masterLocation.create.mockResolvedValue({ id: "location-1" });
+
+    await createMasterValueForOrganization("org-id", "location", {
+      label: "Main Store",
+      fields: { location_name: "Main Store", entity_id: "entity-1" },
+    });
+
+    expect(models.division.findFirst).toHaveBeenCalledWith({
+      where: { organization_id: "org-id", entity_id: "entity-1", division_code: "DEFAULT" },
+      select: { id: true },
+    });
+    expect(models.masterLocation.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        entity_id: "entity-1",
+        division_id: "division-1",
+      }),
+    }));
+  });
+
   it("provides stable Size Group order for all lookup consumers", async () => {
     models.masterSizeGroup.findMany.mockResolvedValueOnce([{
       id: "group-id",

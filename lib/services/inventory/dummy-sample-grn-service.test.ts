@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   locationFindFirst: vi.fn(),
   locationCreate: vi.fn(),
   locationUpdateMany: vi.fn(),
+  divisionFindFirst: vi.fn(),
   reserveNumber: vi.fn(),
   createAuditEvent: vi.fn(),
 }));
@@ -23,6 +24,7 @@ const transaction = {
     create: mocks.locationCreate,
     updateMany: mocks.locationUpdateMany,
   },
+  division: { findFirst: mocks.divisionFindFirst },
 };
 type TransactionMock = typeof transaction;
 
@@ -69,6 +71,7 @@ beforeEach(() => {
   mocks.locationFindFirst.mockResolvedValue({ id: "location-1" });
   mocks.locationCreate.mockResolvedValue({ id: "created-location" });
   mocks.locationUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.divisionFindFirst.mockResolvedValue({ id: "division-1" });
   mocks.reserveNumber.mockImplementation(async () => `GRN-${mocks.reserveNumber.mock.calls.length + 1}`);
   mocks.createAuditEvent.mockResolvedValue(undefined);
 });
@@ -117,6 +120,7 @@ describe("dummy sample GRN creation", () => {
       data: {
         organization_id: "org-1",
         entity_id: "entity-1",
+        division_id: "division-1",
         location_name: "Sample Receiving - Demo Entity - entity-1",
         is_active: true,
       },

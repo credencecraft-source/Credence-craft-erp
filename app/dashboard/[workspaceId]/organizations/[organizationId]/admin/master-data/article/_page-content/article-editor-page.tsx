@@ -68,6 +68,7 @@ export default async function ArticleEditorPage({ params, searchParams }: PagePr
       updateAction={updateMasterValueAction}
       error={firstSearchParam(query.error)}
       saved={editing ? firstSearchParam(query.saved) : undefined}
+      returnToUniformManagement={firstSearchParam(query.source) === "uniform-management"}
     />
   );
 }

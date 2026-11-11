@@ -11,7 +11,7 @@ import {
   listAdvanceBookings,
   listAssignableWorkOrders,
 } from "@/lib/services/distribution/advance-booking-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 function errorResponse(error: unknown, fallback: string) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -31,7 +31,8 @@ function errorResponse(error: unknown, fallback: string) {
     });
     return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
   }
-  return NextResponse.json({ error: error instanceof Error ? error.message : fallback }, { status: 400 });
+  const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+  return NextResponse.json({ error: error instanceof Error ? error.message : fallback }, { status });
 }
 
 export async function GET(request: Request) {
@@ -40,6 +41,7 @@ export async function GET(request: Request) {
     const authorization = await measureDatabaseQueries(async () => {
       const user = await requireSessionUser();
       const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
+      await requireOrganizationPermission(user.id, organization.id, "VIEW_ORDERS");
       return organization.id;
     });
     const bookingRecordId = search.get("bookingId")?.trim();
@@ -85,6 +87,7 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     if (!Array.isArray(body.sizes)) throw new Error("Submit size-wise advance booking quantities.");
     if (body.vendorId !== undefined && body.vendorId !== null && typeof body.vendorId !== "string") {
       throw new Error("Select a valid optional End Customer.");
@@ -140,6 +143,7 @@ export async function DELETE(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     if (!Array.isArray(body.bookingIds) || body.bookingIds.some((id) => typeof id !== "string")) {
       throw new Error("Select advance bookings to delete.");
     }

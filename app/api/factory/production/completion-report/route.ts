@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { listFactoryProductionCompletionReport } from "@/lib/services/factory/factory-production-completion-report-service";
 
 export async function GET(request: Request) {
@@ -10,6 +10,7 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const params = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, params.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_FACTORY_PRODUCTION");
     const grnId = params.get("grnId")?.trim();
     if (grnId) {
       const result = await listFactoryProductionCompletionReport(organization.id, { grnId, limit: 1 });
@@ -22,6 +23,9 @@ export async function GET(request: Request) {
     const result = await listFactoryProductionCompletionReport(organization.id, { cursor });
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: "You do not have permission to view factory production." }, { status: 403 });
+    }
     if (isDatabaseUnavailableError(error)) {
       console.error("Unable to load the factory production report because the database is unavailable.", {
         errorName: error instanceof Error ? error.name : "UnknownError",

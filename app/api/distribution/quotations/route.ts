@@ -10,7 +10,7 @@ import {
   deleteDistributionQuotations,
   listDistributionQuotations,
 } from "@/lib/services/distribution/quotation-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 function quotationErrorResponse(error: unknown, fallback: string) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -30,7 +30,8 @@ function quotationErrorResponse(error: unknown, fallback: string) {
     });
     return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
   }
-  return NextResponse.json({ error: error instanceof Error ? error.message : fallback }, { status: 400 });
+  const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+  return NextResponse.json({ error: error instanceof Error ? error.message : fallback }, { status });
 }
 
 export async function GET(request: Request) {
@@ -43,6 +44,7 @@ export async function GET(request: Request) {
     const authorization = await measureDatabaseQueries(async () => {
       const user = await requireSessionUser();
       const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
+      await requireOrganizationPermission(user.id, organization.id, "VIEW_ORDERS");
       return organization.id;
     });
     const cursor = search.get("cursor");
@@ -77,6 +79,7 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     const vendorId = typeof body.vendorId === "string" && body.vendorId.trim() ? body.vendorId.trim() : null;
     const contactId = typeof body.contactId === "string" && body.contactId.trim() ? body.contactId.trim() : null;
     const orderFormIds = body.orderFormIds;
@@ -138,6 +141,7 @@ export async function DELETE(request: Request) {
       body.organizationId,
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     const deleted = await deleteDistributionQuotations(
       organization.id,
       user.id,

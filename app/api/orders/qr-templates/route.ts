@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   createOrderQrTemplate,
   deleteOrderQrTemplates,
@@ -45,6 +45,7 @@ type AuthorizationResult =
 async function getAuthorizedOrganization(
   request: Request,
   allowedRoles: string[] = ALLOWED_ROLES,
+  requiredPermission?: "MANAGE_MASTER_DATA",
 ): Promise<AuthorizationResult> {
   const user = await requireSessionUser();
   const url = new URL(request.url);
@@ -70,6 +71,9 @@ async function getAuthorizedOrganization(
       organizationId,
       allowedRoles,
     );
+    if (requiredPermission) {
+      await requireOrganizationPermission(user.id, organization.id, requiredPermission);
+    }
     return { authorized: true, user, organization };
   } catch (error) {
     if (
@@ -117,7 +121,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const authorization = await getAuthorizedOrganization(request);
+    const authorization = await getAuthorizedOrganization(request, ALLOWED_ROLES, "MANAGE_MASTER_DATA");
     if (!authorization.authorized) return authorization.response;
 
     let body: unknown;
@@ -165,7 +169,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
 export async function DELETE(request: Request): Promise<NextResponse> {
   try {
-    const authorization = await getAuthorizedOrganization(request);
+    const authorization = await getAuthorizedOrganization(request, ALLOWED_ROLES, "MANAGE_MASTER_DATA");
     if (!authorization.authorized) return authorization.response;
 
     let body: unknown;

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   listFgIssued: vi.fn(),
 }));
 
@@ -12,6 +13,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/inventory/fg-issued-service", () => ({
@@ -25,6 +27,7 @@ describe("FG Issued route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listFgIssued.mockResolvedValue({ records: [], total: 0, page: 1, pageSize: 50 });
   });
 
@@ -83,6 +86,17 @@ describe("FG Issued route", () => {
     mocks.requireOrganizationContext.mockRejectedValue(new Error("Access denied: membership required."));
 
     const response = await GET(new Request("http://localhost/api/inventory/fg-issued?organizationId=other-org"));
+
+    expect(response.status).toBe(403);
+    expect(mocks.listFgIssued).not.toHaveBeenCalled();
+  });
+
+  it("denies stock movement reads without VIEW_INVENTORY_STOCK", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValueOnce(
+      new Error("Access denied: VIEW_INVENTORY_STOCK permission is required."),
+    );
+
+    const response = await GET(new Request("http://localhost/api/inventory/fg-issued?organizationId=public-org-1"));
 
     expect(response.status).toBe(403);
     expect(mocks.listFgIssued).not.toHaveBeenCalled();

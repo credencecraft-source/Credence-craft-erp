@@ -7,16 +7,18 @@ import {
   saveOrganizationOnlineStorePresentation,
   setOrganizationOnlineStoreEnabled,
 } from "@/lib/services/pos/public-online-store-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 const MANAGEMENT_ROLES = ["OWNER", "ADMIN"];
 
 async function getAuthorizedOrganization(
   context: { params: Promise<{ organizationId: string }> },
+  permission: "VIEW_POS_ONLINE_STORE" | "MANAGE_POS_ONLINE_STORE",
 ) {
   const user = await requireSessionUser();
   const { organizationId } = await context.params;
   const organization = await requireOrganizationContext(user.id, organizationId, MANAGEMENT_ROLES);
+  await requireOrganizationPermission(user.id, organization.id, permission);
   return { organization, user };
 }
 
@@ -25,7 +27,7 @@ export async function GET(
   context: { params: Promise<{ organizationId: string }> },
 ) {
   try {
-    const { organization } = await getAuthorizedOrganization(context);
+    const { organization } = await getAuthorizedOrganization(context, "VIEW_POS_ONLINE_STORE");
     const [settings, presentation] = await Promise.all([
       getOrganizationOnlineStoreSettings(organization),
       getOrganizationOnlineStorePresentation(organization.id),
@@ -40,7 +42,7 @@ export async function GET(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to load online-store settings." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }
@@ -50,7 +52,7 @@ export async function PATCH(
   context: { params: Promise<{ organizationId: string }> },
 ) {
   try {
-    const { organization } = await getAuthorizedOrganization(context);
+    const { organization } = await getAuthorizedOrganization(context, "MANAGE_POS_ONLINE_STORE");
     const contentLength = Number(request.headers.get("content-length") ?? "0");
     if (contentLength > 5_000_000) {
       return NextResponse.json({ error: "Slideshow settings exceed the upload limit." }, { status: 413 });
@@ -77,7 +79,7 @@ export async function PATCH(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to update online-store settings." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }

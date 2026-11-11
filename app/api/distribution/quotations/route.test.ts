@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createDistributionQuotationFromBookings: vi.fn(),
   deleteDistributionQuotations: vi.fn(),
   listDistributionQuotations: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/distribution/quotation-service", () => ({
   createDistributionQuotationFromBookings: mocks.createDistributionQuotationFromBookings,
@@ -36,6 +38,7 @@ describe("distribution quotation API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.listDistributionQuotations.mockResolvedValue({ quotations: [] });
     mocks.createDistributionQuotationFromBookings.mockResolvedValue({ id: "quotation-1" });
     mocks.deleteDistributionQuotations.mockResolvedValue([
@@ -47,6 +50,7 @@ describe("distribution quotation API", () => {
     const response = await GET(new Request("http://localhost/api/distribution/quotations?organizationId=public-org"));
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "VIEW_ORDERS");
     expect(mocks.listDistributionQuotations).toHaveBeenCalledWith(
       "internal-org-1",
       { includeContactRole: true },
@@ -121,6 +125,7 @@ describe("distribution quotation API", () => {
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "CREATE_ORDERS");
     expect(mocks.createDistributionQuotationFromBookings).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
@@ -177,6 +182,7 @@ describe("distribution quotation API", () => {
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "CREATE_ORDERS");
     expect(mocks.deleteDistributionQuotations).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",

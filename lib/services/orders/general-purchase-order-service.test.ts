@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   counterUpsert: vi.fn(),
   purchaseOrderCreate: vi.fn(),
   purchaseOrderFindFirst: vi.fn(),
+  entityGstRegistrationFindFirst: vi.fn(),
 }));
 
 const transaction = {
@@ -39,6 +40,7 @@ const transaction = {
   masterHsn: { findFirst: mocks.hsnFindFirst },
   organization: { findUnique: mocks.organizationFindUnique },
   organizationTaxProfile: { findFirst: mocks.taxProfileFindFirst },
+  entityGstRegistration: { findFirst: mocks.entityGstRegistrationFindFirst },
   procurementDocumentCounter: { upsert: mocks.counterUpsert },
   generalPurchaseOrderRequest: {
     create: mocks.requestCreate,
@@ -114,6 +116,7 @@ describe("general purchase-order request workflow", () => {
     mocks.subCategoryFindMany.mockResolvedValue([{ id: "subcategory-1", raw_material_sub_category: "Woven" }]);
     mocks.uomFindMany.mockResolvedValue([{ id: "uom-1", uom: "PCS" }]);
     mocks.taxProfileFindFirst.mockResolvedValue(null);
+    mocks.entityGstRegistrationFindFirst.mockResolvedValue(null);
     mocks.gstFindMany.mockResolvedValue([]);
     mocks.counterUpsert.mockResolvedValue({ current_value: 4 });
     mocks.purchaseOrderCreate.mockResolvedValue({ id: "po-1", purchase_order_no: "PO-1" });
@@ -654,6 +657,10 @@ describe("general purchase-order request workflow", () => {
   });
 
   it("creates a draft General PO from approved, tenant-owned Master Groups and consumes them atomically", async () => {
+    mocks.entityGstRegistrationFindFirst.mockResolvedValue({
+      gstin: "29ABCDE1234F1Z5",
+      registration_state: "KARNATAKA",
+    });
     mocks.groupFindMany.mockResolvedValue([{
       id: "group-1",
       entity_id: "entity-1",
@@ -668,7 +675,7 @@ describe("general purchase-order request workflow", () => {
       sub_category: "Woven",
       stock_uom: "PCS",
       entity: { organization_id: "org-1", is_active: true },
-      vendor: { organization_id: "org-1", is_active: true, gst_number: null, registered_state: null, registered_state_id: null },
+      vendor: { organization_id: "org-1", is_active: true, gst_number: null, registered_state: "KARNATAKA", registered_state_id: null },
       rawMaterial: { organization_id: "org-1", is_active: true },
       requests: [{ id: "request-1" }],
     }]);
@@ -698,6 +705,10 @@ describe("general purchase-order request workflow", () => {
       })] },
     });
     expect(createdData.lines.create[0].total.toString()).toBe("20");
+    expect(createdData.lines.create[0].tax_type).toBe("CGST_SGST");
+    expect(mocks.entityGstRegistrationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ organization_id: "org-1", entity_id: "entity-1", is_active: true }),
+    }));
     expect(mocks.groupUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: { in: ["group-1"] }, organization_id: "org-1", status: "MASTER_GROUPED" },
       data: { status: "PO_CREATED" },

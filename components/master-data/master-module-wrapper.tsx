@@ -31,6 +31,7 @@ import {
   type ErpModule,
   type SubModuleOption,
 } from "@/components/erp/erp-config-registry";
+import { getOrganizationSubmoduleAccessPermission } from "@/lib/organizations/organization-permission-registry";
 import { MasterModuleSwitcher } from "@/components/master-data/master-module-switcher";
 import { SupportTicketTrigger } from "@/components/organizations/support-ticket-trigger";
 import OrganizationModuleVisibilityControl from "@/components/organizations/organization-module-visibility-control";
@@ -48,6 +49,7 @@ type SubItem = {
   key: string;
   label: string;
   href: string;
+  accessPermission?: string;
   count?: number;
   children?: SubItem[];
 };
@@ -77,6 +79,7 @@ type MasterModuleWrapperProps = {
   organizationId: string;
   organizationName: string;
   moduleStatuses: Array<{ moduleKey: string; status: string; isVisible: boolean }>;
+  submodulePermissions: string[];
   canManageModuleVisibility: boolean;
   updateModuleVisibility: (moduleKey: string, isVisible: boolean) => Promise<{
     changed?: boolean;
@@ -138,6 +141,7 @@ export function MasterModuleWrapper({
   organizationId,
   organizationName,
   moduleStatuses,
+  submodulePermissions,
   canManageModuleVisibility,
   updateModuleVisibility,
   aiEnabled,
@@ -406,6 +410,10 @@ export function MasterModuleWrapper({
     ])),
     [moduleStatuses],
   );
+  const submodulePermissionSet = useMemo(
+    () => new Set(submodulePermissions),
+    [submodulePermissions],
+  );
   const routeModuleOption = useMemo(() => {
     const routeModule = getErpModuleForOrganizationPath(pathname, organizationPath);
     if (!routeModule) return null;
@@ -504,25 +512,38 @@ export function MasterModuleWrapper({
       ];
     }
 
-    const mapChild = (child: SubModuleOption, basePath: string): SubItem => {
+    const mapChild = (
+      child: SubModuleOption,
+      basePath: string,
+      parentKeys: readonly string[],
+    ): SubItem | null => {
+      const keyPath = [...parentKeys, child.key];
+      const accessPermission = getOrganizationSubmoduleAccessPermission(
+        activeModule.moduleKey || activeModule.key,
+        keyPath,
+      );
+      if (!submodulePermissionSet.has(accessPermission)) return null;
       const segment = child.pathSegment || child.key;
       const currentHref = child.href
         ? `${organizationPath}${child.href}`
         : `${basePath}/${segment}`;
       return {
-        key: child.key,
+        key: keyPath.join("/"),
         label: child.label,
         href: currentHref,
-        children: child.children?.map((nested) =>
-          mapChild(nested, currentHref)
-        ),
+        accessPermission,
+        children: child.children?.flatMap((nested) => {
+          const mapped = mapChild(nested, currentHref, keyPath);
+          return mapped ? [mapped] : [];
+        }),
       };
     };
 
-    return currentRegistry.children.map((child) =>
-      mapChild(child, `${organizationPath}/${activeModule.pathSegment}`)
-    );
-  }, [activeModule, organizationPath]);
+    return currentRegistry.children.flatMap((child) => {
+      const mapped = mapChild(child, `${organizationPath}/${activeModule.pathSegment}`, []);
+      return mapped ? [mapped] : [];
+    });
+  }, [activeModule, organizationPath, submodulePermissionSet]);
 
   const navigation = modules.length > 0 ? modules : dynamicNavigation;
 

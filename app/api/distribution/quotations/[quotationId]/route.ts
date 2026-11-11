@@ -8,7 +8,7 @@ import {
   getDistributionQuotation,
   saveDistributionQuotationDraft,
 } from "@/lib/services/distribution/quotation-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 type RouteContext = { params: Promise<{ quotationId: string }> };
 
@@ -20,6 +20,7 @@ export async function GET(request: Request, context: RouteContext) {
       user.id,
       url.searchParams.get("organizationId") ?? "",
     );
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_ORDERS");
     const { quotationId } = await context.params;
     const mode = url.searchParams.get("mode");
     const quotationDocument = mode === "QUOTATION_PDF";
@@ -43,7 +44,8 @@ export async function GET(request: Request, context: RouteContext) {
       });
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the Advance Booking quotation." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the Advance Booking quotation." }, { status });
   }
 }
 
@@ -57,6 +59,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     if (!Array.isArray(body.lines)) throw new Error("Submit quotation detail lines.");
     if (typeof body.quotationDate !== "string" ||
         typeof body.validUntil !== "string" ||
@@ -101,7 +104,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to save the Advance Booking quotation." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }
@@ -121,6 +124,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
     const { quotationId } = await context.params;
     const deleted = await deleteDistributionQuotation(organization.id, user.id, quotationId);
     return NextResponse.json({ deleted });
@@ -141,7 +145,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to delete the Advance Booking quotation." },
-      { status: 400 },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
     );
   }
 }

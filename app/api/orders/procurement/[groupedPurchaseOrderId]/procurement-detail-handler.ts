@@ -9,7 +9,11 @@ import {
   updateGroupedPurchaseOrderPrices,
 } from "@/lib/services/orders/grouped-purchase-order-service";
 import { updateGroupedPurchaseOrderHeader } from "@/lib/services/orders/grouped-purchase-order-header-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
 
 export async function GET(
   request: Request,
@@ -19,10 +23,12 @@ export async function GET(
     const user = await requireSessionUser();
     const organizationId = new URL(request.url).searchParams.get("organizationId") ?? "";
     const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/style-wise-po", "view");
     const groupedPurchaseOrder = await getGroupedPurchaseOrder(organization.id, (await params).groupedPurchaseOrderId);
     return NextResponse.json({ groupedPurchaseOrder });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load Grouped PO." }, { status: 400 });
+    const message = error instanceof Error ? error.message : "Unable to load Grouped PO.";
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }
 
@@ -34,10 +40,12 @@ export async function DELETE(
     const user = await requireSessionUser();
     const organizationId = new URL(request.url).searchParams.get("organizationId") ?? "";
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/style-wise-po", "delete");
     await deleteGroupedPurchaseOrder(organization.id, (await params).groupedPurchaseOrderId, user.id);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete Grouped PO." }, { status: 400 });
+    const message = error instanceof Error ? error.message : "Unable to delete Grouped PO.";
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }
 
@@ -55,6 +63,7 @@ export async function PUT(
     if (action === "approve" || action === "reject") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "APPROVER"]);
       if (action === "approve") {
+        await requireOrganizationPermission(user.id, organization.id, "APPROVE_PURCHASE_ORDERS");
         if (Array.isArray(body.prices) && body.prices.length > 0) {
           await updateGroupedPurchaseOrderPrices(
             organization.id,
@@ -68,11 +77,13 @@ export async function PUT(
         const groupedPurchaseOrder = await approveGroupedPurchaseOrder(organization.id, groupedPurchaseOrderId, user.full_name, user.id);
         return NextResponse.json({ ok: true, groupedPurchaseOrder });
       }
+      await requireOrganizationPermission(user.id, organization.id, "REJECT_PURCHASE_ORDERS");
       return NextResponse.json(await rejectGroupedPurchaseOrder(organization.id, groupedPurchaseOrderId, String(body.reason ?? "")));
     }
 
     if (action === "update-header") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING", "APPROVER"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/style-wise-po", "edit");
       const groupedPurchaseOrder = await updateGroupedPurchaseOrderHeader(organization.id, groupedPurchaseOrderId, {
         note: body.note,
         vendorPriceInr: body.vendorPriceInr,
@@ -90,6 +101,7 @@ export async function PUT(
     }
 
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING", "APPROVER"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/style-wise-po", "edit");
     const groupedPurchaseOrder = await updateGroupedPurchaseOrderPrices(
       organization.id,
       groupedPurchaseOrderId,
@@ -99,6 +111,7 @@ export async function PUT(
     );
     return NextResponse.json({ ok: true, groupedPurchaseOrder });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update grouped purchase order." }, { status: 400 });
+    const message = error instanceof Error ? error.message : "Unable to update grouped purchase order.";
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }

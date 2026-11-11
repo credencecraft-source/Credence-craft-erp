@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { allocateAdvanceBooking } from "@/lib/services/distribution/advance-booking-allocation-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 type RouteContext = { params: Promise<{ bookingId: string }> };
 
@@ -42,9 +42,11 @@ export async function POST(request: Request, context: RouteContext) {
     let organization = null;
     if (generalStockLines.length > 0) {
       organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+      await requireOrganizationPermission(user.id, organization.id, "MANAGE_FINISHED_GOODS_OUTWARD");
     }
     if (workOrderLines.length > 0) {
       organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationPermission(user.id, organization.id, "UPDATE_FACTORY_PRODUCTION");
     }
     if (!organization) {
       throw new Error("Enter a positive general-stock or work-order quantity before saving.");
@@ -81,6 +83,7 @@ export async function POST(request: Request, context: RouteContext) {
       });
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to allocate advance booking." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to allocate advance booking." }, { status });
   }
 }

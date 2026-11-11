@@ -8,7 +8,17 @@ import { MasterModuleWrapper } from "@/components/master-data/master-module-wrap
 import OrganizationKycForm from "./settings/kyc/_page-content/organization-kyc-form";
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
-import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import {
+  getOrganizationEffectivePermissions,
+  getOrganizationShellContext,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
+import {
+  getOrganizationRoutePermissionRequirements,
+  getOrganizationSubmoduleAccessPermissionForPath,
+  hasOrganizationModulePermission,
+  isOrganizationSubmoduleAccessPermission,
+} from "@/lib/organizations/organization-permission-registry";
 import {
   getFirstAvailableOrganizationModulePath,
   OrganizationModuleVisibilityError,
@@ -171,9 +181,15 @@ export default async function OrganizationShellLayout({
     return children;
   }
 
+  const settingsModule = ERP_MODULES.find(({ key }) => key === "settings");
+  const isErpSettingsModuleRoute = settingsModule?.children.some(({ key, pathSegment }) => {
+    const settingsPath = `${organizationPath}/settings/${pathSegment || key}`;
+    return currentPath === settingsPath || currentPath.startsWith(`${settingsPath}/`);
+  }) ?? false;
   const isOrganizationSettingsRoute =
     currentPath.startsWith(`${organizationPath}/settings`) &&
-    !currentPath.startsWith(`${organizationPath}/settings/master-data`);
+    !currentPath.startsWith(`${organizationPath}/settings/master-data`) &&
+    !isErpSettingsModuleRoute;
 
   // 3. Fetch and authorize the real organization before checking plan rules.
   async function deleteDummyDataAction() {
@@ -224,11 +240,13 @@ export default async function OrganizationShellLayout({
           ? "MANAGE_ROLES"
           : currentPath.includes("/settings/users")
             ? "MANAGE_USERS"
-            : currentPath.includes("/settings/reports")
-              ? "VIEW_REPORTS"
-              : currentPath.includes("/settings/master-data")
-                ? "MANAGE_MASTER_DATA"
-                : "ORGANIZATION_SETTINGS",
+            : currentPath.includes("/settings/tax-rules")
+              ? "MANAGE_TAX_RULES"
+              : currentPath.includes("/settings/reports")
+                ? "VIEW_REPORTS"
+                : currentPath.includes("/settings/master-data")
+                  ? "MANAGE_MASTER_DATA"
+                  : "ORGANIZATION_SETTINGS",
       )
     : Promise.resolve();
 
@@ -238,6 +256,7 @@ export default async function OrganizationShellLayout({
     dummyDataStatus,
     ,
     organizationHasTrialAccess,
+    effectivePermissions,
   ] = await Promise.all([
     validateOrganizationAccess(organization, currentPath, trialIsActive),
     activeBusinessTypesPromise,
@@ -250,6 +269,7 @@ export default async function OrganizationShellLayout({
     })),
     permissionCheck,
     hasOrganizationTrialAccess(organization.id, now, trialOrganization),
+    getOrganizationEffectivePermissions(user.id, organizationId),
   ]);
 
   if (!organizationHasTrialAccess
@@ -278,14 +298,33 @@ export default async function OrganizationShellLayout({
       isVisible: isOrganizationModuleVisible(settings),
     })),
   );
+  const accessibleModuleKeys = new Set(ERP_MODULES
+    .filter((module) => hasOrganizationModulePermission(module.key, effectivePermissions))
+    .map((module) => module.key));
+  const accessibleSubmodulePermissions = effectivePermissions.filter(isOrganizationSubmoduleAccessPermission);
+  const accessibleModuleStatuses = moduleStatuses.filter(({ moduleKey }) =>
+    accessibleModuleKeys.has(moduleKey),
+  );
   const routeModule = ERP_MODULES.find(({ pathSegment }) =>
     currentPath === `${organizationPath}/${pathSegment}`
     || currentPath.startsWith(`${organizationPath}/${pathSegment}/`),
   );
   if (routeModule) {
-    const routeModuleStatus = moduleStatuses.find(({ moduleKey }) => moduleKey === routeModule.key);
+    const requiredPermissions = getOrganizationRoutePermissionRequirements(routeModule.key, currentPath);
+    if (requiredPermissions.length > 0
+      && !requiredPermissions.some((permission) => effectivePermissions.includes(permission))) {
+      redirect(`${organizationPath}/access-blocked?message=${encodeURIComponent("Your organization role does not have permission to access this module.")}`);
+    }
+    const submoduleAccessPermission = getOrganizationSubmoduleAccessPermissionForPath(
+      currentPath,
+      organizationPath,
+    );
+    if (submoduleAccessPermission && !effectivePermissions.includes(submoduleAccessPermission)) {
+      redirect(`${organizationPath}/access-blocked?message=${encodeURIComponent("Your organization role does not have permission to access this sidebar module.")}`);
+    }
+    const routeModuleStatus = accessibleModuleStatuses.find(({ moduleKey }) => moduleKey === routeModule.key);
     if (!routeModuleStatus || !isOrganizationModuleAvailable(routeModuleStatus.status, routeModuleStatus.isVisible)) {
-      const fallbackModulePath = getFirstAvailableOrganizationModulePath(moduleStatuses);
+      const fallbackModulePath = getFirstAvailableOrganizationModulePath(accessibleModuleStatuses);
       if (fallbackModulePath) {
         redirect(`${organizationPath}${fallbackModulePath}`);
       }
@@ -333,7 +372,8 @@ export default async function OrganizationShellLayout({
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
-      moduleStatuses={moduleStatuses}
+      moduleStatuses={accessibleModuleStatuses}
+      submodulePermissions={accessibleSubmodulePermissions}
       canManageModuleVisibility={canManageModuleVisibility}
       updateModuleVisibility={updateModuleVisibilityAction}
       canAccessPlatformControlPanel={Boolean(platformAdmin)}

@@ -10,7 +10,10 @@ import {
   updateOrderWithDetails,
   type OrderListFilters,
 } from "@/lib/services/orders/order-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
 
 const ORDER_LIST_FILTER_FIELDS = new Set([
   "orderNo",
@@ -82,6 +85,7 @@ export async function GET(request: Request) {
       undefined,
       { allowExpiredTrial: true },
     );
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "view");
     const searchParams = new URL(request.url).searchParams;
     const status = searchParams.get("status")?.trim();
     if (status && status.length > 100) {
@@ -121,6 +125,9 @@ export async function GET(request: Request) {
       });
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: "You do not have permission to view orders." }, { status: 403 });
+    }
     console.error("Unable to load merchandising orders.", {
       errorName: error instanceof Error ? error.name : "UnknownError",
     });
@@ -136,11 +143,12 @@ export async function POST(request: Request) {
     const organizationId = url.searchParams.get("organizationId") || body.organizationId;
     
     const organization = await requireOrganizationContext(user.id, String(organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "create");
     const order = await createOrder(organization.id, body, user.id);
     return NextResponse.json({ ok: true, order: { ...order, deliveryDate: toDateOnly(order.deliveryDate) } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to create order.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }
 
@@ -157,12 +165,13 @@ export async function PUT(request: Request) {
     }
 
     const organization = await requireOrganizationContext(user.id, String(organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "edit");
     const order = await updateOrderWithDetails(id, organization.id, payload, user.id);
 
     return NextResponse.json({ ok: true, order: { ...order, deliveryDate: toDateOnly(order.deliveryDate) } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to update order.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }
 
@@ -179,10 +188,11 @@ export async function DELETE(request: Request) {
     }
 
     const organization = await requireOrganizationContext(user.id, String(organizationId), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "delete");
     const result = await deleteOrders(orderIds, organization.id, user.id);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to delete orders.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 400 });
   }
 }

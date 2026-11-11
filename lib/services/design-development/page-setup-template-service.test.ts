@@ -73,6 +73,8 @@ describe("page setup template service", () => {
         id: "page-1",
         name: "A4 LABEL",
         paperSize: "A4",
+        paperWidthMm: null,
+        paperLengthMm: null,
         orientation: "PORTRAIT",
         stickerWidthMm: 46,
         stickerLengthMm: 11.1,
@@ -101,7 +103,7 @@ describe("page setup template service", () => {
     const saved = {
       id: "page-1",
       name: "PAGE ONE",
-      paper_size: "A4",
+      paper_size: "C:120.00:200.00",
       orientation: "LANDSCAPE",
       sticker_width_mm: 46,
       sticker_length_mm: 11.1,
@@ -120,7 +122,10 @@ describe("page setup template service", () => {
 
     await createPageSetupTemplate("user-1", "public-org-1", {
       name: "page one",
-      paperSize: "A4",
+      printerType: "LASER",
+      paperSize: "CUSTOM",
+      paperWidthMm: 120,
+      paperLengthMm: 200,
       orientation: "LANDSCAPE",
       stickerWidthMm: 46,
       stickerLengthMm: 11.1,
@@ -133,7 +138,10 @@ describe("page setup template service", () => {
     });
     await updatePageSetupTemplate("user-1", "public-org-1", "page-1", {
       name: "PAGE ONE",
-      paperSize: "A4",
+      printerType: "LASER",
+      paperSize: "CUSTOM",
+      paperWidthMm: 120,
+      paperLengthMm: 200,
       orientation: "LANDSCAPE",
       stickerWidthMm: 46,
       stickerLengthMm: 11.1,
@@ -151,6 +159,7 @@ describe("page setup template service", () => {
         data: expect.objectContaining({
           organization_id: "internal-org-1",
           name: "PAGE ONE",
+          paper_size: "C:120.00:200.00",
           sticker_width_mm: 46,
           sticker_length_mm: 11.1,
           margin_top_mm: 5,

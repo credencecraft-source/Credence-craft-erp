@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/database/prisma-client";
-import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationAccess, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 export type OrganizationTaxProfileInput = {
   country?: string | null;
@@ -43,6 +43,7 @@ export async function getOrganizationTaxProfile(organizationId: string, workspac
 
 export async function setOrganizationTaxProfile(organizationId: string, workspaceUserId: string, input: OrganizationTaxProfileInput) {
   await requireOrganizationAccess(workspaceUserId, organizationId, ["OWNER", "ADMIN", "FINANCE"]);
+  await requireOrganizationPermission(workspaceUserId, organizationId, "MANAGE_TAX_RULES");
 
   const country = String(input.country || "IN").trim().toUpperCase();
   const taxRegime = String(input.taxRegime || "GST").trim().toUpperCase();

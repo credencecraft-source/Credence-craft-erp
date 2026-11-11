@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   getPosOffer: vi.fn(),
   updatePosOffer: vi.fn(),
 }));
@@ -12,6 +13,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/pos/pos-offer-service", () => ({
   getPosOffer: mocks.getPosOffer,
@@ -32,6 +34,7 @@ describe("POS offer detail API route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "actor-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-id" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.getPosOffer.mockResolvedValue({ id: "offer-1", offerCode: "SAVE10", targetIds: [] });
     mocks.updatePosOffer.mockResolvedValue({ id: "offer-1", offerCode: "SAVE12" });
   });
@@ -43,6 +46,7 @@ describe("POS offer detail API route", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("actor-1", "internal-org-id", "VIEW_POS_OFFERS");
     expect(mocks.getPosOffer).toHaveBeenCalledWith("internal-org-id", "offer-1");
   });
 
@@ -66,6 +70,7 @@ describe("POS offer detail API route", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("actor-1", "internal-org-id", "MANAGE_POS_OFFERS");
     expect(mocks.updatePosOffer).toHaveBeenCalledWith(expect.objectContaining({
       organizationId: "internal-org-id",
       actorId: "actor-1",
@@ -86,5 +91,46 @@ describe("POS offer detail API route", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.getPosOffer).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch an offer when the dedicated view permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(
+      new Error("Access denied: This role does not have the required permission."),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org-id/pos/offers/offer-1"),
+      routeContext,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.getPosOffer).not.toHaveBeenCalled();
+  });
+
+  it("does not update an offer when the dedicated management permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(
+      new Error("Access denied: This role does not have the required permission."),
+    );
+
+    const response = await PATCH(
+      new Request("http://localhost/api/organizations/public-org-id/pos/offers/offer-1", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          offerCode: "SAVE12",
+          name: "SAVE TWELVE",
+          offerType: "percentage",
+          scope: "all",
+          status: "DRAFT",
+          discountPercentage: "12",
+          startsAt: "2026-11-06",
+          targetIds: [],
+        }),
+      }),
+      routeContext,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.updatePosOffer).not.toHaveBeenCalled();
   });
 });

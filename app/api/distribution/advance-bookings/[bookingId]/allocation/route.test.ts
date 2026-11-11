@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   allocateAdvanceBooking: vi.fn(),
 }));
 
@@ -12,6 +13,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
 
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 
 vi.mock("@/lib/services/distribution/advance-booking-allocation-service", () => ({
@@ -25,6 +27,7 @@ describe("advance-booking combined allocation route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.allocateAdvanceBooking.mockResolvedValue({
       bookingId: "booking-1",
       generalStock: { allocatedLines: [{ size: "M", quantity: 100 }] },
@@ -59,6 +62,8 @@ describe("advance-booking combined allocation route", () => {
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenNthCalledWith(1, "user-1", "internal-org-1", "MANAGE_FINISHED_GOODS_OUTWARD");
+    expect(mocks.requireOrganizationPermission).toHaveBeenNthCalledWith(2, "user-1", "internal-org-1", "UPDATE_FACTORY_PRODUCTION");
     expect(mocks.allocateAdvanceBooking).toHaveBeenCalledWith("internal-org-1", "user-1", "booking-1", {
       workOrderId: "work-order-1",
       generalStockLines: [{ bookingSizeLineId: "booking-size-m", quantity: 100 }],
@@ -85,6 +90,7 @@ describe("advance-booking combined allocation route", () => {
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "MANAGE_FINISHED_GOODS_OUTWARD");
     expect(mocks.allocateAdvanceBooking).toHaveBeenCalledWith("internal-org-1", "user-1", "booking-1", {
       workOrderId: "",
       generalStockLines: [{ bookingSizeLineId: "booking-size-m", quantity: 100 }],
@@ -106,6 +112,21 @@ describe("advance-booking combined allocation route", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.requireOrganizationContext).not.toHaveBeenCalled();
+    expect(mocks.allocateAdvanceBooking).not.toHaveBeenCalled();
+  });
+
+  it("denies a stock-only allocation before calling the allocation service", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: This role does not have the required permission."));
+    const response = await POST(new Request("http://localhost/api/distribution/advance-bookings/booking-1/allocation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        generalStockLines: [{ bookingSizeLineId: "booking-size-m", quantity: 100 }],
+      }),
+    }), { params: Promise.resolve({ bookingId: "booking-1" }) });
+
+    expect(response.status).toBe(403);
     expect(mocks.allocateAdvanceBooking).not.toHaveBeenCalled();
   });
 });

@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   verifyWorkOrderInventoryGrnLine: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/services/inventory/work-order-grn-service", () => ({
   verifyWorkOrderInventoryGrnLine: mocks.verifyWorkOrderInventoryGrnLine,
@@ -28,6 +30,7 @@ describe("work-order GRN line verification route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "verifier-1", email: "verifier@example.test" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.verifyWorkOrderInventoryGrnLine.mockResolvedValue({
       grnId: "grn-1",
       lineId: "line-1",
@@ -49,6 +52,7 @@ describe("work-order GRN line verification route", () => {
       "public-org",
       ["OWNER", "ADMIN", "INVENTORY"],
     );
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("verifier-1", "internal-org-1", "MANAGE_INVENTORY_RECEIPTS");
     expect(mocks.verifyWorkOrderInventoryGrnLine).toHaveBeenCalledWith(
       "internal-org-1",
       "verifier-1",
@@ -78,6 +82,20 @@ describe("work-order GRN line verification route", () => {
     }), context);
 
     expect(response.status).toBe(400);
+    expect(mocks.verifyWorkOrderInventoryGrnLine).not.toHaveBeenCalled();
+  });
+
+  it("does not verify a GRN when the dedicated receiving permission is missing", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(
+      new Error("Access denied: This role does not have the required permission."),
+    );
+    const response = await POST(postRequest({
+      organizationId: "public-org",
+      actualReceivedQuantity: 8,
+      approvedQuantity: 6,
+    }), context);
+
+    expect(response.status).toBe(403);
     expect(mocks.verifyWorkOrderInventoryGrnLine).not.toHaveBeenCalled();
   });
 });

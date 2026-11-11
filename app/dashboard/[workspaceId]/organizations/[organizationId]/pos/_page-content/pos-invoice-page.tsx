@@ -41,6 +41,7 @@ const reportFields: Array<{ key: keyof SavedInvoice; label: string }> = [
   { key: "entityName", label: "Entity" },
   { key: "couponDiscountAmount", label: "Coupon Discount" },
   { key: "subtotal", label: "Total" },
+  { key: "amountDue", label: "Amount Due" },
 ];
 
 export default function PosInvoicePage({ workspaceId, organizationId }: { workspaceId: string; organizationId: string }) {
@@ -130,7 +131,7 @@ export default function PosInvoicePage({ workspaceId, organizationId }: { worksp
   const renderCell = (fieldKey: string, record: SavedInvoice) => {
     switch (fieldKey) {
       case "customer":
-        return record.customer || "Walk-in customer";
+        return record.customer || "Customer not linked";
       case "entityName":
         return record.entityName || "-";
       case "quantity":
@@ -139,6 +140,8 @@ export default function PosInvoicePage({ workspaceId, organizationId }: { worksp
         return <span className="font-semibold text-slate-900">Rs {record.subtotal.toFixed(2)}</span>;
       case "couponDiscountAmount":
         return <span className="font-semibold">Rs {(record.couponDiscountAmount ?? 0).toFixed(2)}</span>;
+      case "amountDue":
+        return <span className="font-semibold">Rs {(record.amountDue ?? record.grandTotal ?? 0).toFixed(2)}</span>;
       default:
         return String(record[fieldKey as keyof SavedInvoice] ?? "");
     }
@@ -328,7 +331,7 @@ export function PosInvoiceDetailPage({
               <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                   <dt className="text-xs font-medium text-[var(--erp-muted)]">Customer</dt>
-                  <dd className="mt-1 font-semibold text-[var(--erp-text)]">{invoice.customer || "Walk-in customer"}</dd>
+                  <dd className="mt-1 font-semibold text-[var(--erp-text)]">{invoice.customer || "Customer not linked"}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium text-[var(--erp-muted)]">Entity / Store</dt>
@@ -440,6 +443,16 @@ export function PosInvoiceDetailPage({
                 <dd className="border-t border-[var(--erp-border)] pt-2 text-right font-semibold text-[var(--erp-text)]">
                   {formatAmount(invoice.grandTotal ?? invoice.subtotal + (invoice.taxAmount ?? 0))}
                 </dd>
+                {(invoice.storeCreditAppliedAmount ?? 0) > 0 ? (
+                  <>
+                    <dt className="text-[var(--erp-muted)]">Sales-return credit applied</dt>
+                    <dd className="text-right font-medium">{formatAmount(invoice.storeCreditAppliedAmount ?? 0)}</dd>
+                    <dt className="border-t border-[var(--erp-border)] pt-2 font-semibold text-[var(--erp-text)]">Amount due</dt>
+                    <dd className="border-t border-[var(--erp-border)] pt-2 text-right font-semibold text-[var(--erp-text)]">
+                      {formatAmount(invoice.amountDue ?? (invoice.grandTotal ?? 0) - (invoice.storeCreditAppliedAmount ?? 0))}
+                    </dd>
+                  </>
+                ) : null}
               </dl>
             </Card>
           </>

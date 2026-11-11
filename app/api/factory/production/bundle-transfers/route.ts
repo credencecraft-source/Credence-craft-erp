@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
 
 type SizeLineInput = {
@@ -71,6 +71,7 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const body = await request.json() as TransferBody;
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "UPDATE_FACTORY_PRODUCTION");
     const action = body.action === "ACCEPT" ? "ACCEPT" : "ISSUE";
 
     if (action === "ACCEPT") {
@@ -332,6 +333,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, bundleTransfer });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save bundle transfer." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save bundle transfer." }, { status });
   }
 }
