@@ -103,6 +103,7 @@ import {
 } from "./master-import-service";
 
 const now = new Date("2026-10-12T12:00:00.000Z");
+const validExpiry = new Date(Date.now() + 24 * 60 * 60 * 1_000);
 const baseJob = {
   id: "job-1",
   organization_id: "org-internal",
@@ -128,7 +129,7 @@ const baseJob = {
   file_chunk_count: 1,
   uploaded_file_chunks: 0,
   source_sha256: createHash("sha256").update(new Uint8Array([80, 75, 3, 4])).digest("hex"),
-  expires_at: new Date("2026-11-11T12:00:00.000Z"),
+  expires_at: validExpiry,
 };
 
 function rowRecord(status: string, payload: Record<string, unknown> = { Season: "WINTER" }) {
@@ -1256,7 +1257,7 @@ describe("master import service", () => {
     mocks.prisma.masterImportJob.findFirst.mockResolvedValue({
       id: "job-1",
       status: "PARTIAL",
-      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+      expires_at: validExpiry,
     });
     mocks.prisma.masterImportJobRow.findFirst.mockResolvedValue({
       id: "row-1",
@@ -1280,7 +1281,7 @@ describe("master import service", () => {
       id: "job-1",
       status: "STAGED",
       module_key: "season",
-      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+      expires_at: validExpiry,
     });
     mocks.prisma.masterImportJobRow.findFirst
       .mockResolvedValueOnce(rowRecord("STAGED"))
@@ -2265,7 +2266,7 @@ describe("master import service", () => {
     mocks.prisma.masterImportJob.findFirst.mockImplementation(async () => ({
       id: "job-1",
       status: "VALIDATED",
-      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+      expires_at: validExpiry,
       next_plan_number: nextPlanNumber,
     }));
     mocks.prisma.masterImportJobRow.findMany.mockImplementation(async (args: {
@@ -2339,7 +2340,7 @@ describe("master import service", () => {
     mocks.prisma.masterImportJob.findFirst.mockImplementation(async () => ({
       id: "job-1",
       status: "VALIDATED",
-      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+      expires_at: validExpiry,
       next_plan_number: nextPlanNumber,
     }));
     mocks.prisma.masterImportJobRow.findMany.mockImplementation(async (args: {
@@ -2379,7 +2380,7 @@ describe("master import service", () => {
     mocks.prisma.masterImportJob.findFirst.mockResolvedValue({
       id: "job-1",
       status: "VALIDATED",
-      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+      expires_at: validExpiry,
       next_plan_number: 1,
     });
     mocks.prisma.masterImportJobRow.findMany
@@ -2412,7 +2413,7 @@ describe("master import service", () => {
     mocks.prisma.masterImportJob.findFirst.mockResolvedValue({
       id: "job-1",
       total_rows: 100,
-      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+      expires_at: validExpiry,
     });
     mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
       { row_number: 4 },
