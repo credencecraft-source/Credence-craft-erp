@@ -24,6 +24,7 @@
   "dependencies": {
     "@prisma/client": "6.19.3",
     "@tanstack/react-virtual": "^3.14.13",
+    "@vercel/analytics": "^2.0.1",
     "clsx": "^2.1.1",
     "framer-motion": "^13.1.1",
     "jspdf": "^4.2.1",
