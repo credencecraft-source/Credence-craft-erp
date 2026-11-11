@@ -213,7 +213,7 @@ export function getOrganizationOrderManagementPermission(
   resource: OrganizationOrderManagementResource,
   action: OrganizationOrderManagementAction,
 ): OrganizationOrderManagementPermission | undefined {
-  if (!ORDER_MANAGEMENT_RESOURCE_LEGACY_PERMISSIONS[resource]?.[action]) return undefined;
+  if (!getOrganizationOrderManagementLegacyPermission(resource, action)) return undefined;
   return `ORDER_MANAGEMENT:${resource}:${action.toUpperCase()}` as OrganizationOrderManagementPermission;
 }
 
@@ -221,7 +221,9 @@ export function getOrganizationOrderManagementLegacyPermission(
   resource: OrganizationOrderManagementResource,
   action: OrganizationOrderManagementAction,
 ): OrganizationPermissionKey | undefined {
-  return ORDER_MANAGEMENT_RESOURCE_LEGACY_PERMISSIONS[resource][action];
+  const permissions: Partial<Record<OrganizationOrderManagementAction, OrganizationPermissionKey>> | undefined =
+    ORDER_MANAGEMENT_RESOURCE_LEGACY_PERMISSIONS[resource];
+  return permissions?.[action];
 }
 
 export function getLegacyOrganizationOrderManagementPermissions(
