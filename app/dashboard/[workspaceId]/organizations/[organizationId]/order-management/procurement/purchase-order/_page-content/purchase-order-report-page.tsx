@@ -74,7 +74,7 @@ export default function PurchaseOrderReportPage({ assetMode = false }: { assetMo
 
   const loadOrders = useCallback(async (cursor?: string, append = false) => {
     const data = await fetchPurchaseOrderReportPage(organizationId, cursor, searchTerm, assetMode);
-    const page = (data.purchaseOrders ?? []).map((order: PurchaseOrder) => ({ ...order, status: order.status === "OPEN" ? "DRAFT" : order.status }));
+    const page = data.purchaseOrders ?? [];
     setOrders((current) => append ? [...current, ...page] : page);
     setNextCursor(data.nextCursor ?? null);
   }, [assetMode, organizationId, searchTerm]);
@@ -86,7 +86,7 @@ export default function PurchaseOrderReportPage({ assetMode = false }: { assetMo
       fetchPurchaseOrderReportPage(organizationId, undefined, searchTerm, assetMode)
         .then((data) => {
           if (!active) return;
-          const page = (data.purchaseOrders ?? []).map((order) => ({ ...order, status: order.status === "OPEN" ? "DRAFT" : order.status }));
+          const page = data.purchaseOrders ?? [];
           setOrders(page);
           setNextCursor(data.nextCursor ?? null);
         })

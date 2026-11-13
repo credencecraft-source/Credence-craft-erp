@@ -3,8 +3,8 @@ import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   prisma: {
-    subscription: { findUnique: vi.fn() },
-    organization: { findFirst: vi.fn() },
+    subscription: { findUnique: vi.fn(), findMany: vi.fn() },
+    organization: { findFirst: vi.fn(), findMany: vi.fn() },
     $transaction: vi.fn(),
   },
   transaction: {
@@ -29,7 +29,12 @@ const mocks = vi.hoisted(() => ({
   pricingMode: { getPlatformPricingSettings: vi.fn() },
 }));
 
-vi.mock("@/lib/database/prisma-client", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/database/prisma-client", () => ({
+  prisma: {
+    ...mocks.prisma,
+    organization: mocks.prisma.organization,
+  },
+}));
 vi.mock("@/lib/auth/platform-session-manager", () => ({
   requirePlatformSessionAdmin: mocks.requirePlatformSessionAdmin,
 }));
@@ -46,6 +51,7 @@ import {
   deleteSubscription,
   isSubscriptionActiveAt,
   getLatestPaidUserLicenseCount,
+  listSubscriptionsPage,
   subscriptionMatchesPricingMode,
   mapOrganizationsByReference,
   orphanedSubscriptionAuditDetails,
@@ -68,6 +74,41 @@ beforeEach(() => {
 });
 
 describe("subscription report organization lookup", () => {
+  it("prefers the persisted organization name snapshot for historical subscription rows", async () => {
+    mocks.prisma.subscription.findMany.mockResolvedValue([{
+      id: "subscription-1",
+      organization_id: "internal-org-id",
+      organization_name: "Historical Organization Name",
+      business_type_id: null,
+      plan_id: "plan-1",
+      payment_status: "PAID",
+      service_status: "active",
+      start_date: new Date("2026-01-01T00:00:00.000Z"),
+      end_date: null,
+      billing_months: 12,
+      billed_user_count: null,
+      subtotal_amount: null,
+      gst_amount: null,
+      total_amount: null,
+      created_at: new Date("2026-01-01T00:00:00.000Z"),
+      updated_at: new Date("2026-01-01T00:00:00.000Z"),
+      plan: { plan_name: "Classic", price: new Prisma.Decimal("4999"), tier_key: "CLASSIC" },
+    }]);
+    mocks.prisma.organization.findMany.mockResolvedValue([{
+      id: "internal-org-id",
+      organization_id: "public-org-id",
+      organization_name: "Renamed Organization",
+      organization_number: "0000000042",
+    }]);
+
+    await expect(listSubscriptionsPage()).resolves.toMatchObject({
+      subscriptions: [{
+        organizationName: "Historical Organization Name",
+        organization_name: "Historical Organization Name",
+      }],
+    });
+  });
+
   it("resolves organizations by internal or public identifier", () => {
     const organization = {
       id: "internal-org-id",

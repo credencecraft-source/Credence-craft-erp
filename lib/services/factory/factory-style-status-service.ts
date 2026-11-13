@@ -3,7 +3,8 @@ import { requireOrganizationPermission } from "@/lib/services/organizations/orga
 
 export type FactoryStyleActivity = {
   id: string;
-  documentNo: string;
+  identifier: string;
+  route: string | null;
   status: string | null;
   occurredAt: string;
   createdBy: string | null;
@@ -177,7 +178,8 @@ export async function listFactoryStyleStatusOrders(
       plannedFinishedGoodsQuantity += workOrder.total_qty;
       workOrders.push({
         id: workOrder.id,
-        documentNo: workOrder.work_order_no,
+        identifier: workOrder.work_order_no,
+        route: null,
         status: workOrder.status,
         occurredAt: workOrder.created_at.toISOString(),
         createdBy: actors.get(`FactoryWorkOrder:${workOrder.id}`) ?? null,
@@ -212,7 +214,8 @@ export async function listFactoryStyleStatusOrders(
       for (const transfer of workOrder.shopFloorTransfers) {
         transfers.push({
           id: `transfer:${transfer.id}`,
-          documentNo: `${transfer.fromProcess.process_name} → ${transfer.toProcess?.process_name ?? "Finished goods"}`,
+          identifier: transfer.id,
+          route: `${transfer.fromProcess.process_name} → ${transfer.toProcess?.process_name ?? "Finished goods"}`,
           status: transfer.status,
           occurredAt: (transfer.received_at ?? transfer.sent_at).toISOString(),
           createdBy: null,
@@ -222,11 +225,12 @@ export async function listFactoryStyleStatusOrders(
       for (const grn of workOrder.grns) {
         transfers.push({
           id: `process-grn:${grn.id}`,
-          documentNo: grn.grn_no,
+          identifier: grn.grn_no,
+          route: `${grn.fromProcess.process_name} → ${grn.toProcess.process_name}`,
           status: grn.status,
           occurredAt: (grn.approved_at ?? grn.grn_date).toISOString(),
           createdBy: grn.approved_at ? grn.fromProcess.process_name : null,
-          detail: `${grn.fromProcess.process_name} → ${grn.toProcess.process_name} · ${grn.received_qty.toLocaleString("en-IN")} units`,
+          detail: `${grn.received_qty.toLocaleString("en-IN")} units`,
         });
       }
       for (const grn of workOrder.inventoryGrns) {
@@ -235,7 +239,8 @@ export async function listFactoryStyleStatusOrders(
         approvedFinishedGoodsQuantity += approvedQuantity;
         finishedGoods.push({
           id: `fg-grn:${grn.id}`,
-          documentNo: grn.grn_no,
+          identifier: grn.grn_no,
+          route: null,
           status: grn.status,
           occurredAt: (grn.verified_at ?? grn.grn_date).toISOString(),
           createdBy: null,
@@ -245,7 +250,8 @@ export async function listFactoryStyleStatusOrders(
       for (const receipt of workOrder.finishedGoodsAllocatedStockReceipts) {
         finishedGoods.push({
           id: `fg-receipt:${receipt.id}`,
-          documentNo: receipt.grn_no,
+          identifier: receipt.grn_no,
+          route: null,
           status: "POSTED",
           occurredAt: receipt.posted_at.toISOString(),
           createdBy: null,

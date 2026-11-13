@@ -128,7 +128,8 @@ describe("listFactoryStyleStatusOrders", () => {
     expect(rows[0]).toMatchObject({
       orderNo: "OD-100",
       workOrders: [{
-        documentNo: "WO-100",
+        identifier: "WO-100",
+        route: null,
         createdBy: "Factory Operator",
         detail: "100 units",
       }],
@@ -142,12 +143,12 @@ describe("listFactoryStyleStatusOrders", () => {
         occurredAt: "2026-10-03T09:00:00.000Z",
       }],
       transfers: [
-        { documentNo: "Stitching → Finishing", status: "RECEIVED" },
-        { documentNo: "FGRN-100", status: "APPROVED" },
+        { identifier: "transfer-1", route: "Stitching → Finishing", status: "RECEIVED" },
+        { identifier: "FGRN-100", route: "Stitching → Finishing", status: "APPROVED", detail: "60 units" },
       ],
       finishedGoods: [
-        { documentNo: "WOGRN-100", detail: "45 approved of 50 received" },
-        { documentNo: "WOGRN-100", status: "POSTED", detail: "45 approved · size M" },
+        { identifier: "WOGRN-100", route: null, detail: "45 approved of 50 received" },
+        { identifier: "WOGRN-100", route: null, status: "POSTED", detail: "45 approved · size M" },
       ],
       plannedFinishedGoodsQuantity: 100,
       approvedFinishedGoodsQuantity: 45,

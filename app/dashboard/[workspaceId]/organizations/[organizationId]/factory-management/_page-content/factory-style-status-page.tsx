@@ -83,10 +83,10 @@ function searchOrder(order: FactoryStyleStatusOrder) {
     order.brand,
     order.orderNo,
     order.styleName,
-    ...order.workOrders.map(({ documentNo, status }) => `${documentNo} ${status ?? ""}`),
+    ...order.workOrders.map(({ identifier, status }) => `${identifier} ${status ?? ""}`),
     ...order.processes.map(({ processName, status }) => `${processName} ${status}`),
-    ...order.transfers.map(({ documentNo, status }) => `${documentNo} ${status ?? ""}`),
-    ...order.finishedGoods.map(({ documentNo, status }) => `${documentNo} ${status ?? ""}`),
+    ...order.transfers.map(({ identifier, route, status }) => `${identifier} ${route ?? ""} ${status ?? ""}`),
+    ...order.finishedGoods.map(({ identifier, status }) => `${identifier} ${status ?? ""}`),
   ].filter(Boolean).join(" ");
 }
 
@@ -291,7 +291,11 @@ export default function FactoryStyleStatusPage({
                   <li key={activity.id} className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <p className="font-semibold text-[var(--erp-text)]">{activity.documentNo}</p>
+                        <p className="text-xs text-[var(--erp-muted)]">Identifier</p>
+                        <p className="font-semibold text-[var(--erp-text)]">{activity.identifier}</p>
+                        {activity.route && (
+                          <p className="mt-1 text-sm text-[var(--erp-muted)]">Route: {activity.route}</p>
+                        )}
                         <p className="mt-1 text-sm text-[var(--erp-muted)]">{formatDate(activity.occurredAt)}</p>
                       </div>
                       {activity.status && <Badge>{activity.status.replaceAll("_", " ")}</Badge>}
