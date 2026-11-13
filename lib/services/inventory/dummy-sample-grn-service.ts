@@ -186,7 +186,7 @@ async function findOrCreateSampleReceivingLocation(
 
   const division = await transaction.division.findFirst({
     where: { organization_id: organizationId, entity_id: entityId },
-    select: { id: true, location_name: true },
+    select: { id: true },
   });
   if (!division) throw new Error("The sample receiving Entity must have its organization-scoped Division.");
   const location = await transaction.masterLocation.create({
@@ -197,7 +197,7 @@ async function findOrCreateSampleReceivingLocation(
       location_name: locationName,
       is_active: true,
     },
-    select: { id: true },
+    select: { id: true, location_name: true },
   });
   await createAuditEvent({
     organizationId,

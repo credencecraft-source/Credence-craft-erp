@@ -627,7 +627,7 @@ async function createOrganizationDummyDataForUser(
     const [entity, finishedGoodsType, rawMaterialType] = await Promise.all([
       transaction.masterEntity.findFirst({
         where: { organization_id: organization.id, entity_name: organization.organization_name, is_active: true },
-        select: { id: true },
+        select: { id: true, entity_name: true },
       }),
       transaction.masterProduct.findFirst({
         where: { organization_id: organization.id, product_master_name: "Finished Goods", is_active: true },
@@ -1206,7 +1206,7 @@ async function createOrganizationDummyDataForUser(
         if (!order) throw new Error("A sample BOM row could not be matched to its order.");
         const sampleOrder = sampleOrdersByNumber.get(order.orderNo);
         const orderNo = order.orderNo.trim();
-        const styleName = sampleOrder?.styleName?.trim();
+        const styleName = sampleOrder?.article?.trim();
         if (!orderNo || !styleName) {
           throw new Error("Every sample order needs an Order No and Style Name before grouped procurement.");
         }
