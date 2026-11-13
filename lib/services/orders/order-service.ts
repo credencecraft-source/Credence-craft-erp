@@ -13,6 +13,12 @@ import {
 } from "@/lib/services/platform/segment-form-restriction-service";
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
+import { buildFinishedGoodsSkuCode } from "@/lib/utilities/finished-goods-sku";
+import { buildPersistedOrderVariantCode, normalizeVariantCodePart } from "@/lib/utilities/finished-goods-variant-code";
+import {
+  resolveOrderMasterSnapshots,
+  type OrderMasterSnapshot,
+} from "@/lib/services/orders/order-master-snapshot-service";
 import { requireActiveOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
 import {
   assertNoDummyMasterReferences,
@@ -34,6 +40,8 @@ export type OrderStatus =
 export type OrderRow = {
   buyerSize?: string | null;
   size?: string | null;
+  skuCode?: string | null;
+  barcode?: string | null;
   beforeExcessQty?: number | string | null;
   excess?: number | string | null;
   excessQty?: number | string | null;
@@ -222,6 +230,91 @@ export async function reserveNextOrderNumbers(
   return Array.from({ length: count }, (_, index) => `OD-${firstNumber + index}`);
 }
 
+const ORDER_SKU_COUNTER_TYPE = "MERCH_ORDER_SKU";
+const ORDER_BARCODE_COUNTER_TYPE = "MERCH_ORDER_BARCODE";
+const FINISHED_GOODS_BARCODE_COUNTER_TYPE = "MERCH_FG_BARCODE";
+const MAX_ORDER_IDENTIFIER_RESERVATIONS = 1000;
+
+function formatOrderSkuCode(currentValue: number) {
+  return `SKU-${String(currentValue).padStart(6, "0")}`;
+}
+
+function formatOrderBarcode(currentValue: number) {
+  return `BC-${String(currentValue).padStart(8, "0")}`;
+}
+
+function formatFinishedGoodsBarcode(currentValue: number) {
+  return `FGBC-${String(currentValue).padStart(8, "0")}`;
+}
+
+export async function reserveNextOrderSkuCode(
+  organizationId: string,
+  database: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  for (let attempt = 0; attempt < MAX_ORDER_IDENTIFIER_RESERVATIONS; attempt += 1) {
+    const counter = await database.procurementDocumentCounter.upsert({
+      where: { organization_id_document_type: { organization_id: organizationId, document_type: ORDER_SKU_COUNTER_TYPE } },
+      create: { organization_id: organizationId, document_type: ORDER_SKU_COUNTER_TYPE, current_value: 1 },
+      update: { current_value: { increment: 1 } },
+      select: { current_value: true },
+    });
+    const skuCode = formatOrderSkuCode(counter.current_value);
+    const existing = await database.merchandisingOrder.findFirst({
+      where: { organization_id: organizationId, sku_code: skuCode },
+      select: { id: true },
+    });
+    if (!existing) return skuCode;
+  }
+
+  throw new Error("Unable to reserve a unique merchandising order SKU. Try again.");
+}
+
+export async function reserveNextOrderBarcode(
+  organizationId: string,
+  database: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  for (let attempt = 0; attempt < MAX_ORDER_IDENTIFIER_RESERVATIONS; attempt += 1) {
+    const counter = await database.procurementDocumentCounter.upsert({
+      where: { organization_id_document_type: { organization_id: organizationId, document_type: ORDER_BARCODE_COUNTER_TYPE } },
+      create: { organization_id: organizationId, document_type: ORDER_BARCODE_COUNTER_TYPE, current_value: 1 },
+      update: { current_value: { increment: 1 } },
+      select: { current_value: true },
+    });
+    const barcode = formatOrderBarcode(counter.current_value);
+    const existing = await database.merchandisingOrder.findFirst({
+      where: { organization_id: organizationId, barcode },
+      select: { id: true },
+    });
+    if (!existing) return barcode;
+  }
+
+  throw new Error("Unable to reserve a unique merchandising order barcode. Try again.");
+}
+
+export async function reserveNextFinishedGoodsBarcode(
+  organizationId: string,
+  database: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  for (let attempt = 0; attempt < MAX_ORDER_IDENTIFIER_RESERVATIONS; attempt += 1) {
+    const counter = await database.procurementDocumentCounter.upsert({
+      where: { organization_id_document_type: { organization_id: organizationId, document_type: FINISHED_GOODS_BARCODE_COUNTER_TYPE } },
+      create: { organization_id: organizationId, document_type: FINISHED_GOODS_BARCODE_COUNTER_TYPE, current_value: 1 },
+      update: { current_value: { increment: 1 } },
+      select: { current_value: true },
+    });
+    const barcode = formatFinishedGoodsBarcode(counter.current_value);
+    const existing = await database.finishedGoodsSizeWise.findFirst({
+      where: { order: { organization_id: organizationId }, barcode },
+      select: { id: true },
+    });
+    if (!existing) return barcode;
+  }
+
+  throw new Error("Unable to reserve a unique finished-goods barcode. Try again.");
+}
+
+export { resolveOrderMasterSnapshots } from "@/lib/services/orders/order-master-snapshot-service";
+
 export async function listOrders(organizationId: string, limit = 100) {
   const page = await listOrdersPage(organizationId, { limit });
   return page.orders;
@@ -236,7 +329,7 @@ function nullableTextCondition(filter: OrderListFilter) {
 }
 
 function textColumnFilter(
-  field: Exclude<keyof NonNullable<OrderListFilters>, "articleCode" | "variantCode" | "orderQty" | "deliveryDate">,
+  field: Exclude<keyof NonNullable<OrderListFilters>, "variantCode" | "orderQty" | "deliveryDate">,
   filter: OrderListFilter,
 ): Prisma.MerchandisingOrderWhereInput {
   if (filter.operator === "empty") {
@@ -289,69 +382,31 @@ function orderQuantityColumnFilter(filter: OrderListFilter): Prisma.Merchandisin
   return { orderQty: quantity };
 }
 
-async function articleCodeColumnFilter(organizationId: string, filter: OrderListFilter) {
-  const codeCondition = filter.operator === "empty"
-    ? { AND: [{ article_code: { not: null } }, { article_code: { not: "" } }] }
-    : filter.operator === "notContains"
-      ? {
-          AND: [
-            { article_code: { not: null } },
-            { article_code: { not: "" } },
-            { article_code: nullableTextCondition({ ...filter, operator: "contains" }) },
-          ],
-        }
-      : { article_code: nullableTextCondition(filter) };
-  const articles = await prisma.masterArticle.findMany({
-    where: { organization_id: organizationId, ...codeCondition },
-    select: { article: true },
-  });
-  const names = articles.map(({ article }) => article);
-  if (filter.operator === "contains" || filter.operator === "is") {
-    return { article: { in: names } } satisfies Prisma.MerchandisingOrderWhereInput;
+function variantCodeColumnFilter(filter: OrderListFilter): Prisma.MerchandisingOrderWhereInput {
+  if (filter.operator === "empty") {
+    return { OR: [{ variantCode: null }, { variantCode: "" }] };
+  }
+  const normalizedFilter = normalizeVariantCodePart(filter.value);
+  if (filter.operator === "notContains") {
+    if (!normalizedFilter) return {};
+    return {
+      OR: [
+        { variantCode: null },
+        { variantCode: "" },
+        { NOT: { variantCode: { contains: normalizedFilter, mode: "insensitive" } } },
+      ],
+    };
+  }
+  if (!normalizedFilter) {
+    return filter.operator === "contains"
+      ? {}
+      : { id: { in: [] } };
   }
   return {
-    OR: [{ article: null }, { article: { notIn: names } }],
-  } satisfies Prisma.MerchandisingOrderWhereInput;
-}
-
-async function variantCodeColumnFilter(organizationId: string, filter: OrderListFilter) {
-  const codeCondition = filter.operator === "empty"
-    ? { AND: [{ variant_code: { not: null } }, { variant_code: { not: "" } }] }
-    : filter.operator === "notContains"
-      ? {
-          AND: [
-            { variant_code: { not: null } },
-            { variant_code: { not: "" } },
-            { variant_code: nullableTextCondition({ ...filter, operator: "contains" }) },
-          ],
-        }
-      : { variant_code: nullableTextCondition(filter) };
-  const variants = await prisma.masterArticleVariant.findMany({
-    where: {
-      organization_id: organizationId,
-      article: { organization_id: organizationId },
-      color: { organization_id: organizationId },
-      ...codeCondition,
-    },
-    select: {
-      article: { select: { article: true } },
-      color: { select: { colors: true } },
-    },
-  });
-  const matchingPairs = variants.map(({ article, color }) => ({
-    AND: [{ article: article.article }, { colors: color.colors }],
-  }));
-  if (filter.operator === "contains" || filter.operator === "is") {
-    return { OR: matchingPairs } satisfies Prisma.MerchandisingOrderWhereInput;
-  }
-  if (matchingPairs.length === 0) return {};
-  return {
-    OR: [
-      { article: null },
-      { colors: null },
-      { NOT: { OR: matchingPairs } },
-    ],
-  } satisfies Prisma.MerchandisingOrderWhereInput;
+    variantCode: filter.operator === "is"
+      ? { equals: normalizedFilter, mode: "insensitive" }
+      : { contains: normalizedFilter, mode: "insensitive" },
+  };
 }
 
 export async function listOrdersPage(
@@ -363,7 +418,6 @@ export async function listOrdersPage(
     search?: string;
     filters?: OrderListFilters;
     purpose?: "advance-booking";
-    includeArticleMetadata?: boolean;
   } = {},
 ) {
   const cursor = decodeOrderCursor(options.cursor);
@@ -375,6 +429,8 @@ export async function listOrdersPage(
         entityName: true,
         buyer: true,
         brand: true,
+        articleCode: true,
+        variantCode: true,
         styleName: true,
         orderQty: true,
         deliveryDate: true,
@@ -390,8 +446,10 @@ export async function listOrdersPage(
         subCategory: true,
         season: true,
         article: true,
+        articleCode: true,
         styleName: true,
         colors: true,
+        variantCode: true,
         buyer: true,
         brand: true,
         sizeGroup: true,
@@ -414,6 +472,7 @@ export async function listOrdersPage(
         "subCategory",
         "season",
         "article",
+        "articleCode",
         "styleName",
         "colors",
         "buyer",
@@ -432,35 +491,10 @@ export async function listOrdersPage(
     const dateRange = getDateRange(search);
     if (dateRange) searchConditions.push({ deliveryDate: { gte: dateRange.start, lt: dateRange.end } });
 
-    const [matchingArticles, matchingVariants] = await Promise.all([
-      prisma.masterArticle.findMany({
-        where: {
-          organization_id: organizationId,
-          article_code: { contains: search, mode: "insensitive" },
-        },
-        select: { article: true },
-      }),
-      prisma.masterArticleVariant.findMany({
-        where: {
-          organization_id: organizationId,
-          article: { organization_id: organizationId },
-          color: { organization_id: organizationId },
-          variant_code: { contains: search, mode: "insensitive" },
-        },
-        select: {
-          article: { select: { article: true } },
-          color: { select: { colors: true } },
-        },
-      }),
-    ]);
-    if (matchingArticles.length > 0) {
-      searchConditions.push({ article: { in: matchingArticles.map(({ article }) => article) } });
-    }
-    if (matchingVariants.length > 0) {
+    const normalizedVariantSearch = normalizeVariantCodePart(search);
+    if (normalizedVariantSearch) {
       searchConditions.push({
-        OR: matchingVariants.map(({ article, color }) => ({
-          AND: [{ article: article.article }, { colors: color.colors }],
-        })),
+        variantCode: { contains: normalizedVariantSearch, mode: "insensitive" },
       });
     }
     andConditions.push({ OR: searchConditions });
@@ -468,10 +502,8 @@ export async function listOrdersPage(
 
   for (const [field, filter] of Object.entries(options.filters ?? {})) {
     if (!filter) continue;
-    if (field === "articleCode") {
-      andConditions.push(await articleCodeColumnFilter(organizationId, filter));
-    } else if (field === "variantCode") {
-      andConditions.push(await variantCodeColumnFilter(organizationId, filter));
+    if (field === "variantCode") {
+      andConditions.push(variantCodeColumnFilter(filter));
     } else if (field === "orderQty") {
       andConditions.push(orderQuantityColumnFilter(filter));
     } else if (field === "deliveryDate") {
@@ -482,6 +514,7 @@ export async function listOrdersPage(
       || field === "subCategory"
       || field === "season"
       || field === "article"
+      || field === "articleCode"
       || field === "styleName"
       || field === "colors"
       || field === "buyer"
@@ -526,66 +559,15 @@ export async function listOrdersPage(
     return {
       orders: pageOrders.map((order) => ({
         ...order,
-        articleCode: null,
-        variantCode: null,
         deliveryDate: toDateOnly(order.deliveryDate),
       })),
       nextCursor,
     };
   }
 
-  const articleNames = [...new Set(pageOrders
-    .map((order) => order.article?.trim())
-    .filter((article): article is string => Boolean(article)))];
-  const articleColors = [...new Set(pageOrders
-    .map((order) => order.colors?.trim())
-    .filter((color): color is string => Boolean(color)))];
-  const [articleRows, articleVariants] = options.includeArticleMetadata !== false && articleNames.length > 0
-    ? await Promise.all([
-        prisma.masterArticle.findMany({
-          where: { organization_id: organizationId, article: { in: articleNames } },
-          select: { id: true, article: true, article_code: true },
-        }),
-        articleColors.length > 0
-          ? prisma.masterArticleVariant.findMany({
-              where: {
-                organization_id: organizationId,
-                article: {
-                  organization_id: organizationId,
-                  article: { in: articleNames },
-                },
-                color: {
-                  organization_id: organizationId,
-                  colors: { in: articleColors, mode: "insensitive" },
-                },
-              },
-              select: {
-                article: { select: { id: true, article: true } },
-                variant_code: true,
-                color: { select: { organization_id: true, colors: true } },
-              },
-            })
-          : Promise.resolve([]),
-      ])
-    : [[], []];
-  const articleCodes = new Map(articleRows.map((article) => [article.article, article.article_code]));
-  const articleIdsByName = new Map(articleRows.map((article) => [article.article, article.id]));
-  const variantCodes = new Map(articleVariants
-    .filter((variant) => variant.color.organization_id === organizationId && variant.variant_code)
-    .map((variant) => [
-      `${variant.article.id}:${variant.color.colors.trim().toLocaleLowerCase()}`,
-      variant.variant_code,
-    ]));
-
   return {
     orders: pageOrders.map((order) => ({
       ...order,
-      articleCode: articleCodes.get(order.article?.trim() ?? "") ?? null,
-      variantCode: (() => {
-        const articleId = articleIdsByName.get(order.article?.trim() ?? "");
-        const color = order.colors?.trim().toLocaleLowerCase();
-        return articleId && color ? variantCodes.get(`${articleId}:${color}`) ?? null : null;
-      })(),
       deliveryDate: toDateOnly(order.deliveryDate),
     })),
     nextCursor,
@@ -641,6 +623,7 @@ export async function getOrderById(id: string, organizationId: string) {
       article: true,
       styleName: true,
       colors: true,
+      variantCode: true,
       buyer: true,
       brand: true,
       sizeGroup: true,
@@ -659,6 +642,8 @@ export async function getOrderById(id: string, organizationId: string) {
           id: true,
           buyerSize: true,
           size: true,
+          sku_code: true,
+          barcode: true,
           beforeExcessQty: true,
           excess: true,
           excessQty: true,
@@ -747,6 +732,7 @@ export async function getOrderCoreById(id: string, organizationId: string) {
       article: true,
       styleName: true,
       colors: true,
+      variantCode: true,
       buyer: true,
       brand: true,
       sizeGroup: true,
@@ -780,6 +766,8 @@ export async function getOrderDetailSection(
               id: true,
               buyerSize: true,
               size: true,
+              sku_code: true,
+              barcode: true,
               beforeExcessQty: true,
               excess: true,
               excessQty: true,
@@ -1436,12 +1424,22 @@ async function createOrderWithinTransaction(
   prepared: PreparedCreateOrder,
   formRestriction: Awaited<ReturnType<typeof getEffectiveSegmentFormRestriction>>,
   options: CreateOrderOptions = {},
+  masterSnapshot?: OrderMasterSnapshot,
 ) {
   const { input, deliveryDate, calculatedFinishedGoods, calculatedOrderQty } = prepared;
+  const resolvedMasterSnapshot = masterSnapshot
+    ?? (await resolveOrderMasterSnapshots(transaction, organizationId, [{
+      article: input.article,
+      colors: input.colors,
+    }]))[0];
   await lockOrganizationOrderQuantityLimit(transaction, organizationId);
   await validateMonthlyFormLimits(organizationId, "merchandising_orders", calculatedOrderQty, undefined, transaction, formRestriction);
   const entity = await requireActiveOrganizationEntity(organizationId, input.entityName, transaction);
-  const orderNo = await reserveNextOrderNumber(organizationId, transaction);
+  const [orderNo, skuCode, barcode] = await Promise.all([
+    reserveNextOrderNumber(organizationId, transaction),
+    reserveNextOrderSkuCode(organizationId, transaction),
+    reserveNextOrderBarcode(organizationId, transaction),
+  ]);
   const processTemplate = options.processSnapshot
     ? null
     : await findProcessTemplate(organizationId, input.processTemplateId, transaction);
@@ -1463,16 +1461,22 @@ async function createOrderWithinTransaction(
 
   const createdOrder = await transaction.merchandisingOrder.create({
     data: {
-      organization: { connect: { id: organizationId } },
-      entity: { connect: { organization_id_id: { organization_id: organizationId, id: entity.id } } },
+      organization_id: organizationId,
+      entity_id: entity.id,
       orderNo,
+      sku_code: skuCode,
+      barcode,
       entityName: entity.entity_name,
       category: input.category ?? null,
       subCategory: input.subCategory ?? null,
       season: input.season ?? null,
       article: input.article ?? null,
+      articleCode: resolvedMasterSnapshot.articleCode,
+      master_article_id: resolvedMasterSnapshot.master_article_id,
+      master_variant_id: resolvedMasterSnapshot.master_variant_id,
       styleName: input.styleName ?? null,
       colors: input.colors ?? null,
+      variantCode: buildPersistedOrderVariantCode(input.styleName, input.colors),
       buyer: input.buyer ?? null,
       brand: input.brand ?? null,
       sizeGroup: input.sizeGroup ?? null,
@@ -1483,13 +1487,20 @@ async function createOrderWithinTransaction(
       deliveryDate,
       finalStatus: input.finalStatus ?? "Draft",
       processStatus: input.processStatus ?? null,
+      process_template_id: activeProcessTemplateId,
       ...(options.sourceStatus ? { sourceStatus: options.sourceStatus } : {}),
-      ...(activeProcessTemplateId ? { processTemplate: { connect: { id: activeProcessTemplateId } } } : {}),
     },
   });
 
   if (calculatedFinishedGoods) {
-    await createFinishedGoodsForOrder(createdOrder.id, calculatedFinishedGoods.rows, transaction);
+    await createFinishedGoodsForOrder(
+      createdOrder.id,
+      organizationId,
+      createdOrder.styleName,
+      createdOrder.colors,
+      calculatedFinishedGoods.rows,
+      transaction,
+    );
   }
   if (Array.isArray(input.bomRows)) {
     await createBomItemsForOrder(
@@ -1590,8 +1601,20 @@ export async function createOrdersAtomically(
 
   const createdOrders = await prisma.$transaction(async (transaction) => {
     const orders = [];
-    for (const prepared of preparedOrders) {
-      orders.push(await createOrderWithinTransaction(transaction, organizationId, prepared, formRestriction, options));
+    const masterSnapshots = await resolveOrderMasterSnapshots(
+      transaction,
+      organizationId,
+      preparedOrders.map(({ input }) => ({ article: input.article, colors: input.colors })),
+    );
+    for (const [index, prepared] of preparedOrders.entries()) {
+      orders.push(await createOrderWithinTransaction(
+        transaction,
+        organizationId,
+        prepared,
+        formRestriction,
+        options,
+        masterSnapshots[index],
+      ));
     }
     await createOrderAuditEvents(organizationId, userId, orders, transaction);
     return orders;
@@ -1766,6 +1789,12 @@ export async function updateOrder(
       ...(input.article !== undefined && { article: input.article ?? null }),
       ...(input.styleName !== undefined && { styleName: input.styleName ?? null }),
       ...(input.colors !== undefined && { colors: input.colors ?? null }),
+      ...((input.styleName !== undefined || input.colors !== undefined) && {
+        variantCode: buildPersistedOrderVariantCode(
+          input.styleName !== undefined ? input.styleName : order.styleName,
+          input.colors !== undefined ? input.colors : order.colors,
+        ),
+      }),
       ...(input.buyer !== undefined && { buyer: input.buyer ?? null }),
       ...(input.brand !== undefined && { brand: input.brand ?? null }),
       ...(input.sizeGroup !== undefined && { sizeGroup: input.sizeGroup ?? null }),
@@ -1895,16 +1924,33 @@ async function createBomItemsForOrder(
 
 async function createFinishedGoodsForOrder(
   orderId: string,
+  organizationId: string,
+  styleName: string | null,
+  color: string | null,
   rows: OrderRow[],
   transaction: Prisma.TransactionClient,
 ) {
   if (rows.length === 0) return;
 
+  const rowsWithSkus = rows.map((row) => {
+    const skuCode = buildFinishedGoodsSkuCode(styleName, color, row.size);
+    if (!skuCode) {
+      throw new Error("Finished-goods SKU requires a style, color, and size; the combined code must not exceed 50 characters.");
+    }
+    return { ...row, skuCode };
+  });
+  const preparedRows = await Promise.all(rowsWithSkus.map(async (row) => {
+    const barcode = row.barcode && String(row.barcode).trim() ? String(row.barcode).trim() : await reserveNextFinishedGoodsBarcode(organizationId, transaction);
+    return { ...row, barcode };
+  }));
+
   await transaction.finishedGoodsSizeWise.createMany({
-    data: rows.map((row) => ({
+    data: preparedRows.map((row) => ({
       order_id: orderId,
       buyerSize: row.buyerSize ?? null,
       size: row.size ?? null,
+      sku_code: row.skuCode ?? null,
+      barcode: row.barcode ?? null,
       beforeExcessQty: row.beforeExcessQty !== undefined && row.beforeExcessQty !== null ? Number(row.beforeExcessQty) : null,
       excess: row.excess ? String(row.excess) : null,
       excessQty: Number(row.excessQty ?? 0),
@@ -1927,17 +1973,31 @@ export async function updateFinishedGoodsForOrder(
     throw new Error("Order not found");
   }
 
+  const calculatedRows = rows.length > 0 ? calculateFinishedGoodsRows(rows).rows : [];
+  const rowsWithSkus = calculatedRows.map((row) => {
+    const skuCode = buildFinishedGoodsSkuCode(order.styleName, order.colors, row.size);
+    if (!skuCode) {
+      throw new Error("Finished-goods SKU requires a style, color, and size; the combined code must not exceed 50 characters.");
+    }
+    return { ...row, skuCode };
+  });
+  const preparedRows = await Promise.all(rowsWithSkus.map(async (row) => {
+    const barcode = row.barcode && String(row.barcode).trim() ? String(row.barcode).trim() : await reserveNextFinishedGoodsBarcode(organizationId, database);
+    return { ...row, barcode };
+  }));
+
   await database.finishedGoodsSizeWise.deleteMany({
     where: { order_id: orderId },
   });
 
-  if (rows && rows.length > 0) {
-    const calculatedRows = calculateFinishedGoodsRows(rows).rows;
+  if (preparedRows.length > 0) {
     await database.finishedGoodsSizeWise.createMany({
-      data: calculatedRows.map((row) => ({
+      data: preparedRows.map((row) => ({
         order_id: orderId,
         buyerSize: row.buyerSize ?? null,
         size: row.size ?? null,
+        sku_code: row.skuCode ?? null,
+        barcode: row.barcode ?? null,
         beforeExcessQty: row.beforeExcessQty !== undefined && row.beforeExcessQty !== null ? Number(row.beforeExcessQty) : null,
         excess: row.excess ? String(row.excess) : null,
         excessQty: Number(row.excessQty),
@@ -1974,6 +2034,18 @@ export async function updateOrderWithDetails(
       await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
     }
 
+    const articleChanged = input.article !== undefined && input.article !== order.article;
+    const colorsChanged = input.colors !== undefined && input.colors !== order.colors;
+    const masterSnapshot = articleChanged || colorsChanged
+      ? (await resolveOrderMasterSnapshots(transaction, organizationId, [{
+          article: articleChanged ? input.article : order.article,
+          colors: input.colors !== undefined ? input.colors : order.colors,
+          existingMasterArticleId: order.master_article_id,
+          existingArticleCode: order.articleCode,
+          preserveExistingArticle: !articleChanged,
+        }]))[0]
+      : null;
+
     await lockOrganizationOrderQuantityLimit(transaction, organizationId);
 
     const changedFormFields: Record<string, unknown> = {};
@@ -2004,8 +2076,19 @@ export async function updateOrderWithDetails(
         ...(input.subCategory !== undefined && { subCategory: input.subCategory ?? null }),
         ...(input.season !== undefined && { season: input.season ?? null }),
         ...(input.article !== undefined && { article: input.article ?? null }),
+        ...(masterSnapshot && {
+          articleCode: masterSnapshot.articleCode,
+          master_article_id: masterSnapshot.master_article_id,
+          master_variant_id: masterSnapshot.master_variant_id,
+        }),
         ...(input.styleName !== undefined && { styleName: input.styleName ?? null }),
         ...(input.colors !== undefined && { colors: input.colors ?? null }),
+        ...((input.styleName !== undefined || input.colors !== undefined) && {
+          variantCode: buildPersistedOrderVariantCode(
+            input.styleName !== undefined ? input.styleName : order.styleName,
+            input.colors !== undefined ? input.colors : order.colors,
+          ),
+        }),
         ...(input.buyer !== undefined && { buyer: input.buyer ?? null }),
         ...(input.brand !== undefined && { brand: input.brand ?? null }),
         ...(input.sizeGroup !== undefined && { sizeGroup: input.sizeGroup ?? null }),
@@ -2081,6 +2164,7 @@ export async function getArticleOrderSummaries(
       article: true,
       styleName: true,
       colors: true,
+      variantCode: true,
       buyer: true,
       brand: true,
       sizeGroup: true,

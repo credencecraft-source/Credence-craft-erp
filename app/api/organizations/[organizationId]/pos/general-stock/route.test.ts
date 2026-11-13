@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   generalStockFindMany: vi.fn(),
   skuStockFindMany: vi.fn(),
   entityFindFirst: vi.fn(),
+  storageNodeFindFirst: vi.fn(),
+  masterLocationFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
@@ -19,6 +21,8 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     masterEntity: { findFirst: mocks.entityFindFirst },
+    storageNode: { findFirst: mocks.storageNodeFindFirst },
+    masterLocation: { findFirst: mocks.masterLocationFindFirst },
     finishedGoodsGeneralStockReceipt: { findMany: mocks.generalStockFindMany },
     finishedGoodsSkuStock: { findMany: mocks.skuStockFindMany },
   },
@@ -147,6 +151,7 @@ describe("POS General FG stock route", () => {
       where: { id: "entity-1", organization_id: "internal-org-1", is_active: true },
       select: { id: true },
     });
+
     expect(mocks.generalStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         organization_id: "internal-org-1",
@@ -157,6 +162,41 @@ describe("POS General FG stock route", () => {
     expect(mocks.skuStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ entity_id: "entity-1" }),
     }));
+  });
+
+  it("scopes POS stock lookup to the verified active Sub-sub-location", async () => {
+    mocks.storageNodeFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+      if (where.node_type === "SUB_STORE") return { id: "leaf-1", parent_node_id: "sub-1", parent_node_type: "WAREHOUSE" };
+      if (where.node_type === "WAREHOUSE") return { id: "sub-1", parent_node_id: "site-1", parent_node_type: "LOCATION_SITE" };
+      return { id: "site-1", entity_id: "entity-1", master_location_id: "location-1", parent_node_id: null, parent_node_type: null };
+    });
+    mocks.masterLocationFindFirst.mockResolvedValue({ id: "location-1", entity_id: "entity-1", division_id: "division-1" });
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?entityId=entity-1&divisionId=division-1&locationId=location-1&subLocationId=sub-1&subSubLocationId=leaf-1"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.storageNodeFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ organization_id: "internal-org-1", node_type: "SUB_STORE", is_active: true }),
+    }));
+    expect(mocks.generalStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ storage_node_id: "leaf-1" }),
+    }));
+    expect(mocks.skuStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ storage_node_id: "leaf-1" }),
+    }));
+  });
+
+  it("rejects an incomplete stock hierarchy before querying inventory", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?entityId=entity-1&subSubLocationId=leaf-1"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.generalStockFindMany).not.toHaveBeenCalled();
+    expect(mocks.skuStockFindMany).not.toHaveBeenCalled();
   });
 
   it("returns only the first 10 General stock records in alphabetical order", async () => {

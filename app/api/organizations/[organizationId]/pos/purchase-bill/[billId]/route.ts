@@ -36,11 +36,15 @@ export async function POST(
     if (typeof body.locationId !== "string" || !body.locationId.trim() || body.locationId.length > 128) {
       throw new Error("Select an active location before approving this purchase bill.");
     }
+    if (typeof body.storageNodeId !== "string" || !body.storageNodeId.trim() || body.storageNodeId.length > 128) {
+      throw new Error("Select an active Sub-sub-location before creating POS stock.");
+    }
     return NextResponse.json(await createPurchaseBillFinishedGoodsStock(
       organization.id,
       user.id,
       billId,
       body.locationId,
+      body.storageNodeId.trim(),
     ));
   } catch (error) {
     return NextResponse.json(

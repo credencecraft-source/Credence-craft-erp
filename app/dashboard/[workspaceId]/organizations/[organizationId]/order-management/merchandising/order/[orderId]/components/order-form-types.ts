@@ -41,6 +41,7 @@ export type OrderFormState = {
   season: string;
   styleName: string;
   colors: string;
+  variantCode: string | null;
   buyer: string;
   brand: string;
   sizeGroup: string;

@@ -44,6 +44,99 @@ describe("order QR print request contract", () => {
     })).toMatchObject({ success: false, error: "Select PCS or Bulk Qty." });
   });
 
+  it("accepts unique finished-goods sizes with bounded label quantities", () => {
+    expect(parseCreateOrderQrPrintRequestInput({
+      orderId: "order-1",
+      finishedGoodsRows: [
+        { finishedGoodsId: "fg-1", quantity: 120 },
+        { finishedGoodsId: "fg-2", quantity: 80 },
+      ],
+      templateId: "template-1",
+      requestType: "DOWNLOAD",
+    })).toMatchObject({
+      success: true,
+      data: {
+        orderId: "order-1",
+        finishedGoodsRows: [
+          { finishedGoodsId: "fg-1", quantity: 120 },
+          { finishedGoodsId: "fg-2", quantity: 80 },
+        ],
+      },
+    });
+    expect(parseCreateOrderQrPrintRequestInput({
+      orderId: "order-1",
+      finishedGoodsRows: [
+        { finishedGoodsId: "fg-1", quantity: 1 },
+        { finishedGoodsId: "fg-1", quantity: 1 },
+      ],
+      templateId: "template-1",
+      requestType: "PRINT",
+    })).toMatchObject({ success: false, error: "A finished-goods size cannot be selected more than once." });
+    expect(parseCreateOrderQrPrintRequestInput({
+      orderId: "order-1",
+      finishedGoodsRows: [{ finishedGoodsId: "fg-1", quantity: 10_001 }],
+      templateId: "template-1",
+      requestType: "PRINT",
+    })).toMatchObject({ success: false });
+  });
+
+  it("accepts per-size quantities for a bounded multi-order finished-goods barcode request", () => {
+    expect(parseCreateOrderQrPrintRequestInput({
+      finishedGoodsItems: [
+        { orderId: "order-1", finishedGoodsId: "fg-1", quantity: 120 },
+        { orderId: "order-2", finishedGoodsId: "fg-2", quantity: 80 },
+      ],
+      templateId: "fg-template-1",
+      requestType: "PRINT",
+    })).toMatchObject({
+      success: true,
+      data: {
+        finishedGoodsItems: [
+          { orderId: "order-1", finishedGoodsId: "fg-1", quantity: 120 },
+          { orderId: "order-2", finishedGoodsId: "fg-2", quantity: 80 },
+        ],
+        templateId: "fg-template-1",
+        requestType: "PRINT",
+      },
+    });
+    expect(parseCreateOrderQrPrintRequestInput({
+      finishedGoodsItems: [
+        { orderId: "order-1", finishedGoodsId: "fg-1", quantity: 120 },
+        { orderId: "order-1", finishedGoodsId: "fg-1", quantity: 80 },
+      ],
+      templateId: "fg-template-1",
+      requestType: "PRINT",
+    })).toMatchObject({ success: false, error: "A finished-goods size cannot be selected more than once." });
+    expect(parseCreateOrderQrPrintRequestInput({
+      finishedGoodsItems: [{ orderId: "order-1", finishedGoodsId: "fg-1", quantity: 1 }],
+      bulkOrders: [{ orderId: "order-2", quantity: 1 }],
+      templateId: "fg-template-1",
+      requestType: "PRINT",
+    })).toMatchObject({ success: false });
+    expect(parseCreateOrderQrPrintRequestInput({
+      finishedGoodsItems: [{ orderId: "order-1", finishedGoodsId: "fg-1", quantity: 5_001 }],
+      templateId: "fg-template-1",
+      requestType: "PRINT",
+    })).toMatchObject({ success: true });
+    expect(parseCreateOrderQrPrintRequestInput({
+      finishedGoodsItems: [
+        { orderId: "order-1", finishedGoodsId: "fg-1", quantity: 5_001 },
+        { orderId: "order-2", finishedGoodsId: "fg-2", quantity: 5_000 },
+      ],
+      templateId: "fg-template-1",
+      requestType: "PRINT",
+    })).toMatchObject({ success: false, error: "A QR request cannot exceed 10,000 labels." });
+    expect(parseCreateOrderQrPrintRequestInput({
+      finishedGoodsItems: [{ orderId: "order-1", finishedGoodsId: "fg-1", quantity: 2 }],
+      templateId: "fg-template-1",
+      requestType: "PRINT",
+      quantityMode: "PCS",
+    })).toMatchObject({
+      success: false,
+      error: "PCS requests must use quantity 1 for every selected finished-goods size.",
+    });
+  });
+
   it("accepts only positive safe whole-number bulk quantities", () => {
     expect(parseCreateOrderQrPrintRequestInput({
       orderId: "order-1",

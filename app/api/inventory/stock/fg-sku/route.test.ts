@@ -16,6 +16,10 @@ const mocks = vi.hoisted(() => ({
   generalReceiptFindMany: vi.fn(),
   allocatedReceiptFindFirst: vi.fn(),
   allocatedReceiptFindMany: vi.fn(),
+  storageNodeFindFirst: vi.fn(),
+  generalReceiptUpdateMany: vi.fn(),
+  skuUpdateMany: vi.fn(),
+  auditCreate: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
@@ -31,13 +35,17 @@ vi.mock("@/lib/database/prisma-client", () => ({
     workspaceUser: { findMany: mocks.workspaceUserFindMany },
     finishedGoodsSkuStock: { findFirst: mocks.skuFindFirst, findMany: mocks.skuFindMany, create: mocks.skuCreate, update: mocks.skuUpdate },
     procurementDocumentCounter: { upsert: mocks.counterUpsert },
-    masterLocation: { findFirst: mocks.locationFindFirst },
     finishedGoodsGeneralStockReceipt: { findFirst: mocks.generalReceiptFindFirst, findMany: mocks.generalReceiptFindMany },
     finishedGoodsAllocatedStockReceipt: { findFirst: mocks.allocatedReceiptFindFirst, findMany: mocks.allocatedReceiptFindMany },
+    storageNode: { findFirst: mocks.storageNodeFindFirst },
+    masterLocation: { findFirst: mocks.locationFindFirst },
   },
 }));
+vi.mock("@/lib/services/organizations/audit-event-service", () => ({
+  createAuditEvent: vi.fn((...args) => mocks.auditCreate(...args)),
+}));
 
-import { GET, POST, PUT } from "./route";
+import { GET, PATCH, POST, PUT } from "./route";
 
 function createReceipt(overrides: Record<string, unknown> = {}) {
   return {
@@ -96,7 +104,15 @@ describe("finished goods stock report", () => {
       finishedGoodsSkuStock: {
         findFirst: mocks.skuFindFirst,
         create: mocks.skuCreate,
+        updateMany: mocks.skuUpdateMany,
       },
+      finishedGoodsGeneralStockReceipt: {
+        findFirst: mocks.generalReceiptFindFirst,
+        updateMany: mocks.generalReceiptUpdateMany,
+      },
+      storageNode: { findFirst: mocks.storageNodeFindFirst },
+      masterLocation: { findFirst: mocks.locationFindFirst },
+      auditEvent: { create: mocks.auditCreate },
       procurementDocumentCounter: { upsert: mocks.counterUpsert },
     }));
     mocks.generalReceiptFindFirst.mockResolvedValue(null);
@@ -105,6 +121,15 @@ describe("finished goods stock report", () => {
     mocks.allocatedReceiptFindMany.mockResolvedValue([
       createReceipt({ id: "receipt-2", grn_line_id: "line-2" }),
     ]);
+    mocks.storageNodeFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+      if (where.node_type === "SUB_STORE") return { id: "leaf-1", parent_node_id: "sub-1", parent_node_type: "WAREHOUSE" };
+      if (where.node_type === "WAREHOUSE") return { id: "sub-1", parent_node_id: "site-1", parent_node_type: "LOCATION_SITE" };
+      return { id: "site-1", entity_id: "entity-1", master_location_id: "location-1", parent_node_id: null, parent_node_type: null };
+    });
+    mocks.locationFindFirst.mockResolvedValue({ id: "location-1", entity_id: "entity-1", division_id: "division-1" });
+    mocks.generalReceiptUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.skuUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.auditCreate.mockResolvedValue({});
     mocks.workspaceUserFindMany.mockResolvedValue([
       { id: "submitter-user-id", email: "submitter@example.test" },
       { id: "verifier-user-id", email: "verifier@example.test" },
@@ -386,6 +411,7 @@ describe("finished goods stock report", () => {
         location: {
           select: {
             location_name: true,
+            division_id: true,
             entity: { select: { entity_name: true } },
           },
         },
@@ -415,7 +441,10 @@ describe("finished goods stock report", () => {
     expect(response.status).toBe(200);
     expect(mocks.generalReceiptFindFirst).toHaveBeenCalledWith({
       where: { id: "receipt-1", organization_id: "internal-org-1" },
-      include: { location: { select: { location_name: true } } },
+      include: {
+        location: { select: { location_name: true, entity_id: true, division_id: true } },
+        storageNode: { select: { id: true, node_name: true } },
+      },
     });
     expect(body.record).toMatchObject({
       id: "receipt-1",
@@ -424,6 +453,66 @@ describe("finished goods stock report", () => {
       verified_by: "verifier@example.test",
       location: { location_name: "Finished Goods" },
     });
+  });
+
+  it("maps an unmapped general receipt only to an active leaf in its organization and location", async () => {
+    mocks.generalReceiptFindFirst.mockResolvedValue({
+      id: "receipt-1",
+      entity_id: "entity-1",
+      location_id: "location-1",
+      storage_node_id: null,
+    });
+
+    const response = await PATCH(new Request("http://localhost/api/inventory/stock/fg-sku", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        recordId: "receipt-1",
+        recordType: "general",
+        storageNodeId: "leaf-1",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("user-1", "internal-org-1", "ADJUST_FINISHED_GOODS_STOCK");
+    expect(mocks.generalReceiptFindFirst).toHaveBeenCalledWith({
+      where: { id: "receipt-1", organization_id: "internal-org-1", storage_node_id: null },
+      select: { id: true, entity_id: true, location_id: true },
+    });
+    expect(mocks.generalReceiptUpdateMany).toHaveBeenCalledWith({
+      where: { id: "receipt-1", organization_id: "internal-org-1", storage_node_id: null },
+      data: { storage_node_id: "leaf-1" },
+    });
+    expect(mocks.auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      organizationId: "internal-org-1",
+      action: "MAP_FINISHED_GOODS_POS_LOCATION",
+      entityId: "receipt-1",
+    }), expect.anything());
+  });
+
+  it("does not map a leaf from a different active hierarchy", async () => {
+    mocks.generalReceiptFindFirst.mockResolvedValue({
+      id: "receipt-1",
+      entity_id: "entity-1",
+      location_id: "location-1",
+      storage_node_id: null,
+    });
+    mocks.storageNodeFindFirst.mockResolvedValue(null);
+
+    const response = await PATCH(new Request("http://localhost/api/inventory/stock/fg-sku", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        recordId: "receipt-1",
+        recordType: "general",
+        storageNodeId: "other-org-leaf",
+      }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.generalReceiptUpdateMany).not.toHaveBeenCalled();
   });
 
   it("returns not found when the requested tenant-scoped record is absent", async () => {

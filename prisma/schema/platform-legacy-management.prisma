@@ -1,0 +1,16 @@
+model PlatformMigrationAuditLog {
+  id                String   @id @default(cuid())
+  task_id           String   @db.VarChar(120)
+  task_name         String   @db.VarChar(200)
+  organization_id   String
+  executed_by       String   @db.VarChar(255)
+  status            String   @db.VarChar(20)
+  records_processed Int      @default(0)
+  records_skipped   Int      @default(0)
+  error_details     Json?
+  created_at        DateTime @default(now())
+
+  @@index([organization_id, task_id, created_at(sort: Desc)])
+  @@index([executed_by, created_at(sort: Desc)])
+  @@map("platform_migration_audit_logs")
+}

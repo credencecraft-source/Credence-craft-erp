@@ -50,6 +50,12 @@ describe("organization permission registry", () => {
       "CREATE_POS_SALES_RETURNS",
       "SETTLE_POS_SALES_RETURN_REFUNDS",
     ]);
+    expect(getOrganizationRoutePermissionRequirements(
+      "pos",
+      "/dashboard/workspace/organizations/org/pos/counter/new",
+    )).toEqual(["VIEW_POS_COUNTERS"]);
+    expect(getLegacyOrganizationModuleAccessPermissions(["CREATE_POS_COUNTERS"]))
+      .toContain("ACCESS_MODULE_POS");
   });
 
   it("defines only workflow-supported CRUD controls for Order Management resources", () => {

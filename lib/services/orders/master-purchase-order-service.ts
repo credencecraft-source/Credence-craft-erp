@@ -29,7 +29,7 @@ function serializeMaster(order: Prisma.MasterPurchaseOrderGetPayload<{ include: 
   return {
     id: order.id,
     entityId: order.entity?.id ?? order.entity_id,
-    entityName: order.entity?.entity_name ?? "Missing Entity",
+    entityName: order.entity_name_snapshot ?? order.entity?.entity_name ?? "Missing Entity",
     masterPoNo: order.display_no ? `MGP-${order.display_no}` : order.master_po_no,
     masterPoInternalNo: order.master_po_no,
     status: order.status,
@@ -79,7 +79,7 @@ export async function createMasterPurchaseOrder(
   const created = await prisma.$transaction(async (transaction) => {
     const orders = await transaction.groupedPurchaseOrder.findMany({
       where: { id: { in: uniqueIds }, organization_id: organizationId, source_type: { in: ["VENDOR", "STOCK"] }, status: "PRICE_APPROVED" },
-      include: { entity: { select: { id: true, is_active: true } }, vendor: { select: { id: true, vendor: true } }, lines: true, masterGroupSource: { select: { id: true } } },
+      include: { entity: { select: { id: true, entity_name: true, is_active: true } }, vendor: { select: { id: true, vendor: true } }, lines: true, masterGroupSource: { select: { id: true } } },
     });
     if (orders.length !== uniqueIds.length) throw new Error("One or more grouped purchase orders are unavailable for master grouping.");
     if (orders.some((order) => order.masterGroupSource)) throw new Error("One or more grouped purchase orders are already master grouped.");
@@ -132,6 +132,7 @@ export async function createMasterPurchaseOrder(
       data: {
         organization_id: organizationId,
         entity_id: entityId,
+        entity_name_snapshot: first.entity?.entity_name ?? null,
         vendor_id: first.vendor_id,
         master_po_no: `MPO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
         display_no: displayNo,

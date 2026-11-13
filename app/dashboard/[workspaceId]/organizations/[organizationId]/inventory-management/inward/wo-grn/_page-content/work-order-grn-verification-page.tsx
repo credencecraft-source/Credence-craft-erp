@@ -46,6 +46,7 @@ type WorkOrderGrnRecord = {
   createdAt: string;
   workOrder: {
     id: string;
+    entityId: string | null;
     workOrderNo: string;
     orderNo: string;
     totalQty: number;
@@ -53,7 +54,7 @@ type WorkOrderGrnRecord = {
     article: string | null;
     styleName: string | null;
     brand: string | null;
-    locations: Array<{ id: string; location_name: string }>;
+    locations: Array<{ id: string; location_name: string; division_id: string }>;
   };
   lines: WorkOrderGrnLine[];
 };
@@ -62,12 +63,16 @@ type VerificationInput = {
   actualReceivedQuantity: string;
   approvedQuantity: string;
   locationId: string;
+  subLocationId: string;
+  storageNodeId: string;
 };
+type StorageOption = { id: string; label: string };
 
 type ReportRecord = {
   id: string;
   line: WorkOrderGrnLine;
   grnId: string;
+  workOrder: { entityId?: string | null };
   size: string;
   workOrderNo: string;
   orderNo: string;
@@ -77,7 +82,7 @@ type ReportRecord = {
   orderedQuantity: number;
   receivedQuantity: number;
   status: string;
-  locations: Array<{ id: string; location_name: string }>;
+  locations: Array<{ id: string; location_name: string; division_id?: string }>;
 };
 
 type ReportField =
@@ -125,6 +130,12 @@ export default function WorkOrderGrnVerificationPage() {
   const [error, setError] = useState("");
   const [verificationError, setVerificationError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [subLocationOptions, setSubLocationOptions] = useState<StorageOption[]>([]);
+  const [subSubLocationOptions, setSubSubLocationOptions] = useState<StorageOption[]>([]);
+  const [subLocationLoading, setSubLocationLoading] = useState(false);
+  const [subSubLocationLoading, setSubSubLocationLoading] = useState(false);
+  const [storageLocationError, setStorageLocationError] = useState("");
+  const [storageLocationRetry, setStorageLocationRetry] = useState(0);
 
   const loadPendingGrns = useCallback(async (cursor?: string) => {
     if (cursor) setLoadingMore(true);
@@ -163,6 +174,8 @@ export default function WorkOrderGrnVerificationPage() {
       actualReceivedQuantity: String(line.receivedQuantity),
       approvedQuantity: String(line.receivedQuantity),
       locationId: activeTask.locations.length === 1 ? activeTask.locations[0].id : "",
+      subLocationId: "",
+      storageNodeId: "",
     };
     const actual = parseQuantity(value.actualReceivedQuantity);
     const approved = parseQuantity(value.approvedQuantity);
@@ -201,6 +214,8 @@ export default function WorkOrderGrnVerificationPage() {
         actualReceivedQuantity: String(task.line.receivedQuantity),
         approvedQuantity: String(task.line.receivedQuantity),
         locationId: task.locations.length === 1 ? task.locations[0].id : "",
+        subLocationId: "",
+        storageNodeId: "",
       },
     });
   }
@@ -210,7 +225,7 @@ export default function WorkOrderGrnVerificationPage() {
     setVerificationInputs((current) => ({
       ...current,
       [lineId]: {
-        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0", locationId: "" }),
+        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0", locationId: "", subLocationId: "", storageNodeId: "" }),
         [field]: value,
       },
     }));
@@ -220,8 +235,31 @@ export default function WorkOrderGrnVerificationPage() {
     setVerificationInputs((current) => ({
       ...current,
       [lineId]: {
-        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0", locationId: "" }),
+        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0", locationId: "", subLocationId: "", storageNodeId: "" }),
         locationId,
+        subLocationId: "",
+        storageNodeId: "",
+      },
+    }));
+  }
+
+  function updateVerificationSubLocation(lineId: string, subLocationId: string) {
+    setVerificationInputs((current) => ({
+      ...current,
+      [lineId]: {
+        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0", locationId: "", subLocationId: "", storageNodeId: "" }),
+        subLocationId,
+        storageNodeId: "",
+      },
+    }));
+  }
+
+  function updateVerificationSubSubLocation(lineId: string, storageNodeId: string) {
+    setVerificationInputs((current) => ({
+      ...current,
+      [lineId]: {
+        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0", locationId: "", subLocationId: "", storageNodeId: "" }),
+        storageNodeId,
       },
     }));
   }
@@ -229,7 +267,76 @@ export default function WorkOrderGrnVerificationPage() {
   const hasMissingStockLocation = modalRows.some(({ value, approved }) =>
     approved !== null && approved > 0 && !value.locationId,
   );
-  const hasInvalidSplit = modalRows.some((row) => row.validationError !== "") || hasMissingStockLocation;
+  const hasMissingPosStorageLocation = modalRows.some(({ value, bookingAllocations }) =>
+    (bookingAllocations?.generalInventoryQuantity ?? 0) > 0 && !value.storageNodeId,
+  );
+  const hasInvalidSplit = modalRows.some((row) => row.validationError !== "") || hasMissingStockLocation || hasMissingPosStorageLocation;
+  const activeVerificationInput = activeTask ? verificationInputs[activeTask.line.id] : null;
+  const activeLocation = activeTask?.locations.find((item) => item.id === activeVerificationInput?.locationId);
+  const activeEntityId = activeTask?.workOrder.entityId ?? "";
+  const activeDivisionId = activeLocation?.division_id ?? "";
+  const activeLocationId = activeLocation?.id ?? "";
+  const activeSubLocationId = activeVerificationInput?.subLocationId ?? "";
+
+  useEffect(() => {
+    if (!activeEntityId || !activeLocationId || !activeDivisionId) {
+      setSubLocationOptions([]);
+      setSubSubLocationOptions([]);
+      setSubLocationLoading(false);
+      setSubSubLocationLoading(false);
+      setStorageLocationError("");
+      return;
+    }
+    const controller = new AbortController();
+    setSubLocationOptions([]);
+    setSubLocationLoading(true);
+    setStorageLocationError("");
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/entities/${encodeURIComponent(activeEntityId)}/divisions/${encodeURIComponent(activeDivisionId)}/locations/${encodeURIComponent(activeLocationId)}/sub-locations`,
+      { cache: "no-store", signal: controller.signal },
+    )
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; subLocations?: Array<{ id?: unknown; node_name?: unknown; is_active?: unknown }> };
+        if (!response.ok || !Array.isArray(data.subLocations)) throw new Error(data.error || "Unable to load active Sub-locations.");
+        return data.subLocations
+          .filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.node_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.node_name as string }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setSubLocationOptions(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setStorageLocationError(cause instanceof Error ? cause.message : "Unable to load active Sub-locations.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setSubLocationLoading(false); });
+    return () => controller.abort();
+  }, [activeDivisionId, activeEntityId, activeLocationId, organizationId, storageLocationRetry]);
+
+  useEffect(() => {
+    if (!activeEntityId || !activeDivisionId || !activeLocationId || !activeSubLocationId) {
+      setSubSubLocationOptions([]);
+      setSubSubLocationLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setSubSubLocationOptions([]);
+    setSubSubLocationLoading(true);
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/entities/${encodeURIComponent(activeEntityId)}/divisions/${encodeURIComponent(activeDivisionId)}/locations/${encodeURIComponent(activeLocationId)}/sub-locations/${encodeURIComponent(activeSubLocationId)}/sub-sub-locations`,
+      { cache: "no-store", signal: controller.signal },
+    )
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; subSubLocations?: Array<{ id?: unknown; node_name?: unknown; is_active?: unknown }> };
+        if (!response.ok || !Array.isArray(data.subSubLocations)) throw new Error(data.error || "Unable to load active Sub-sub-locations.");
+        return data.subSubLocations
+          .filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.node_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.node_name as string }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setSubSubLocationOptions(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setStorageLocationError(cause instanceof Error ? cause.message : "Unable to load active Sub-sub-locations.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setSubSubLocationLoading(false); });
+    return () => controller.abort();
+  }, [activeDivisionId, activeEntityId, activeLocationId, activeSubLocationId, organizationId, storageLocationRetry]);
 
   async function submitVerification() {
     if (!activeTask || hasInvalidSplit || savingVerification) return;
@@ -251,6 +358,7 @@ export default function WorkOrderGrnVerificationPage() {
             actualReceivedQuantity,
             approvedQuantity,
             locationId: value.locationId,
+            storageNodeId: value.storageNodeId,
           }),
         },
       );
@@ -370,6 +478,40 @@ export default function WorkOrderGrnVerificationPage() {
                 ...activeTask.locations.map((location) => ({ value: location.id, label: location.location_name })),
               ]}
             />
+            {(modalRows[0]?.bookingAllocations?.generalInventoryQuantity ?? 0) > 0 ? (
+              <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+                <Select
+                  label="Sub-location"
+                  value={verificationInputs[activeTask.line.id]?.subLocationId ?? ""}
+                  disabled={subLocationLoading || !activeTask.workOrder.entityId || !verificationInputs[activeTask.line.id]?.locationId}
+                  onChange={(event) => updateVerificationSubLocation(activeTask.line.id, event.target.value)}
+                  options={[
+                    { value: "", label: subLocationLoading ? "Loading Sub-locations…" : subLocationOptions.length ? "Select Sub-location" : "No active Sub-locations" },
+                    ...subLocationOptions.map((option) => ({ value: option.id, label: option.label })),
+                  ]}
+                  required
+                />
+                <Select
+                  label="Sub-sub-location (POS issue)"
+                  value={verificationInputs[activeTask.line.id]?.storageNodeId ?? ""}
+                  disabled={subSubLocationLoading || !verificationInputs[activeTask.line.id]?.subLocationId}
+                  onChange={(event) => updateVerificationSubSubLocation(activeTask.line.id, event.target.value)}
+                  options={[
+                    { value: "", label: subSubLocationLoading ? "Loading Sub-sub-locations…" : subSubLocationOptions.length ? "Select POS issue location" : "No active Sub-sub-locations" },
+                    ...subSubLocationOptions.map((option) => ({ value: option.id, label: option.label })),
+                  ]}
+                  required
+                />
+              </div>
+            ) : null}
+            {storageLocationError ? (
+              <p role="alert" className="text-sm font-medium text-[var(--erp-danger)]">
+                {storageLocationError}{" "}
+                <Button type="button" variant="secondary" size="sm" onClick={() => setStorageLocationRetry((value) => value + 1)}>
+                  Retry
+                </Button>
+              </p>
+            ) : null}
             {activeTask.locations.length === 0 ? (
               <p role="alert" className="text-sm text-slate-700">An active location must be configured under this order&apos;s entity before approved stock can be posted.</p>
             ) : null}
@@ -472,6 +614,7 @@ export default function WorkOrderGrnVerificationPage() {
                   <p key={line.id}>{line.size || line.buyerSize || "Size"}: {validationError}</p>
                 ))}
                 {hasMissingStockLocation ? <p>Select a finished-goods location to post the approved quantity.</p> : null}
+                {hasMissingPosStorageLocation ? <p>Select an active Sub-sub-location for the general POS stock quantity.</p> : null}
               </div>
             ) : null}
             <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--erp-border)] pt-4">

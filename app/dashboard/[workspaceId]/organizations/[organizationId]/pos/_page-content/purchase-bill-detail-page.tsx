@@ -46,6 +46,7 @@ type Bill = {
 };
 
 type LocationLookupOption = { id: string; label: string };
+type StockLeafOption = { id: string; label: string };
 
 function isLocationLookupOption(value: unknown): value is LocationLookupOption {
   return typeof value === "object" && value !== null
@@ -66,6 +67,11 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
   const [showLocationPrompt, setShowLocationPrompt] = useState(false);
   const [locations, setLocations] = useState<LocationLookupOption[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState("");
+  const [stockLeafOptions, setStockLeafOptions] = useState<StockLeafOption[]>([]);
+  const [selectedStorageNodeId, setSelectedStorageNodeId] = useState("");
+  const [loadingStockLeaves, setLoadingStockLeaves] = useState(false);
+  const [stockLeafError, setStockLeafError] = useState("");
+  const [stockLeafRetry, setStockLeafRetry] = useState(0);
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [locationLookupError, setLocationLookupError] = useState("");
   const locationRequest = useRef<AbortController | null>(null);
@@ -134,6 +140,35 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
   useEffect(() => () => locationRequest.current?.abort(), []);
 
   useEffect(() => {
+    if (!showLocationPrompt || !selectedLocationId) return;
+    const controller = new AbortController();
+    const query = new URLSearchParams({ nodeType: "SUB_STORE", limit: "500" });
+    if (billEntityId) query.set("siteEntityId", billEntityId);
+    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/storage-nodes?${query}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json() as {
+          error?: string;
+          nodes?: Array<{ id?: unknown; is_active?: unknown; fields?: Record<string, unknown> }>;
+        };
+        if (!response.ok || !Array.isArray(data.nodes)) throw new Error(data.error || "Unable to load active POS issue locations.");
+        return data.nodes
+          .filter((node) => node.is_active === true && typeof node.id === "string"
+            && node.fields?.site_location_id === selectedLocationId
+            && typeof node.fields.path === "string")
+          .map((node) => ({ id: node.id as string, label: node.fields?.path as string }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setStockLeafOptions(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setStockLeafError(cause instanceof Error ? cause.message : "Unable to load active POS issue locations.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoadingStockLeaves(false); });
+    return () => controller.abort();
+  }, [billEntityId, organizationId, selectedLocationId, showLocationPrompt, stockLeafRetry]);
+
+  useEffect(() => {
     if (!showLocationPrompt) return;
     const refreshAfterLocationCreate = () => {
       if (!locationMasterTabOpened.current) return;
@@ -147,6 +182,10 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
   const openLocationPrompt = () => {
     setError("");
     setLocationLookupError("");
+    setSelectedStorageNodeId("");
+    setStockLeafOptions([]);
+    setStockLeafError("");
+    setLoadingStockLeaves(Boolean(selectedLocationId));
     setShowLocationPrompt(true);
     void loadActiveLocations();
   };
@@ -165,8 +204,8 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
   }, [bill]);
 
   const createStock = async () => {
-    if (!bill || !selectedLocationId) {
-      setLocationLookupError("Select an active location before approving this purchase bill.");
+    if (!bill || !selectedLocationId || !selectedStorageNodeId) {
+      setLocationLookupError("Select an active location and Sub-sub-location before creating POS stock.");
       return;
     }
     setWorking(true); setError(""); setMessage("");
@@ -174,7 +213,11 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
       const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill/${encodeURIComponent(billId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "create-stock", locationId: selectedLocationId }),
+        body: JSON.stringify({
+          action: "create-stock",
+          locationId: selectedLocationId,
+          storageNodeId: selectedStorageNodeId,
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Unable to create Finished Goods stock.");
@@ -228,6 +271,10 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
               disabled={loadingLocations || working}
               onChange={(event) => {
                 setSelectedLocationId(event.target.value);
+                setSelectedStorageNodeId("");
+                setStockLeafOptions([]);
+                setStockLeafError("");
+                setLoadingStockLeaves(Boolean(event.target.value));
                 setLocationLookupError("");
               }}
             >
@@ -239,6 +286,30 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
               ))}
             </Select>
           </div>
+          <Select
+            label="POS issue Sub-sub-location"
+            value={selectedStorageNodeId}
+            disabled={!selectedLocationId || loadingStockLeaves || working}
+            onChange={(event) => setSelectedStorageNodeId(event.target.value)}
+            required
+            options={[
+              { value: "", label: loadingStockLeaves ? "Loading issue locations…" : !selectedLocationId ? "Select Location first" : stockLeafOptions.length ? "Select Sub-sub-location" : "No active Sub-sub-locations" },
+              ...stockLeafOptions.map((option) => ({ value: option.id, label: option.label })),
+            ]}
+          />
+          {stockLeafError ? (
+            <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">
+              {stockLeafError}{" "}
+              <Button type="button" variant="secondary" size="sm" onClick={() => setStockLeafRetry((value) => value + 1)}>
+                Retry
+              </Button>
+            </p>
+          ) : null}
+          {!loadingStockLeaves && !stockLeafError && selectedLocationId && stockLeafOptions.length === 0 ? (
+            <p role="status" className="text-sm text-[var(--erp-muted)]">
+              Create an active Sub-sub-location beneath this Location before receiving POS-sellable stock.
+            </p>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
@@ -270,7 +341,7 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
         ) : null}
         <div className="flex justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
           <Button type="button" variant="secondary" disabled={working} onClick={() => setShowLocationPrompt(false)}>Cancel</Button>
-          <Button type="button" disabled={working || loadingLocations || !selectedLocationId} onClick={() => void createStock()}>
+          <Button type="button" disabled={working || loadingLocations || loadingStockLeaves || !selectedLocationId || !selectedStorageNodeId} onClick={() => void createStock()}>
             {working ? "Creating stock..." : "Approve & Create Stock"}
           </Button>
         </div>

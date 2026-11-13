@@ -674,7 +674,7 @@ describe("general purchase-order request workflow", () => {
       category: "Fabric",
       sub_category: "Woven",
       stock_uom: "PCS",
-      entity: { organization_id: "org-1", is_active: true },
+      entity: { organization_id: "org-1", is_active: true, entity_name: "Factory" },
       vendor: { organization_id: "org-1", is_active: true, gst_number: null, registered_state: "KARNATAKA", registered_state_id: null },
       rawMaterial: { organization_id: "org-1", is_active: true },
       requests: [{ id: "request-1" }],
@@ -693,6 +693,7 @@ describe("general purchase-order request workflow", () => {
     expect(createdData).toMatchObject({
       organization_id: "org-1",
       entity_id: "entity-1",
+      entity_name_snapshot: "Factory",
       vendor_id: "vendor-1",
       procurement_type: "GENERAL",
       is_asset_purchase: true,
@@ -705,6 +706,7 @@ describe("general purchase-order request workflow", () => {
       })] },
     });
     expect(createdData.lines.create[0].total.toString()).toBe("20");
+    expect(createdData.grand_total.toFixed(2)).toBe("21.00");
     expect(createdData.lines.create[0].tax_type).toBe("CGST_SGST");
     expect(mocks.entityGstRegistrationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ organization_id: "org-1", entity_id: "entity-1", is_active: true }),

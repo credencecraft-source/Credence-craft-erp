@@ -3,8 +3,16 @@ import { Prisma } from "@prisma/client";
 
 const prismaCounterMock = vi.hoisted(() => ({
   upsert: vi.fn(),
+  procurementCounterUpsert: vi.fn(),
   orderFindFirst: vi.fn(),
   orderFindMany: vi.fn(),
+  orderCreate: vi.fn(),
+  orderUpdate: vi.fn(),
+  formRestriction: vi.fn(),
+  validateMonthlyFormLimits: vi.fn(),
+  validateRestrictedFormFields: vi.fn(),
+  orderQuantityLimitLock: vi.fn(),
+  requireActiveEntity: vi.fn(),
   bookingFindMany: vi.fn(),
   workOrderFindMany: vi.fn(),
   factoryGrnFindMany: vi.fn(),
@@ -16,16 +24,45 @@ const prismaCounterMock = vi.hoisted(() => ({
   bomItemFindMany: vi.fn(),
   sizeGroupFindMany: vi.fn(),
   sizeGroupSizeFindMany: vi.fn(),
+  finishedGoodsSizeWiseFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({
   createAuditEvent: prismaCounterMock.createAuditEvent,
 }));
 
+vi.mock("@/lib/services/organizations/organization-entity-service", () => ({
+  requireActiveOrganizationEntity: prismaCounterMock.requireActiveEntity,
+}));
+
+vi.mock("@/lib/services/platform/segment-form-restriction-service", () => ({
+  getEffectiveSegmentFormRestriction: prismaCounterMock.formRestriction,
+  validateMonthlyFormLimits: prismaCounterMock.validateMonthlyFormLimits,
+  validateRestrictedFormFields: prismaCounterMock.validateRestrictedFormFields,
+}));
+
+vi.mock("@/lib/services/platform/order-quantity-limit-service", () => ({
+  lockOrganizationOrderQuantityLimit: prismaCounterMock.orderQuantityLimitLock,
+}));
+
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
+    $transaction: vi.fn(async (callback: (transaction: unknown) => Promise<unknown>) => callback({
+      organizationOrderCounter: { upsert: prismaCounterMock.upsert },
+      procurementDocumentCounter: { upsert: prismaCounterMock.procurementCounterUpsert },
+      merchandisingOrder: {
+        findFirst: prismaCounterMock.orderFindFirst,
+        create: prismaCounterMock.orderCreate,
+        update: prismaCounterMock.orderUpdate,
+      },
+      masterArticle: { findMany: prismaCounterMock.articleFindMany },
+      masterArticleVariant: { findMany: prismaCounterMock.articleVariantFindMany },
+    })),
     organizationOrderCounter: {
       upsert: prismaCounterMock.upsert,
+    },
+    procurementDocumentCounter: {
+      upsert: prismaCounterMock.procurementCounterUpsert,
     },
     merchandisingOrder: {
       findFirst: prismaCounterMock.orderFindFirst,
@@ -53,19 +90,32 @@ vi.mock("@/lib/database/prisma-client", () => ({
     billOfMaterialItem: {
       findMany: prismaCounterMock.bomItemFindMany,
     },
+    finishedGoodsSizeWise: {
+      findFirst: prismaCounterMock.finishedGoodsSizeWiseFindFirst,
+    },
+    organizationDummyDataBatch: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
 import {
   deleteOrders,
+  createOrder,
   getArticleOrderSummaries,
   getOrderCoreById,
   getOrderDetailSection,
   getOrderById,
   listBomItemsPage,
   listOrdersPage,
+  reserveNextFinishedGoodsBarcode,
+  reserveNextOrderBarcode,
   reserveNextOrderNumber,
   reserveNextOrderNumbers,
+  reserveNextOrderSkuCode,
+  updateFinishedGoodsForOrder,
+  resolveOrderMasterSnapshots,
+  updateOrderWithDetails,
 } from "./order-service";
 
 describe("reserveNextOrderNumber", () => {
@@ -105,6 +155,10 @@ describe("reserveNextOrderNumber", () => {
       const order = await getOrderById("order-1", "org-1");
 
       expect(order?.finishedGoods.map((row) => row.size)).toEqual(["XL", "S", "M"]);
+      expect(prismaCounterMock.orderFindFirst.mock.calls[0][0].select.finishedGoods.select).toMatchObject({
+        sku_code: true,
+        barcode: true,
+      });
     });
 
     it("loads finished goods only when requesting that order section", async () => {
@@ -130,7 +184,12 @@ describe("reserveNextOrderNumber", () => {
       expect(prismaCounterMock.orderFindFirst).toHaveBeenCalledWith(expect.objectContaining({
         where: { id: "order-1", organization_id: "org-1" },
         select: expect.objectContaining({
-          finishedGoods: expect.any(Object),
+          finishedGoods: {
+            select: expect.objectContaining({
+              sku_code: true,
+              barcode: true,
+            }),
+          },
         }),
       }));
       expect(prismaCounterMock.orderFindFirst.mock.calls[0][0].select).not.toHaveProperty("bomItems");
@@ -148,6 +207,7 @@ describe("reserveNextOrderNumber", () => {
     expect(query.select).not.toHaveProperty("finishedGoods");
     expect(query.select).not.toHaveProperty("bomItems");
     expect(query.select).not.toHaveProperty("processSteps");
+    expect(query.select.variantCode).toBe(true);
   });
 
   it("falls back to the base prisma client when a closed transaction is reused", async () => {
@@ -162,6 +222,265 @@ describe("reserveNextOrderNumber", () => {
     await expect(reserveNextOrderNumber("org-123", staleTransaction)).resolves.toBe("OD-7");
     expect(staleTransaction.organizationOrderCounter.upsert).toHaveBeenCalledTimes(1);
     expect(prismaCounterMock.upsert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reserveNextOrderIdentifiers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates the next unique order SKU and barcode for a new merchandising order", async () => {
+    prismaCounterMock.procurementCounterUpsert
+      .mockResolvedValueOnce({ current_value: 42 })
+      .mockResolvedValueOnce({ current_value: 15 });
+    prismaCounterMock.orderFindFirst.mockResolvedValue(null);
+
+    await expect(reserveNextOrderSkuCode("org-123")).resolves.toBe("SKU-000042");
+    await expect(reserveNextOrderBarcode("org-123")).resolves.toBe("BC-00000015");
+
+    expect(prismaCounterMock.procurementCounterUpsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: { organization_id_document_type: { organization_id: "org-123", document_type: "MERCH_ORDER_SKU" } },
+    }));
+    expect(prismaCounterMock.procurementCounterUpsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: { organization_id_document_type: { organization_id: "org-123", document_type: "MERCH_ORDER_BARCODE" } },
+    }));
+  });
+
+  it("reserves the next unique finished-goods barcode marker", async () => {
+    prismaCounterMock.procurementCounterUpsert.mockResolvedValueOnce({ current_value: 11 });
+    prismaCounterMock.finishedGoodsSizeWiseFindFirst.mockResolvedValue(null);
+
+    await expect(reserveNextFinishedGoodsBarcode("org-123")).resolves.toBe("FGBC-00000011");
+
+    expect(prismaCounterMock.procurementCounterUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id_document_type: { organization_id: "org-123", document_type: "MERCH_FG_BARCODE" } },
+    }));
+  });
+});
+
+describe("resolveOrderMasterSnapshots", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("resolves order article and variant references within the organization", async () => {
+    prismaCounterMock.articleFindMany.mockResolvedValue([{
+      id: "article-1",
+      article: "Jacket",
+      article_code: "AR-1",
+    }]);
+    prismaCounterMock.articleVariantFindMany.mockResolvedValue([{
+      id: "variant-1",
+      article_id: "article-1",
+      color: { colors: "Navy Blue" },
+    }]);
+    const database = {
+      masterArticle: { findMany: prismaCounterMock.articleFindMany },
+      masterArticleVariant: { findMany: prismaCounterMock.articleVariantFindMany },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(resolveOrderMasterSnapshots(database, "org-1", [{
+      article: "JACKET",
+      colors: "NAVY BLUE",
+    }])).resolves.toEqual([{
+      articleCode: "AR-1",
+      master_article_id: "article-1",
+      master_variant_id: "variant-1",
+    }]);
+    expect(prismaCounterMock.articleFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ organization_id: "org-1" }),
+    }));
+    expect(prismaCounterMock.articleVariantFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ organization_id: "org-1" }),
+    }));
+  });
+
+  it("rejects ambiguous case-insensitive article matches rather than persisting the wrong identity", async () => {
+    prismaCounterMock.articleFindMany.mockResolvedValue([
+      { id: "article-1", article: "Jacket", article_code: "AR-1" },
+      { id: "article-2", article: "JACKET", article_code: "AR-2" },
+    ]);
+    const database = {
+      masterArticle: { findMany: prismaCounterMock.articleFindMany },
+      masterArticleVariant: { findMany: prismaCounterMock.articleVariantFindMany },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(resolveOrderMasterSnapshots(database, "org-1", [{
+      article: "Jacket",
+      colors: "Navy Blue",
+    }])).rejects.toThrow("matches more than one master record");
+    expect(prismaCounterMock.articleVariantFindMany).not.toHaveBeenCalled();
+  });
+
+  it("preserves an existing article snapshot when only the order colour changes", async () => {
+    prismaCounterMock.articleVariantFindMany.mockResolvedValue([{
+      id: "variant-2",
+      article_id: "article-1",
+      color: { colors: "Red" },
+    }]);
+    const database = {
+      masterArticle: { findMany: prismaCounterMock.articleFindMany },
+      masterArticleVariant: { findMany: prismaCounterMock.articleVariantFindMany },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(resolveOrderMasterSnapshots(database, "org-1", [{
+      article: "Old article label",
+      colors: "Red",
+      existingMasterArticleId: "article-1",
+      existingArticleCode: "AR-1",
+      preserveExistingArticle: true,
+    }])).resolves.toEqual([{
+      articleCode: "AR-1",
+      master_article_id: "article-1",
+      master_variant_id: "variant-2",
+    }]);
+    expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("order snapshot writes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("persists article and variant snapshots when creating an order", async () => {
+    prismaCounterMock.formRestriction.mockResolvedValue(null);
+    prismaCounterMock.orderQuantityLimitLock.mockResolvedValue(undefined);
+    prismaCounterMock.validateMonthlyFormLimits.mockResolvedValue(undefined);
+    prismaCounterMock.validateRestrictedFormFields.mockResolvedValue(undefined);
+    prismaCounterMock.requireActiveEntity.mockResolvedValue({
+      id: "entity-1",
+      entity_name: "Entity",
+    });
+    prismaCounterMock.upsert.mockResolvedValue({ current_value: 1 });
+    prismaCounterMock.procurementCounterUpsert.mockResolvedValue({ current_value: 1 });
+    prismaCounterMock.orderFindFirst.mockResolvedValue(null);
+    prismaCounterMock.articleFindMany.mockResolvedValue([{
+      id: "article-1",
+      article: "Jacket",
+      article_code: "AR-1",
+    }]);
+    prismaCounterMock.articleVariantFindMany.mockResolvedValue([{
+      id: "variant-1",
+      article_id: "article-1",
+      color: { colors: "Navy Blue" },
+    }]);
+    prismaCounterMock.orderCreate.mockResolvedValue({
+      id: "order-1",
+      orderNo: "OD-1",
+      finalStatus: "Draft",
+      deliveryDate: null,
+    });
+
+    await createOrder("org-1", {
+      entityName: "Entity",
+      article: "Jacket",
+      styleName: "Oxford Shirt",
+      colors: "Navy Blue",
+    }, "user-1");
+
+    expect(prismaCounterMock.orderCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: "org-1",
+        articleCode: "AR-1",
+        master_article_id: "article-1",
+        master_variant_id: "variant-1",
+        variantCode: "OXFORD-SHIRT-NAVY-BLUE",
+      }),
+    });
+  });
+
+  it("updates the stored variant reference without refreshing the article snapshot", async () => {
+    const existingOrder = {
+      id: "order-1",
+      orderNo: "OD-1",
+      entity_id: "entity-1",
+      entityName: "Entity",
+      sourceStatus: "DEMO",
+      article: "Old article label",
+      articleCode: "AR-1",
+      master_article_id: "article-1",
+      master_variant_id: "variant-1",
+      styleName: "Classic",
+      colors: "Blue",
+      orderQty: 10,
+      finalStatus: "Draft",
+    };
+    prismaCounterMock.orderFindFirst.mockResolvedValue(existingOrder);
+    prismaCounterMock.orderUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ ...existingOrder, ...data }),
+    );
+    prismaCounterMock.requireActiveEntity.mockResolvedValue({
+      id: "entity-1",
+      entity_name: "Entity",
+    });
+    prismaCounterMock.orderQuantityLimitLock.mockResolvedValue(undefined);
+    prismaCounterMock.validateMonthlyFormLimits.mockResolvedValue(undefined);
+    prismaCounterMock.validateRestrictedFormFields.mockResolvedValue(undefined);
+    prismaCounterMock.articleVariantFindMany.mockResolvedValue([{
+      id: "variant-2",
+      article_id: "article-1",
+      color: { colors: "Red" },
+    }]);
+
+    await updateOrderWithDetails("order-1", "org-1", { colors: "Red" }, "user-1");
+
+    expect(prismaCounterMock.orderUpdate).toHaveBeenCalledWith({
+      where: { id: "order-1" },
+      data: expect.objectContaining({
+        articleCode: "AR-1",
+        master_article_id: "article-1",
+        master_variant_id: "variant-2",
+        variantCode: "CLASSIC-RED",
+      }),
+    });
+    expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateFinishedGoodsForOrder SKU identity", () => {
+  it("derives each SKU from style, color, and size instead of trusting a submitted counter SKU", async () => {
+    const database = {
+      merchandisingOrder: {
+        findFirst: vi.fn().mockResolvedValue({ styleName: "Classic Tee", colors: "Black" }),
+      },
+      finishedGoodsSizeWise: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    await updateFinishedGoodsForOrder(
+      "order-1",
+      "org-1",
+      [{ size: "L", skuCode: "FGSKU-000007", barcode: "FGBC-00000011", totalQty: 1 }],
+      database,
+    );
+
+    expect(database.finishedGoodsSizeWise.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({
+        sku_code: "CLASSIC-TEE-BLACK-L",
+        barcode: "FGBC-00000011",
+      })],
+    });
+  });
+
+  it("validates the SKU source before deleting saved finished-goods rows", async () => {
+    const deleteMany = vi.fn();
+    const database = {
+      merchandisingOrder: {
+        findFirst: vi.fn().mockResolvedValue({ styleName: "Classic Tee", colors: "" }),
+      },
+      finishedGoodsSizeWise: {
+        deleteMany,
+        createMany: vi.fn(),
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(updateFinishedGoodsForOrder("order-1", "org-1", [{ size: "L" }], database))
+      .rejects.toThrow("Finished-goods SKU requires a style, color, and size");
+    expect(deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -328,8 +647,6 @@ describe("reserveNextOrderNumbers", () => {
 
     it("applies server-side text search and column filters within the organization", async () => {
       prismaCounterMock.orderFindMany.mockResolvedValue([]);
-      prismaCounterMock.articleFindMany.mockResolvedValue([]);
-      prismaCounterMock.articleVariantFindMany.mockResolvedValue([]);
 
       await listOrdersPage("org-1", {
         status: "Draft",
@@ -345,17 +662,13 @@ describe("reserveNextOrderNumbers", () => {
             { OR: expect.arrayContaining([
               { orderNo: { contains: "Jacket", mode: "insensitive" } },
               { styleName: { contains: "Jacket", mode: "insensitive" } },
+              { articleCode: { contains: "Jacket", mode: "insensitive" } },
             ]) },
             { buyer: { contains: "Acme", mode: "insensitive" } },
           ],
         }),
       }));
-      expect(prismaCounterMock.articleFindMany).toHaveBeenCalledWith(expect.objectContaining({
-        where: {
-          organization_id: "org-1",
-          article_code: { contains: "Jacket", mode: "insensitive" },
-        },
-      }));
+      expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
     });
 
     it("uses exact matching for numeric quantities and rejects text operators", async () => {
@@ -373,27 +686,20 @@ describe("reserveNextOrderNumbers", () => {
       })).rejects.toThrow("Order quantity filters support exact or empty matching only.");
     });
 
-    it("filters server-side by computed article codes through tenant-scoped master data", async () => {
+    it("filters article codes directly against the persisted order column", async () => {
       prismaCounterMock.orderFindMany.mockResolvedValue([]);
-      prismaCounterMock.articleFindMany.mockResolvedValue([{ article: "Jacket" }]);
 
       await listOrdersPage("org-1", {
         filters: { articleCode: { operator: "is", value: "AR-1" } },
       });
 
-      expect(prismaCounterMock.articleFindMany).toHaveBeenCalledWith({
-        where: {
-          organization_id: "org-1",
-          article_code: { equals: "AR-1", mode: "insensitive" },
-        },
-        select: { article: true },
-      });
       expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({
           organization_id: "org-1",
-          AND: [{ article: { in: ["Jacket"] } }],
+          AND: [{ articleCode: { equals: "AR-1", mode: "insensitive" } }],
         }),
       }));
+      expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
     });
 
     it("uses a minimal order projection for the advance-booking selector", async () => {
@@ -415,6 +721,8 @@ describe("reserveNextOrderNumbers", () => {
           entityName: true,
           buyer: true,
           brand: true,
+          articleCode: true,
+          variantCode: true,
           styleName: true,
           orderQty: true,
           deliveryDate: true,
@@ -424,94 +732,88 @@ describe("reserveNextOrderNumbers", () => {
       }));
       expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
       expect(prismaCounterMock.articleVariantFindMany).not.toHaveBeenCalled();
-      expect(page.orders[0]).toMatchObject({ orderNo: "OD-1", articleCode: null, variantCode: null });
+      expect(page.orders[0]).toMatchObject({ orderNo: "OD-1" });
     });
 
-    it("adds organization-scoped article codes to order rows", async () => {
+    it("returns stored article and variant codes from the order report query", async () => {
       prismaCounterMock.orderFindMany.mockResolvedValue([
         {
           id: "order-1",
           article: "Jacket",
+          articleCode: "AR-1",
+          variantCode: "STORED-ORDER-CODE",
           created_at: new Date("2026-10-01T00:00:00.000Z"),
           deliveryDate: null,
-        },
-      ]);
-      prismaCounterMock.articleFindMany.mockResolvedValue([
-        { id: "article-id", article: "Jacket", article_code: "Ar-1" },
-      ]);
-      prismaCounterMock.articleVariantFindMany.mockResolvedValue([]);
-
-      const page = await listOrdersPage("org-1");
-
-      expect(prismaCounterMock.articleFindMany).toHaveBeenCalledWith({
-        where: { organization_id: "org-1", article: { in: ["Jacket"] } },
-        select: { id: true, article: true, article_code: true },
-      });
-      expect(page.orders[0]).toMatchObject({ article: "Jacket", articleCode: "Ar-1" });
-    });
-
-    it("adds the tenant-scoped color variant code to the separate order report fields", async () => {
-      prismaCounterMock.orderFindMany.mockResolvedValue([
-        {
-          id: "order-1",
-          article: "Jacket",
-          colors: "Navy",
-          created_at: new Date("2026-10-01T00:00:00.000Z"),
-          deliveryDate: null,
-        },
-      ]);
-      prismaCounterMock.articleFindMany.mockResolvedValue([
-        { id: "article-id", article: "Jacket", article_code: "AR4" },
-      ]);
-      prismaCounterMock.articleVariantFindMany.mockResolvedValue([
-        {
-          article: { id: "article-id", article: "Jacket" },
-          variant_code: "AR4-02",
-          color: { organization_id: "org-1", colors: "Navy" },
         },
       ]);
 
       const page = await listOrdersPage("org-1");
 
-      expect(prismaCounterMock.articleVariantFindMany).toHaveBeenCalledWith({
-        where: {
-          organization_id: "org-1",
-          article: {
-            organization_id: "org-1",
-            article: { in: ["Jacket"] },
-          },
-          color: {
-            organization_id: "org-1",
-            colors: { in: ["Navy"], mode: "insensitive" },
-          },
-        },
-        select: {
-          article: { select: { id: true, article: true } },
-          variant_code: true,
-          color: { select: { organization_id: true, colors: true } },
-        },
-      });
+      expect(prismaCounterMock.orderFindMany.mock.calls[0][0].select.articleCode).toBe(true);
+      expect(prismaCounterMock.orderFindMany.mock.calls[0][0].select.variantCode).toBe(true);
       expect(page.orders[0]).toMatchObject({
         article: "Jacket",
-        articleCode: "AR4",
-        variantCode: "AR4-02",
+        articleCode: "AR-1",
+        variantCode: "STORED-ORDER-CODE",
+      });
+      expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
+      expect(prismaCounterMock.articleVariantFindMany).not.toHaveBeenCalled();
+    });
+
+    it("filters variant codes directly against the persisted column", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([{
+        id: "order-1",
+        article: "Jacket",
+        styleName: "Oxford Shirt",
+        colors: "Navy Blue",
+        variantCode: "OXFORD-SHIRT-NAVY-BLUE",
+        created_at: new Date("2026-10-01T00:00:00.000Z"),
+        deliveryDate: null,
+      }]);
+
+      await listOrdersPage("org-1", {
+        filters: { variantCode: { operator: "is", value: "Oxford Shirt-Navy Blue" } },
+      });
+
+      const where = prismaCounterMock.orderFindMany.mock.calls[0][0].where;
+      expect(where.AND).toContainEqual({
+        variantCode: { equals: "OXFORD-SHIRT-NAVY-BLUE", mode: "insensitive" },
       });
     });
 
-    it("skips the variant lookup when page orders have no colors", async () => {
+    it("searches persisted variant codes directly without reading master variant codes", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([]);
+
+      await listOrdersPage("org-1", { search: "Oxford Shirt-Navy Blue" });
+
+      const where = prismaCounterMock.orderFindMany.mock.calls[0][0].where;
+      const searchConditions = where.AND[0].OR;
+      expect(searchConditions).toContainEqual({
+        variantCode: { contains: "OXFORD-SHIRT-NAVY-BLUE", mode: "insensitive" },
+      });
+      expect(searchConditions).toContainEqual({
+        articleCode: { contains: "Oxford Shirt-Navy Blue", mode: "insensitive" },
+      });
+      expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
+      expect(prismaCounterMock.articleVariantFindMany).not.toHaveBeenCalled();
+    });
+
+    it("returns no variant code when the order has no color", async () => {
       prismaCounterMock.orderFindMany.mockResolvedValue([{
         id: "order-1",
         article: "Jacket",
         colors: null,
+        articleCode: null,
+        variantCode: null,
         created_at: new Date("2026-10-01T00:00:00.000Z"),
         deliveryDate: null,
       }]);
-      prismaCounterMock.articleFindMany.mockResolvedValue([
-        { id: "article-id", article: "Jacket", article_code: "AR4" },
-      ]);
 
-      await listOrdersPage("org-1");
+      const page = await listOrdersPage("org-1");
 
+      expect(page.orders[0].variantCode).toBeNull();
+      expect(page.orders[0].articleCode).toBeNull();
+      expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
       expect(prismaCounterMock.articleVariantFindMany).not.toHaveBeenCalled();
     });
   });

@@ -8,6 +8,7 @@ import { requireSameOrganizationEntity } from "@/lib/services/organizations/orga
 import { getEntityGstRegistrationForDate } from "@/lib/services/organizations/entity-gst-registration-resolver";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
 import { calculateTax } from "./gst-calculation-service";
+import { calculatePurchaseOrderGrandTotal } from "./purchase-order-financial-snapshot";
 
 const purchaseOrderInclude = {
   entity: { select: { id: true, entity_name: true } },
@@ -19,6 +20,8 @@ const purchaseOrderInclude = {
 const purchaseOrderReportSelect = {
   id: true,
   entity_id: true,
+  entity_name_snapshot: true,
+  grand_total: true,
   entity: { select: { id: true, entity_name: true } },
   display_no: true,
   purchase_order_no: true,
@@ -40,11 +43,11 @@ const vendorEmail = (metadata: unknown) => {
 };
 
 function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include: typeof purchaseOrderInclude }>) {
-  const total = order.lines.reduce((sum, line) => sum + Number(line.total ?? (Number(line.quantity) * Number(line.price ?? 0))), 0);
+  const total = order.grand_total ?? calculatePurchaseOrderGrandTotal(order.lines);
   return {
     id: order.id,
     entityId: order.entity?.id ?? order.entity_id,
-    entityName: order.entity?.entity_name ?? "Missing Entity",
+    entityName: order.entity_name_snapshot ?? order.entity?.entity_name ?? "Missing Entity",
     purchaseOrderNo: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
     purchaseOrderInternalNo: order.purchase_order_no,
     status: order.status,
@@ -55,7 +58,7 @@ function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include:
     createdAt: order.created_at,
     vendor: { id: order.vendor.id, name: order.vendor.vendor, email: vendorEmail(order.vendor.legacy_metadata) },
     sourceMasterPurchaseOrderIds: order.sources.map((source) => source.master_purchase_order_id),
-    total,
+    total: total.toNumber(),
     lines: order.lines.map((line) => ({
       id: line.id,
       rawMaterial: line.raw_material,
@@ -98,7 +101,7 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
     const masters = await transaction.masterPurchaseOrder.findMany({
       where: { id: { in: uniqueIds }, organization_id: organizationId },
       include: {
-        entity: { select: { id: true, is_active: true } },
+        entity: { select: { id: true, entity_name: true, is_active: true } },
         vendor: { select: { id: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
         lines: true,
         sourceRecords: { include: { groupedPurchaseOrder: { select: { source_type: true, gst: true, hsn_code: true } } } },
@@ -151,12 +154,15 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
       const gst = sourceValues.find((value) => value !== null && typeof value !== "string") as Prisma.Decimal | null | undefined;
       const hsnCode = sourceValues.find((value) => typeof value === "string") as string | undefined;
       const price = master.lines.find((line) => line.vendor_price !== null)?.vendor_price ?? null;
-      const quantity = master.lines.reduce((sum, line) => sum + Number(line.grouped_qty), 0);
-      const total = master.lines.reduce((sum, line) => sum + Number(line.total_spend ?? (Number(line.grouped_qty) * Number(line.vendor_price ?? 0))), 0);
+      const quantity = master.lines.reduce((sum, line) => sum.plus(line.grouped_qty), new Prisma.Decimal(0));
+      const taxableAmount = master.lines.reduce(
+        (sum, line) => sum.plus(line.total_spend ?? line.grouped_qty.mul(line.vendor_price ?? 0)),
+        new Prisma.Decimal(0),
+      );
       const totalRate = Number(sourceValues.find((value) => value !== null && typeof value !== "string") ?? 0);
       const configuredRate = gstRates.find((rate) => Number(rate.gst) === totalRate);
       const tax = calculateTax({
-        taxableAmount: total,
+        taxableAmount: 0,
         totalRate,
         taxRegime,
         country: organization.country ?? "IN",
@@ -170,6 +176,7 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         vendorState: vendor.registeredState?.state ?? vendor.registered_state,
         vendorGstin: vendor.gst_number,
       });
+      const amountForRate = (rate: number) => taxableAmount.mul(new Prisma.Decimal(rate)).div(100);
       return {
         source_master_line_id: master.lines[0]?.id ?? master.id,
         master_purchase_order_id: master.id,
@@ -178,24 +185,27 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         sub_category: master.sub_category,
         source_order_no: null,
         style_name: null,
-        quantity: new Prisma.Decimal(quantity),
+        quantity,
         price,
         gst,
         tax_type: tax.taxType,
         cgst_rate: new Prisma.Decimal(tax.cgstRate),
         sgst_rate: new Prisma.Decimal(tax.sgstRate),
         igst_rate: new Prisma.Decimal(tax.igstRate),
-        cgst_amount: new Prisma.Decimal(tax.cgstAmount),
-        sgst_amount: new Prisma.Decimal(tax.sgstAmount),
-        igst_amount: new Prisma.Decimal(tax.igstAmount),
+        cgst_amount: tax.taxType === "CGST_SGST" ? amountForRate(tax.cgstRate) : new Prisma.Decimal(0),
+        sgst_amount: tax.taxType === "CGST_SGST" ? amountForRate(tax.sgstRate) : new Prisma.Decimal(0),
+        igst_amount: tax.taxType === "IGST" ? amountForRate(tax.igstRate) : new Prisma.Decimal(0),
         hsn_code: hsnCode,
-        total: new Prisma.Decimal(total),
+        total: taxableAmount,
       };
     });
+    const grandTotal = calculatePurchaseOrderGrandTotal(lines);
     return transaction.purchaseOrder.create({
       data: {
         organization_id: organizationId,
         entity_id: entityId,
+        entity_name_snapshot: masters[0].entity?.entity_name ?? null,
+        grand_total: grandTotal,
         vendor_id: vendorId,
         purchase_order_no: `PO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
         display_no: displayNo,
@@ -247,7 +257,13 @@ export async function listPurchaseOrderReportPage(
           { purchase_order_no: { contains: search, mode: "insensitive" } },
           { status: { contains: search, mode: "insensitive" } },
           { vendor: { vendor: { contains: search, mode: "insensitive" } } },
-          { entity: { entity_name: { contains: search, mode: "insensitive" } } },
+          { entity_name_snapshot: { contains: search, mode: "insensitive" } },
+          {
+            AND: [
+              { entity_name_snapshot: null },
+              { entity: { entity_name: { contains: search, mode: "insensitive" } } },
+            ],
+          },
           { lines: { some: { hsn_code: { contains: search, mode: "insensitive" } } } },
         ],
       } : {}),
@@ -277,7 +293,12 @@ export async function listPurchaseOrderReportPage(
         line_aggregates AS (
           SELECT
             line.purchase_order_id,
-            COALESCE(SUM(COALESCE(line.total, line.quantity * COALESCE(line.price, 0))), 0)::text AS total,
+            ROUND(COALESCE(SUM(
+              COALESCE(line.total, line.quantity * COALESCE(line.price, 0))
+              + COALESCE(line.cgst_amount, 0)
+              + COALESCE(line.sgst_amount, 0)
+              + COALESCE(line.igst_amount, 0)
+            ), 0), 2)::text AS total,
             COALESCE(ARRAY_AGG(DISTINCT line.gst::text) FILTER (WHERE line.gst IS NOT NULL), ARRAY[]::text[]) AS gst_values,
             COALESCE(ARRAY_AGG(DISTINCT line.hsn_code) FILTER (WHERE line.hsn_code IS NOT NULL), ARRAY[]::text[]) AS hsn_codes
           FROM purchase_order_lines AS line
@@ -311,7 +332,7 @@ export async function listPurchaseOrderReportPage(
   const purchaseOrders = pageRows.map((order) => ({
     id: order.id,
     entityId: order.entity?.id ?? order.entity_id,
-    entityName: order.entity?.entity_name ?? "Missing Entity",
+    entityName: order.entity_name_snapshot ?? order.entity?.entity_name ?? "Missing Entity",
     purchaseOrderNo: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
     status: order.status,
     procurementType: order.procurement_type,
@@ -320,7 +341,7 @@ export async function listPurchaseOrderReportPage(
     deliveryDate: order.delivery_date,
     createdAt: order.created_at,
     vendor: { id: order.vendor.id, name: order.vendor.vendor, email: vendorEmail(order.vendor.legacy_metadata) },
-    total: Number(lineSummaryByOrder.get(order.id)?.total ?? 0),
+    total: order.grand_total?.toNumber() ?? Number(lineSummaryByOrder.get(order.id)?.total ?? 0),
     gstValues: (lineSummaryByOrder.get(order.id)?.gst_values ?? [])
       .map(Number)
       .filter(Number.isFinite),

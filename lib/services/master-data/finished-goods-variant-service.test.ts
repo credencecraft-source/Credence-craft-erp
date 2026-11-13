@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { transaction } = vi.hoisted(() => ({
   transaction: {
     masterArticle: {
-      findFirst: vi.fn().mockResolvedValue({ article_code: "AR1" }),
+      findFirst: vi.fn().mockResolvedValue({ article: "Oxford Shirt", article_code: "AR1" }),
     },
     masterArticleVariant: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -25,7 +25,7 @@ import { syncFinishedGoodsVariants } from "./finished-goods-variant-service";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  transaction.masterArticle.findFirst.mockResolvedValue({ article_code: "AR1" });
+  transaction.masterArticle.findFirst.mockResolvedValue({ article: "Oxford Shirt", article_code: "AR1" });
   transaction.masterArticleVariant.findMany.mockResolvedValue([]);
   transaction.masterArticleVariant.create.mockImplementation(async ({ data }) => ({ id: "variant-created", ...data }));
   transaction.masterArticleVariant.update.mockImplementation(async ({ where, data }) => ({ id: where.id, ...data }));
@@ -52,24 +52,24 @@ describe("finished goods color variants", () => {
       article_id: "style-1",
       color_id: "color-blue",
       variant: "Blue",
-      variant_code: "AR1-01",
+      variant_code: "OXFORD-SHIRT-BLUE",
       sku: "APPLE-BLUE",
     });
     expect(createCall.data.price_override.toString()).toBe("125.1234");
   });
 
-  it("auto-generates unique codes for color variants without requiring user-entered codes", async () => {
+  it("generates codes from the style name and normalized color name", async () => {
     transaction.masterColor.findFirst
-      .mockResolvedValueOnce({ id: "color-blue", colors: "Blue", legacy_metadata: null })
-      .mockResolvedValueOnce({ id: "color-red", colors: "Red", legacy_metadata: null });
+      .mockResolvedValueOnce({ id: "color-blue", colors: "Navy Blue", legacy_metadata: null })
+      .mockResolvedValueOnce({ id: "color-red", colors: "Red/White", legacy_metadata: null });
 
     await syncFinishedGoodsVariants(transaction as never, "org-1", "style-1", [
-      { fields: { color: "Blue" } },
+      { fields: { color: "Navy Blue" } },
       { fields: { color: "Red" } },
     ]);
 
     expect(transaction.masterArticleVariant.create.mock.calls.map(([call]) => call.data.variant_code))
-      .toEqual(["AR1-01", "AR1-02"]);
+      .toEqual(["OXFORD-SHIRT-NAVY-BLUE", "OXFORD-SHIRT-RED-WHITE"]);
   });
 
   it("rejects colors that do not belong to the current organization", async () => {
@@ -86,6 +86,16 @@ describe("finished goods color variants", () => {
     await expect(syncFinishedGoodsVariants(transaction as never, "org-1", "style-1", [{
       fields: { color: "Blue", price_override: "-10" },
     }])).rejects.toThrow("Variant price must be a non-negative amount with up to four decimal places.");
+
+    expect(transaction.masterArticleVariant.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects generated codes that exceed the variant-code column limit", async () => {
+    transaction.masterArticle.findFirst.mockResolvedValue({ article: "A".repeat(96), article_code: "AR1" });
+
+    await expect(syncFinishedGoodsVariants(transaction as never, "org-1", "style-1", [{
+      fields: { color: "Blue" },
+    }])).rejects.toThrow("Style name and color must produce a variant code no longer than 100 characters.");
 
     expect(transaction.masterArticleVariant.create).not.toHaveBeenCalled();
   });

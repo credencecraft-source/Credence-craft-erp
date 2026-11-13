@@ -173,7 +173,56 @@ describe("order QR print request API", () => {
     expect(mocks.createOrderQrPrintRequest).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
-      body,
+      { ...body, quantityMode: "BULK_QTY" },
+    );
+  });
+
+  it("creates an order-scoped finished-goods barcode request through order authorization", async () => {
+    const body = {
+      orderId: "order-1",
+      finishedGoodsRows: [{ finishedGoodsId: "fg-size-1", quantity: 120 }],
+      templateId: "fg-template-1",
+      requestType: "PRINT",
+    };
+    const response = await POST(new Request(requestUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      "CREATE_ORDERS",
+    );
+    expect(mocks.createOrderQrPrintRequest).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      { ...body, quantityMode: "BULK_QTY" },
+    );
+  });
+
+  it("creates an authorized multi-order finished-goods print request", async () => {
+    const body = {
+      finishedGoodsItems: [
+        { orderId: "order-1", finishedGoodsId: "fg-size-1", quantity: 3 },
+        { orderId: "order-2", finishedGoodsId: "fg-size-2", quantity: 7 },
+      ],
+      templateId: "fg-template-1",
+      requestType: "PRINT",
+    };
+    const response = await POST(new Request(requestUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.createOrderQrPrintRequest).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      { ...body, quantityMode: "BULK_QTY" },
     );
   });
 

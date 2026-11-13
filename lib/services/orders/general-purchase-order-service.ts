@@ -7,6 +7,7 @@ import { createAuditEvent } from "@/lib/services/organizations/audit-event-servi
 import { getEntityGstRegistrationForDate } from "@/lib/services/organizations/entity-gst-registration-resolver";
 import { calculateTax } from "./gst-calculation-service";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
+import { calculatePurchaseOrderGrandTotal } from "./purchase-order-financial-snapshot";
 import { getPurchaseOrder } from "./purchase-order-service";
 
 const generalPurchaseOrderRequestSelect = {
@@ -785,7 +786,7 @@ export async function createGeneralPurchaseOrderFromGroups(
         purchaseOrderLine: null,
       },
       include: {
-        entity: { select: { id: true, organization_id: true, is_active: true } },
+        entity: { select: { id: true, organization_id: true, entity_name: true, is_active: true } },
         vendor: { select: { id: true, organization_id: true, is_active: true, gst_number: true, registered_state: true, registered_state_id: true } },
         rawMaterial: { select: { id: true, organization_id: true, is_active: true } },
         requests: { select: { id: true } },
@@ -878,11 +879,14 @@ export async function createGeneralPurchaseOrderFromGroups(
         total: taxableAmount,
       };
     });
+    const grandTotal = calculatePurchaseOrderGrandTotal(lines);
     const displayNumber = await reserveProcurementDocumentNumber(organizationId, "PURCHASE_ORDER", transaction);
     const created = await transaction.purchaseOrder.create({
       data: {
         organization_id: organizationId,
         entity_id: first.entity_id,
+        entity_name_snapshot: first.entity.entity_name,
+        grand_total: grandTotal,
         vendor_id: first.vendor_id,
         procurement_type: "GENERAL",
         is_asset_purchase: first.is_asset,

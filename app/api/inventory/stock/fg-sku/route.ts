@@ -5,11 +5,13 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { getFinishedGoodsSourceHierarchy } from "@/lib/services/inventory/finished-goods-stock-overview";
 import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import {
   buildPosStockSkuCode,
   reserveNextPosBarcode,
 } from "@/lib/services/pos/pos-stock-identifiers";
+import { resolveActivePosStockLocationByLeaf } from "@/lib/services/pos/pos-stock-location-service";
 
 const MANUAL_SOURCES = ["DIRECT", "DIRECT_FROM_INVENTORY", "DIRECT_FROM_POS", "PACKING_LIST_GRN"] as const;
 const POS_SKU_SOURCES = [
@@ -44,7 +46,10 @@ export async function GET(request: Request) {
       if (recordType === "general") {
         const record = await prisma.finishedGoodsGeneralStockReceipt.findFirst({
           where: { id: recordId, organization_id: organization.id },
-          include: { location: { select: { location_name: true } } },
+          include: {
+            location: { select: { location_name: true, entity_id: true, division_id: true } },
+            storageNode: { select: { id: true, node_name: true } },
+          },
         });
         if (!record) return NextResponse.json({ error: "Finished-goods stock record not found." }, { status: 404 });
         const actors = await prisma.workspaceUser.findMany({
@@ -58,6 +63,8 @@ export async function GET(request: Request) {
             id: record.id,
             location_id: record.location_id,
             location: record.location,
+            storage_node_id: record.storage_node_id,
+            storageNode: record.storageNode,
             sku_code: null,
             barcode: null,
             style_name: record.style_name,
@@ -168,6 +175,7 @@ export async function GET(request: Request) {
           location: {
             select: {
               location_name: true,
+              division_id: true,
               entity: { select: { entity_name: true } },
             },
           },
@@ -338,6 +346,14 @@ export async function POST(request: Request) {
       })
       : null;
     if (!location) return NextResponse.json({ error: "Select an active Location for this stock record." }, { status: 400 });
+    const storageNodeId = typeof body.storageNodeId === "string" ? body.storageNodeId.trim() : "";
+    if (storageNodeId) {
+      try {
+        await resolveActivePosStockLocationByLeaf(prisma, organization.id, storageNodeId, location.entity_id, location.id);
+      } catch {
+        return NextResponse.json({ error: "Select an active Sub-sub-location under this stock Entity and Location." }, { status: 400 });
+      }
+    }
     const source = String(body.source ?? "");
     const isPosSource = source === "DIRECT_FROM_POS";
     const directItemName = [body.productCategory, body.subProductCategory, body.brand, body.size, body.colour]
@@ -382,6 +398,7 @@ export async function POST(request: Request) {
         organization_id: organization.id,
         entity_id: location.entity_id,
         location_id: location.id,
+        storage_node_id: storageNodeId || null,
         sku_code: posSkuCode ?? await nextSkuCode(organization.id),
         barcode: String(body.barcode ?? "").trim() || null,
         style_name: normalizedStyle,
@@ -462,6 +479,25 @@ export async function PUT(request: Request) {
       select: { id: true, entity_id: true },
     });
     if (!location) return NextResponse.json({ error: "Select an active Location for this stock record." }, { status: 400 });
+    const requestedStorageNodeId = body.storageNodeId === undefined
+      ? existing.storage_node_id
+      : typeof body.storageNodeId === "string" ? body.storageNodeId.trim() || null : null;
+    if (body.storageNodeId !== undefined && body.storageNodeId !== null && typeof body.storageNodeId !== "string") {
+      return NextResponse.json({ error: "Select a valid Sub-sub-location." }, { status: 400 });
+    }
+    if (requestedStorageNodeId) {
+      try {
+        await resolveActivePosStockLocationByLeaf(
+          prisma,
+          organization.id,
+          requestedStorageNodeId,
+          location.entity_id,
+          location.id,
+        );
+      } catch {
+        return NextResponse.json({ error: "Select an active Sub-sub-location under this stock Entity and Location." }, { status: 400 });
+      }
+    }
     if (!styleName || !orderNo || !articleNo
       || (usesPosIdentifiers && source !== existing.source)
       || (!MANUAL_SOURCES.includes(source as (typeof MANUAL_SOURCES)[number]) && source !== existing.source)) {
@@ -508,6 +544,7 @@ export async function PUT(request: Request) {
       data: {
         entity_id: location.entity_id,
         location_id: location.id,
+        storage_node_id: requestedStorageNodeId,
         sku_code: skuCode,
         style_name: normalizedStyle, order_no: orderNo, article_no: articleNo,
         barcode: usesPosIdentifiers ? existing.barcode : String(body.barcode ?? "").trim() || null,
@@ -526,6 +563,74 @@ export async function PUT(request: Request) {
       }, { status: 409 });
     }
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update finished goods SKU stock." }, { status: errorStatus(error) });
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const bodyValue: unknown = await request.json();
+    if (typeof bodyValue !== "object" || bodyValue === null || Array.isArray(bodyValue)) {
+      return NextResponse.json({ error: "A finished-goods stock mapping request is required." }, { status: 400 });
+    }
+    const body = bodyValue as Record<string, unknown>;
+    const organizationId = typeof body.organizationId === "string" ? body.organizationId.trim() : "";
+    const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+    await requireOrganizationPermission(user.id, organization.id, "ADJUST_FINISHED_GOODS_STOCK");
+    const recordId = typeof body.recordId === "string" ? body.recordId.trim() : "";
+    const recordType = body.recordType;
+    const storageNodeId = typeof body.storageNodeId === "string" ? body.storageNodeId.trim() : "";
+    if (!recordId || recordId.length > 100 || !["general", "sku"].includes(String(recordType)) || !storageNodeId) {
+      return NextResponse.json({ error: "Select a valid unmapped finished-goods record and Sub-sub-location." }, { status: 400 });
+    }
+
+    const result = await prisma.$transaction(async (transaction) => {
+      const location = recordType === "general"
+        ? await transaction.finishedGoodsGeneralStockReceipt.findFirst({
+          where: { id: recordId, organization_id: organization.id, storage_node_id: null },
+          select: { id: true, entity_id: true, location_id: true },
+        })
+        : await transaction.finishedGoodsSkuStock.findFirst({
+          where: { id: recordId, organization_id: organization.id, storage_node_id: null },
+          select: { id: true, entity_id: true, location_id: true },
+        });
+      if (!location) throw new Error("Unmapped finished-goods stock record not found.");
+      await resolveActivePosStockLocationByLeaf(
+        transaction,
+        organization.id,
+        storageNodeId,
+        location.entity_id,
+        location.location_id,
+      );
+      const update = recordType === "general"
+        ? await transaction.finishedGoodsGeneralStockReceipt.updateMany({
+          where: { id: recordId, organization_id: organization.id, storage_node_id: null },
+          data: { storage_node_id: storageNodeId },
+        })
+        : await transaction.finishedGoodsSkuStock.updateMany({
+          where: { id: recordId, organization_id: organization.id, storage_node_id: null },
+          data: { storage_node_id: storageNodeId },
+        });
+      if (update.count !== 1) throw new Error("This stock record was already mapped. Refresh and review its current location.");
+      await createAuditEvent({
+        organizationId: organization.id,
+        userId: user.id,
+        module: "INVENTORY",
+        action: "MAP_FINISHED_GOODS_POS_LOCATION",
+        entityType: recordType === "general" ? "FinishedGoodsGeneralStockReceipt" : "FinishedGoodsSkuStock",
+        entityId: recordId,
+        details: { storageNodeId },
+      }, transaction);
+      return { recordId, storageNodeId };
+    });
+    return NextResponse.json({ record: result });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "Unable to map finished-goods stock location.",
+    }, { status: error instanceof Error && error.message.includes("not found") ? 404 : 400 });
   }
 }
 

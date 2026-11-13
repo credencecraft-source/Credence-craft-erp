@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   reserveNumber: vi.fn(),
   createAuditEvent: vi.fn(),
   createFgMaterialIssue: vi.fn(),
+  resolveActivePosStockLocation: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -43,6 +44,9 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({
 vi.mock("@/lib/services/inventory/fg-issued-service", () => ({
   createFgMaterialIssue: mocks.createFgMaterialIssue,
 }));
+vi.mock("@/lib/services/pos/pos-stock-location-service", () => ({
+  resolveActivePosStockLocation: mocks.resolveActivePosStockLocation,
+}));
 
 import {
   createPosGeneralStockSale,
@@ -60,6 +64,7 @@ const stockRecord = {
   product_category: "Dresses",
   sub_product_category: "Party Wear",
   location_id: "location-1",
+  storage_node_id: "leaf-1",
   current_stock: 8,
 };
 
@@ -68,6 +73,13 @@ const saleInput = {
   actorId: "user-1",
   requestKey: "sale-request-1",
   entityId: "entity-1",
+  stockHierarchy: {
+    entityId: "entity-1",
+    divisionId: "division-1",
+    locationId: "location-1",
+    subLocationId: "sub-location-1",
+    subSubLocationId: "leaf-1",
+  },
   invoiceDate: "2026-10-07",
   customerContactId: "customer-1",
   taxMode: "LOCAL" as const,
@@ -100,6 +112,13 @@ describe("createPosGeneralStockSale", () => {
     mocks.transaction.finishedGoodsSkuStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.finishedGoodsStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.masterEntity.findFirst.mockResolvedValue({ id: "entity-1", entity_name: "Store A" });
+    mocks.resolveActivePosStockLocation.mockResolvedValue({
+      entityId: "entity-1",
+      divisionId: "division-1",
+      locationId: "location-1",
+      subLocationId: "sub-location-1",
+      subSubLocationId: "leaf-1",
+    });
     mocks.transaction.organization.findFirst.mockResolvedValue({ state: "Karnataka" });
     mocks.transaction.posCoupon.findFirst.mockResolvedValue(null);
     mocks.transaction.posCouponIssue.findFirst.mockResolvedValue(null);
@@ -143,6 +162,7 @@ describe("createPosGeneralStockSale", () => {
     });
     expect(mocks.transaction.posSalesInvoice.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
+        entity_name_snapshot: "Store A",
         total_amount: new Prisma.Decimal("189.00"),
         store_credit_applied_amount: new Prisma.Decimal("50.00"),
       }),
@@ -242,10 +262,16 @@ describe("createPosGeneralStockSale", () => {
       where: {
         id: "general-stock-1",
         organization_id: "organization-1",
+        storage_node_id: "leaf-1",
         current_stock: { gte: 2 },
       },
       data: { current_stock: { decrement: 2 }, quantity_out: { increment: 2 } },
     });
+    expect(mocks.resolveActivePosStockLocation).toHaveBeenCalledWith(
+      mocks.transaction,
+      "organization-1",
+      saleInput.stockHierarchy,
+    );
     expect(mocks.transaction.finishedGoodsStock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ organization_id: "organization-1", location_id: "location-1" }),
       data: {
@@ -264,6 +290,7 @@ describe("createPosGeneralStockSale", () => {
       })],
       select: { id: true, general_stock_receipt_id: true, sku_stock_id: true },
     });
+
     expect(mocks.createFgMaterialIssue).toHaveBeenCalledWith(mocks.transaction, expect.objectContaining({
       organizationId: "organization-1",
       sourceType: "POS_INVOICE",
@@ -284,6 +311,28 @@ describe("createPosGeneralStockSale", () => {
       action: "POST_GENERAL_FG_SALE",
       entityId: "invoice-1",
     }), mocks.transaction);
+  });
+
+  it("does not post stock whose verified leaf differs from the selected issue location", async () => {
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([
+      { ...stockRecord, storage_node_id: null },
+    ]);
+
+    await expect(createPosGeneralStockSale(saleInput))
+      .rejects.toThrow("available at the selected Sub-sub-location");
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inactive or foreign hierarchy before reading or deducting stock", async () => {
+    mocks.resolveActivePosStockLocation.mockRejectedValue(new Error("Select an active Sub-sub-location."));
+
+    await expect(createPosGeneralStockSale(saleInput))
+      .rejects.toThrow("Select an active Sub-sub-location");
+
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.finishedGoodsSkuStock.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).not.toHaveBeenCalled();
   });
 
   it("links an invoice to an active tenant customer contact", async () => {
@@ -558,6 +607,7 @@ describe("createPosGeneralStockSale", () => {
       where: {
         id: "sku-stock-1",
         organization_id: "organization-1",
+        storage_node_id: "leaf-1",
         current_stock: { gte: 2 },
       },
       data: {

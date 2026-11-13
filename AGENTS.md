@@ -85,6 +85,13 @@ These are persistent project governance requirements for all future human, AI, a
 - Preserve password fields and other deliberately case-sensitive credentials. Use `textCase="preserve"` only when changing case would break a technical value.
 - Apply the same `normalizeUppercase` helper at server-side persistence boundaries for user-entered text, including API, import, and background-job entry points; UI normalization alone is not a data-integrity boundary.
 
+## Finished-Goods SKU And Barcode Ownership
+
+- SKU and barcode are product-variant identity values, not inventory-generated values. Generate them only at the approved source: order finished-goods style/color/size creation, or the POS purchase-bill item flow when its stock is approved.
+- Inventory, GRN, packing-list receipt, stock adjustment, transfer, import, and every other inventory-level flow must never auto-generate a SKU or barcode. Require the source values; if either is missing, fail with a clear error and direct correction to the originating order or POS purchase bill.
+- An order GRN must reuse the SKU/barcode assigned to that order variant and post accepted quantity against it. Never create replacement identifiers at GRN or when stock is added to inventory.
+- Reuse the organization-scoped SKU/barcode for the same product variant across orders, receipts, and locations; do not encode order number or storage location into product identity. A barcode identifies the variant and is shared by its units unless a separately approved serialized-unit workflow requires per-unit identifiers.
+
 ## Implementation Verification Gate
 
 - Treat production databases and business data as protected and persistent.

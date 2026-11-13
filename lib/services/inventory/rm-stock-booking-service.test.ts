@@ -42,7 +42,7 @@ describe("raw-material stock booking", () => {
       internalPrice: new Prisma.Decimal("2"),
       requiredQty: new Prisma.Decimal("8"),
       totalRequiredQty: new Prisma.Decimal("8"),
-      order: { orderNo: "ORD-1", styleName: "Style 1", brand: "Brand", entity_id: "entity-1", entity: { is_active: true } },
+      order: { orderNo: "ORD-1", styleName: "Style 1", brand: "Brand", entity_id: "entity-1", entity: { is_active: true, entity_name: "Factory" } },
     }]);
     mocks.transactionClient.rawMaterialStockBooking.groupBy.mockResolvedValue([]);
     mocks.transactionClient.rawMaterialStockBooking.findMany.mockResolvedValue([]);
@@ -88,10 +88,15 @@ describe("raw-material stock booking", () => {
       data: expect.objectContaining({
         organization_id: "organization-1",
         entity_id: "entity-1",
+        entity_name_snapshot: "Factory",
         source_type: "STOCK",
         vendor_id: "store-1",
         status: "PENDING_PRICE_APPROVAL",
         total_grouped_qty: new Prisma.Decimal("5"),
+        lines: { create: expect.arrayContaining([expect.objectContaining({
+          order_no: "ORD-1",
+          style_name: "Style 1",
+        })]) },
       }),
     }));
     expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), {

@@ -111,7 +111,6 @@ export async function GET(request: Request) {
       search,
       filters,
       purpose: searchParams.get("purpose") === "advance-booking" ? "advance-booking" : undefined,
-      includeArticleMetadata: searchParams.get("purpose") !== "advance-booking",
     });
     return NextResponse.json(page);
   } catch (error) {

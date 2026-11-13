@@ -7,6 +7,8 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import type { OrderFormState } from "./order-form-types";
+import { buildFinishedGoodsRowsFromSizes } from "./finished-goods-row-mapping";
+import { buildFinishedGoodsSkuCode } from "@/lib/utilities/finished-goods-sku";
 
 type FinishedGoodsRow = FinishedGoodsQuantityInput;
 
@@ -20,29 +22,12 @@ type MasterDataOption = {
   sizes?: unknown[];
 };
 
-const defaultSizeRow = (): FinishedGoodsRow => ({
-  buyerSize: "",
-  size: "",
-  beforeExcessQty: "",
-  excess: "",
-  excessQty: "",
-  totalQty: "",
-  buyerPoPrice: "",
-  exchangePrice: "",
-  priceInInr: "",
-});
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const getSizeLabel = (size: unknown): string =>
-  String(isRecord(size) ? size.label ?? size.name ?? size : size ?? "");
-
 export default function FinishedGoodsTab({
   form,
   setForm,
   masterOptions = {},
   onOpenCreateMaster,
+  isEditable = true,
   isVariantMode = false,
 }: {
   form: OrderFormState;
@@ -50,6 +35,7 @@ export default function FinishedGoodsTab({
   masterOptions?: Record<string, MasterDataOption[]>;
   orderLookups?: Array<{ key: string; lookupModuleKey?: string; dependsOn?: string }>;
   onOpenCreateMaster?: (masterKey: string) => void;
+  isEditable?: boolean;
   isVariantMode?: boolean;
 }) {
   const rows = form?.rows ?? [];
@@ -57,33 +43,25 @@ export default function FinishedGoodsTab({
   const previousSizeGroup = useRef<string>("");
 
   useEffect(() => {
-    if (isVariantMode) return;
+    if (!isEditable || isVariantMode) return;
 
     const sizeGroup = String(form?.sizeGroup ?? "");
     if (!sizeGroup) {
       previousSizeGroup.current = "";
-      setForm((current) => Array.isArray(current.rows) && current.rows.length > 0
-        ? { ...current, rows: [], orderQty: 0 }
-        : current.orderQty === 0 ? current : { ...current, orderQty: 0 });
+      setForm((current) => current.rows.length > 0 || current.orderQty === 0
+        ? current
+        : { ...current, orderQty: 0 });
       return;
     }
 
     const selectedGroup = (masterOptions["size-group"] ?? []).find((group) => group.label === sizeGroup || group.id === sizeGroup || group.value_id === sizeGroup);
-    const mappedSizes = Array.isArray(selectedGroup?.sizes) ? selectedGroup.sizes : [];
+    const mappedSizes = selectedGroup?.sizes;
+    if (!Array.isArray(mappedSizes)) return;
 
     setForm((current) => {
       const currentRows = current.rows;
-      const existingMap = new Map(currentRows.map((row) => [String(row.size ?? "").trim(), row]));
-
-      const nextRows = mappedSizes.map((size) => {
-        const sizeLabel = getSizeLabel(size).trim();
-        const existingRow = sizeLabel ? existingMap.get(sizeLabel) : null;
-        return {
-          ...defaultSizeRow(),
-          ...(existingRow ?? {}),
-          size: sizeLabel,
-        };
-      });
+      const nextRows = buildFinishedGoodsRowsFromSizes(currentRows, mappedSizes);
+      if (!nextRows) return current;
 
       if (nextRows.length === currentRows.length && currentRows.every((row, index) => String(row.size ?? "").trim() === String(nextRows[index]?.size ?? "").trim())) {
         return current;
@@ -97,7 +75,7 @@ export default function FinishedGoodsTab({
     });
 
     previousSizeGroup.current = sizeGroup;
-  }, [form?.sizeGroup, isVariantMode, masterOptions, setForm]);
+  }, [form?.sizeGroup, isEditable, isVariantMode, masterOptions, setForm]);
 
   const updateSizeRow = (index: number, field: keyof FinishedGoodsRow, value: string) => {
     setForm((current) => {
@@ -181,6 +159,8 @@ export default function FinishedGoodsTab({
             <tr>
               <th className="p-2 min-w-[130px]">Buyer Size</th>
               <th className="p-2 min-w-[140px]">Size</th>
+              <th className="p-2 min-w-[160px]">SKU (Style-Color-Size)</th>
+              <th className="p-2 min-w-[140px]">Barcode</th>
               <th className="p-2 min-w-[110px]">Before Excess Qty</th>
               <th className="p-2 min-w-[90px]">Excess %</th>
               <th className="p-2 min-w-[100px]">Excess Qty</th>
@@ -205,6 +185,31 @@ export default function FinishedGoodsTab({
                 <td className="p-2">
                   <div className="pt-5">
                     {renderMasterSelect("", row.size ?? "", (val) => updateSizeRow(index, "size", val), "size", "Select size")}
+                  </div>
+                </td>
+                <td className="p-2">
+                  <div className="flex flex-col gap-1.5 pt-5">
+                    <Input
+                      aria-label="SKU code (style, color, size)"
+                      type="text"
+                      value={isEditable
+                        ? buildFinishedGoodsSkuCode(form.styleName, form.colors, row.size) ?? row.skuCode ?? ""
+                        : row.skuCode ?? ""}
+                      placeholder="STYLE-COLOR-SIZE"
+                      readOnly
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800"
+                    />
+                  </div>
+                </td>
+                <td className="p-2">
+                  <div className="flex flex-col gap-1.5 pt-5">
+                    <Input
+                      aria-label="Barcode"
+                      type="text"
+                      value={row.barcode || "Auto-generated on save"}
+                      readOnly
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800"
+                    />
                   </div>
                 </td>
                 <td className="p-2">

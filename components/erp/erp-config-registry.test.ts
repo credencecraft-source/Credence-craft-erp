@@ -79,6 +79,34 @@ describe("Admin module navigation", () => {
 });
 
 describe("POS contact navigation", () => {
+  it("adds Counter as a first-level POS sidebar entry", () => {
+    const pos = ERP_MODULES.find((module) => module.key === "pos");
+    const counter = pos?.children.find((child) => child.key === "counter");
+
+    expect(counter).toMatchObject({
+      label: "Counter",
+      pathSegment: "counter",
+    });
+    expect(getErpModuleForOrganizationPath(
+      "/dashboard/workspace/organizations/organization/pos/counter",
+      "/dashboard/workspace/organizations/organization",
+    )?.key).toBe("pos");
+  });
+
+  it("adds Day Book as a first-level POS sidebar entry", () => {
+    const pos = ERP_MODULES.find((module) => module.key === "pos");
+    const dayBook = pos?.children.find((child) => child.key === "daybook");
+
+    expect(dayBook).toMatchObject({
+      label: "Day Book",
+      pathSegment: "daybook",
+    });
+    expect(getErpModuleForOrganizationPath(
+      "/dashboard/workspace/organizations/organization/pos/daybook",
+      "/dashboard/workspace/organizations/organization",
+    )?.key).toBe("pos");
+  });
+
   it("opens the centralized contacts report within POS", () => {
     const pos = ERP_MODULES.find((module) => module.key === "pos");
     const contacts = pos?.children.find((child) => child.key === "vendor-customer");

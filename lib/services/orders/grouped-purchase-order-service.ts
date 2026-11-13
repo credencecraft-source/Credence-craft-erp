@@ -84,6 +84,7 @@ function serializeLine(line: {
 function serializePurchaseOrder(order: {
   id: string;
   entity_id: string | null;
+  entity_name_snapshot: string | null;
   entity: { id: string; entity_name: string } | null;
   source_type: string;
   grouped_po_no: string;
@@ -127,7 +128,7 @@ function serializePurchaseOrder(order: {
   return {
     id: order.id,
     entityId: order.entity?.id ?? order.entity_id,
-    entityName: order.entity?.entity_name ?? "Missing Entity",
+    entityName: order.entity_name_snapshot ?? order.entity?.entity_name ?? "Missing Entity",
     sourceType: order.source_type,
     groupedPoNo: order.display_no ? `GP-${order.display_no}` : order.grouped_po_no,
     groupedPoInternalNo: order.grouped_po_no,
@@ -632,7 +633,6 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
     if (bomItems.some((item) => !item.order.entity?.is_active)) {
       throw new Error("Select BOM rows from one active Entity. Orders without an active Entity cannot be procured.");
     }
-
     const itemIds = [...uniqueLines.keys()];
     const [bookedQuantities, fulfilledQuantities, groupedQuantities] = await Promise.all([
       transaction.rawMaterialStockBooking.groupBy({
@@ -663,6 +663,11 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
     const stockUomByRawMaterial = new Map(rawMaterialMasters.map((material) => [material.raw_material_name.trim().toLowerCase(), material.stock_uom.uom]));
 
     const lines = bomItems.map((item) => {
+      const orderNo = item.order.orderNo.trim();
+      const styleName = item.order.styleName?.trim();
+      if (!orderNo || !styleName) {
+        throw new Error("Every selected order needs an Order No and Style Name before grouped procurement.");
+      }
       const requiredQty = positiveNumber(item.totalRequiredQty ?? item.requiredQty, "Required Qty");
       const groupedQty = positiveNumber(uniqueLines.get(item.id)?.groupedQty, "Grouped Qty");
       const remainingQty = new Prisma.Decimal(requiredQty)
@@ -676,8 +681,8 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
       return {
         source_bom_item_id: item.id,
         source_order_id: item.order_id,
-        order_no: item.order.orderNo,
-        style_name: item.order.styleName,
+        order_no: orderNo,
+        style_name: styleName,
         brand: item.order.brand,
         category: item.category,
         category_type: item.categoryType,
@@ -705,6 +710,7 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
       data: {
         organization_id: input.organizationId,
         entity_id: entityId,
+        entity_name_snapshot: bomItems[0].order.entity?.entity_name ?? null,
         vendor_id: vendor.id,
         grouped_po_no: input.sampleBatchId && input.sampleGroupOrdinal
           ? `GPO-${input.sampleBatchId}-${String(input.sampleGroupOrdinal).padStart(2, "0")}`

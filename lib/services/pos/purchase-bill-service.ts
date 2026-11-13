@@ -5,6 +5,7 @@ import {
   buildPosStockSkuCode,
   reserveNextPosBarcode,
 } from "@/lib/services/pos/pos-stock-identifiers";
+import { resolveActivePosStockLocationByLeaf } from "@/lib/services/pos/pos-stock-location-service";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 
@@ -378,6 +379,7 @@ export async function createPurchaseBill(organizationId: string, actorId: string
       data: {
         organization_id: organizationId,
         entity_id: entity.id,
+        entity_name_snapshot: entity.entity_name,
         document_number: documentNumber,
         vendor_id: vendor.id,
         bill_number: billNumber || documentNumber,
@@ -472,6 +474,7 @@ export async function listPurchaseBills(
       document_number: true,
       vendor_id: true,
       entity_id: true,
+      entity_name_snapshot: true,
       bill_number: true,
       bill_date: true,
       status: true,
@@ -494,7 +497,10 @@ export async function listPurchaseBills(
       })
     : [];
   const vendorById = new Map(vendors.map((vendor) => [vendor.id, vendor.vendor]));
-  const entityIds = [...new Set(pageBills.map((bill) => bill.entity_id).filter((id): id is string => Boolean(id)))];
+  const entityIds = [...new Set(pageBills
+    .filter((bill) => bill.entity_name_snapshot === null)
+    .map((bill) => bill.entity_id)
+    .filter((id): id is string => Boolean(id)))];
   const entities = entityIds.length
     ? await prisma.masterEntity.findMany({
         where: { organization_id: organizationId, id: { in: entityIds } },
@@ -511,7 +517,8 @@ export async function listPurchaseBills(
     sourceModule: "POS",
     date: bill.bill_date,
     party: vendorById.get(bill.vendor_id) ?? bill.vendor_id,
-    entity: bill.entity_id ? entityById.get(bill.entity_id) ?? "Entity unavailable" : "Unassigned",
+    entity: bill.entity_name_snapshot
+      ?? (bill.entity_id ? entityById.get(bill.entity_id) ?? "Entity unavailable" : "Unassigned"),
     amount: Number(bill.subtotal),
     tax: Number(bill.tax),
     net: Number(bill.total),
@@ -547,7 +554,7 @@ function serializePurchaseBillDetail(bill: PurchaseBillDetail, vendor: { id: str
     id: bill.id,
     documentNumber: bill.document_number,
     entityId: bill.entity_id,
-    entityName: bill.entity?.entity_name ?? null,
+    entityName: bill.entity_name_snapshot ?? bill.entity?.entity_name ?? null,
     billNumber: bill.bill_number,
     billDate: bill.bill_date,
     taxMode: bill.tax_mode,
@@ -601,6 +608,7 @@ export async function createPurchaseBillFinishedGoodsStock(
   actorId: string,
   billId: string,
   locationId: string,
+  storageNodeId: string,
 ) {
   if (typeof locationId !== "string") {
     throw new Error("Select an active location before approving this purchase bill.");
@@ -608,6 +616,9 @@ export async function createPurchaseBillFinishedGoodsStock(
   const selectedLocationId = locationId.trim();
   if (!selectedLocationId || selectedLocationId !== locationId) {
     throw new Error("Select an active location before approving this purchase bill.");
+  }
+  if (!storageNodeId.trim() || storageNodeId.trim() !== storageNodeId) {
+    throw new Error("Select an active Sub-sub-location before creating POS stock.");
   }
 
   const result = await prisma.$transaction(async (transaction) => {
@@ -654,16 +665,28 @@ export async function createPurchaseBillFinishedGoodsStock(
         organization_id: organizationId,
         is_active: true,
       },
-      select: { id: true },
+      select: { id: true, entity_name: true },
     });
     if (!stockEntity) throw new Error("The selected location belongs to an inactive Entity.");
     if (bill.entity_id && bill.entity_id !== stockLocation.entity_id) {
       throw new Error("The selected location belongs to a different Entity than this purchase bill.");
     }
+    let selectedStorageNodeId: string | null = null;
+    const verifiedStockLocation = await resolveActivePosStockLocationByLeaf(
+      transaction,
+      organizationId,
+      storageNodeId,
+      stockLocation.entity_id,
+      stockLocation.id,
+    );
+    selectedStorageNodeId = verifiedStockLocation.subSubLocationId;
     if (!bill.entity_id) {
       const assigned = await transaction.posPurchaseBill.updateMany({
         where: { id: bill.id, organization_id: organizationId, entity_id: null },
-        data: { entity_id: stockLocation.entity_id },
+        data: {
+          entity_id: stockLocation.entity_id,
+          entity_name_snapshot: stockEntity.entity_name,
+        },
       });
       if (assigned.count !== 1) {
         throw new Error("The purchase bill Entity changed while stock was being created. Refresh and retry.");
@@ -690,6 +713,7 @@ export async function createPurchaseBillFinishedGoodsStock(
           organization_id: organizationId,
           entity_id: stockLocation.entity_id,
           location_id: stockLocation.id,
+          storage_node_id: selectedStorageNodeId,
           sku_code: skuCode,
           barcode,
           style_name: styleName,

@@ -1,4 +1,8 @@
 import { Prisma } from "@prisma/client";
+import {
+  buildStyleColorVariantCode,
+  MAX_VARIANT_CODE_LENGTH,
+} from "@/lib/utilities/finished-goods-variant-code";
 
 export type FinishedGoodsVariantInput = {
   id?: string;
@@ -27,7 +31,7 @@ export async function syncFinishedGoodsVariants(
     }),
     transaction.masterArticle.findFirst({
       where: { organization_id: organizationId, id: articleId },
-      select: { article_code: true },
+      select: { article: true },
     }),
   ]);
   if (!article) {
@@ -89,13 +93,11 @@ export async function syncFinishedGoodsVariants(
     const providedVariantCode = String(input.fields.variant_code ?? "").trim();
     let variantCode = providedVariantCode || String(existing?.variant_code ?? "").trim();
     if (!variantCode) {
-      const baseCode = String(article.article_code ?? articleId).trim();
-      let sequence = index + 1;
-      variantCode = `${baseCode}-${String(sequence).padStart(2, "0")}`;
-      while (variantCodes.has(variantCode.toLocaleLowerCase())) {
-        sequence += 1;
-        variantCode = `${baseCode}-${String(sequence).padStart(2, "0")}`;
+      const generatedCode = buildStyleColorVariantCode(article.article, color.colors);
+      if (!generatedCode || generatedCode.length > MAX_VARIANT_CODE_LENGTH) {
+        throw new Error("Style name and color must produce a variant code no longer than 100 characters.");
       }
+      variantCode = generatedCode;
     }
     if (sku && skus.has(sku.toLocaleLowerCase())) {
       throw new Error("Variant SKUs must be unique.");

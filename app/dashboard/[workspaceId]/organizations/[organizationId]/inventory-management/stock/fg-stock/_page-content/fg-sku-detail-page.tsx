@@ -19,8 +19,11 @@ type StockRecord = {
   purchase_bill_line_id: string | null;
   location: {
     location_name: string;
+    division_id?: string;
     entity?: { entity_name: string };
   } | null;
+  storage_node_id?: string | null;
+  storageNode?: { id: string; node_name: string } | null;
   sku_code: string | null;
   barcode: string | null;
   style_name: string;
@@ -163,6 +166,12 @@ export default function FgSkuDetailPage({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [subLocationOptions, setSubLocationOptions] = useState<LocationOption[]>([]);
+  const [subSubLocationOptions, setSubSubLocationOptions] = useState<LocationOption[]>([]);
+  const [mappingSubLocationId, setMappingSubLocationId] = useState("");
+  const [mappingSubSubLocationId, setMappingSubSubLocationId] = useState("");
+  const [mappingLocationsLoading, setMappingLocationsLoading] = useState(true);
+  const [mappingSaving, setMappingSaving] = useState(false);
   const lookupRequest = useRef<Promise<void> | null>(null);
   const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/stock/fg-stock`;
   const requestedReturnTo = searchParams.get("returnTo");
@@ -190,6 +199,7 @@ export default function FgSkuDetailPage({
         const data = await response.json();
         if (!response.ok || !data.record) throw new Error(data.error || "Unable to load finished-goods SKU.");
         const loadedRecord = data.record as StockRecord;
+        if (loadedRecord.storage_node_id) setMappingLocationsLoading(false);
         setRecord(loadedRecord);
         setForm(toForm(loadedRecord));
         setCanEdit(data.canEdit === true);
@@ -204,6 +214,68 @@ export default function FgSkuDetailPage({
       });
     return () => controller.abort();
   }, [organizationId, skuId, reloadKey]);
+
+  useEffect(() => {
+    if (!record || record.storage_node_id || !record.location?.division_id) return;
+    const controller = new AbortController();
+    const path = `/api/organizations/${encodeURIComponent(organizationId)}/entities/${encodeURIComponent(record.entity_id)}/divisions/${encodeURIComponent(record.location.division_id)}/locations/${encodeURIComponent(record.location_id)}/sub-locations`;
+    void fetch(path, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; subLocations?: Array<{ id?: unknown; node_name?: unknown; is_active?: unknown }> };
+        if (!response.ok || !Array.isArray(data.subLocations)) throw new Error(data.error || "Unable to load active Sub-locations.");
+        return data.subLocations.filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.node_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.node_name as string }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setSubLocationOptions(options); })
+      .catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Unable to load active Sub-locations."); })
+      .finally(() => { if (!controller.signal.aborted) setMappingLocationsLoading(false); });
+    return () => controller.abort();
+  }, [organizationId, record]);
+
+  useEffect(() => {
+    if (!record || !mappingSubLocationId || !record.location?.division_id) return;
+    const controller = new AbortController();
+    const path = `/api/organizations/${encodeURIComponent(organizationId)}/entities/${encodeURIComponent(record.entity_id)}/divisions/${encodeURIComponent(record.location.division_id)}/locations/${encodeURIComponent(record.location_id)}/sub-locations/${encodeURIComponent(mappingSubLocationId)}/sub-sub-locations`;
+    void fetch(path, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; subSubLocations?: Array<{ id?: unknown; node_name?: unknown; is_active?: unknown }> };
+        if (!response.ok || !Array.isArray(data.subSubLocations)) throw new Error(data.error || "Unable to load active Sub-sub-locations.");
+        return data.subSubLocations.filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.node_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.node_name as string }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setSubSubLocationOptions(options); })
+      .catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Unable to load active Sub-sub-locations."); })
+      .finally(() => { if (!controller.signal.aborted) setMappingLocationsLoading(false); });
+    return () => controller.abort();
+  }, [mappingSubLocationId, organizationId, record]);
+
+  async function mapExistingSkuToSubSubLocation() {
+    if (!record || !mappingSubSubLocationId || mappingSaving) return;
+    setMappingSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/inventory/stock/fg-sku", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId,
+          recordId: record.id,
+          recordType: "sku",
+          storageNodeId: mappingSubSubLocationId,
+        }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Unable to map finished-goods stock.");
+      const leaf = subSubLocationOptions.find((option) => option.id === mappingSubSubLocationId);
+      setRecord({ ...record, storage_node_id: mappingSubSubLocationId, storageNode: { id: mappingSubSubLocationId, node_name: leaf?.label ?? "" } });
+      setMessage("Stock is now assigned to this active POS issue location.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to map finished-goods stock.");
+    } finally {
+      setMappingSaving(false);
+    }
+  }
 
   const loadEditLookups = useCallback(() => {
     if (lookupsLoaded) return Promise.resolve();
@@ -374,13 +446,13 @@ export default function FgSkuDetailPage({
                 Location/Site → Warehouse → Sub-store → Rack → Bin
               </h2>
               <p className="text-sm text-[var(--erp-text-muted)]">
-                Only the site and location are linked to this stock record. Warehouse, sub-store, rack, and bin are not assigned.
+                POS issue stock is independently assigned to a Sub-sub-location. Other storage levels are not linked to this stock record.
               </p>
               <dl className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-5">
                 {[
                   ["Location/Site", record.location?.entity?.entity_name ?? "-"],
                   ["Warehouse", "Not assigned to this stock record"],
-                  ["Sub-store", "Not assigned to this stock record"],
+                  ["POS Sub-sub-location", record.storageNode?.node_name ?? "Not assigned"],
                   ["Rack", "Not assigned to this stock record"],
                   ["Bin", "Not assigned to this stock record"],
                 ].map(([label, value]) => (
@@ -391,6 +463,44 @@ export default function FgSkuDetailPage({
                 ))}
               </dl>
             </Card>
+            {!record.storage_node_id && canEdit ? (
+              <Card className="space-y-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-[var(--erp-text)]">Assign existing balance to a POS issue location</h2>
+                  <p className="mt-1 text-xs text-[var(--erp-muted)]">This balance remains unavailable to POS until explicitly assigned to an active Sub-sub-location.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Select
+                    label="Sub-location"
+                    value={mappingSubLocationId}
+                    disabled={mappingLocationsLoading || subLocationOptions.length === 0}
+                    onChange={(event) => {
+                      setMappingSubLocationId(event.target.value);
+                      setMappingSubSubLocationId("");
+                      setSubSubLocationOptions([]);
+                      setMappingLocationsLoading(Boolean(event.target.value));
+                    }}
+                    options={[
+                      { value: "", label: mappingLocationsLoading ? "Loading Sub-locations…" : subLocationOptions.length ? "Select Sub-location" : "No active Sub-locations" },
+                      ...subLocationOptions.map((option) => ({ value: option.id, label: option.label })),
+                    ]}
+                  />
+                  <Select
+                    label="Sub-sub-location"
+                    value={mappingSubSubLocationId}
+                    disabled={mappingLocationsLoading || !mappingSubLocationId || subSubLocationOptions.length === 0}
+                    onChange={(event) => setMappingSubSubLocationId(event.target.value)}
+                    options={[
+                      { value: "", label: mappingLocationsLoading ? "Loading Sub-sub-locations…" : subSubLocationOptions.length ? "Select POS issue location" : "No active Sub-sub-locations" },
+                      ...subSubLocationOptions.map((option) => ({ value: option.id, label: option.label })),
+                    ]}
+                  />
+                </div>
+                <Button type="button" disabled={!mappingSubSubLocationId || mappingSaving} onClick={() => void mapExistingSkuToSubSubLocation()}>
+                  {mappingSaving ? "Assigning…" : "Assign to POS issue location"}
+                </Button>
+              </Card>
+            ) : null}
             <Card>
               <dl className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {readOnlyFields.map(([key, label]) => (

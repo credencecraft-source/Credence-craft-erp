@@ -6,17 +6,21 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 
 type StockRecord = {
-  [key: string]: string | number | null | { location_name: string } | undefined;
+  [key: string]: string | number | null | { location_name: string; entity_id?: string; division_id?: string } | { id: string; node_name: string } | undefined;
   id: string;
-  location: { location_name: string };
+  location: { location_name: string; entity_id?: string; division_id?: string };
+  storage_node_id?: string | null;
+  storageNode?: { id: string; node_name: string } | null;
   added_time?: string;
   posted_at?: string;
 };
 
 type RecordType = "general" | "allocated";
+type StorageOption = { id: string; label: string };
 
 const detailFields = [
   ["id", "Record ID"],
@@ -75,7 +79,7 @@ function DetailField({ label, value }: { label: string; value: string }) {
 
 function formatStockValue(key: string, value: StockRecord[string]) {
   if (key === "location") {
-    return value && typeof value === "object" ? value.location_name : "-";
+    return value && typeof value === "object" && "location_name" in value ? value.location_name : "-";
   }
   if (key === "added_time" || key === "posted_at") {
     return value ? new Date(String(value)).toLocaleString("en-IN") : "-";
@@ -102,6 +106,15 @@ export default function FinishedGoodsStockRecordPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [subLocationOptions, setSubLocationOptions] = useState<StorageOption[]>([]);
+  const [subSubLocationOptions, setSubSubLocationOptions] = useState<StorageOption[]>([]);
+  const [selectedSubLocationId, setSelectedSubLocationId] = useState("");
+  const [selectedSubSubLocationId, setSelectedSubSubLocationId] = useState("");
+  const [storageLoading, setStorageLoading] = useState(true);
+  const [mapping, setMapping] = useState(false);
+  const [mappingError, setMappingError] = useState("");
+  const [mappingMessage, setMappingMessage] = useState("");
+  const [mappingRetry, setMappingRetry] = useState(0);
   const basePath = `/dashboard/${params.workspaceId}/organizations/${params.organizationId}/inventory-management/stock/fg-stock`;
   const defaultReportPath = `${basePath}/${params.recordType === "general" ? "general-stock" : "allocated-stock"}`;
   const returnTo = searchParams.get("returnTo");
@@ -133,6 +146,7 @@ export default function FinishedGoodsStockRecordPage() {
         if (!response.ok || !payload.record) {
           throw new Error(payload.error || "Unable to load finished-goods stock record.");
         }
+        if (payload.record.storage_node_id || params.recordType !== "general") setStorageLoading(false);
         setRecord(payload.record as StockRecord);
       })
       .catch((loadError: unknown) => {
@@ -145,6 +159,76 @@ export default function FinishedGoodsStockRecordPage() {
       });
     return () => controller.abort();
   }, [params.organizationId, params.recordId, params.recordType, reloadKey]);
+
+  useEffect(() => {
+    if (params.recordType !== "general" || record?.storage_node_id || !record?.location.entity_id || !record.location.division_id) {
+      return;
+    }
+    const controller = new AbortController();
+    const path = `/api/organizations/${encodeURIComponent(params.organizationId)}/entities/${encodeURIComponent(record.location.entity_id)}/divisions/${encodeURIComponent(record.location.division_id)}/locations/${encodeURIComponent(String(record.location_id ?? ""))}/sub-locations`;
+    void fetch(path, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; subLocations?: Array<{ id?: unknown; node_name?: unknown; is_active?: unknown }> };
+        if (!response.ok || !Array.isArray(data.subLocations)) throw new Error(data.error || "Unable to load active Sub-locations.");
+        return data.subLocations.filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.node_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.node_name as string }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setSubLocationOptions(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setMappingError(cause instanceof Error ? cause.message : "Unable to load active Sub-locations.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setStorageLoading(false); });
+    return () => controller.abort();
+  }, [mappingRetry, params.organizationId, params.recordType, record]);
+
+  useEffect(() => {
+    if (!selectedSubLocationId || !record?.location.entity_id || !record.location.division_id) {
+      return;
+    }
+    const controller = new AbortController();
+    const path = `/api/organizations/${encodeURIComponent(params.organizationId)}/entities/${encodeURIComponent(record.location.entity_id)}/divisions/${encodeURIComponent(record.location.division_id)}/locations/${encodeURIComponent(String(record.location_id ?? ""))}/sub-locations/${encodeURIComponent(selectedSubLocationId)}/sub-sub-locations`;
+    void fetch(path, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; subSubLocations?: Array<{ id?: unknown; node_name?: unknown; is_active?: unknown }> };
+        if (!response.ok || !Array.isArray(data.subSubLocations)) throw new Error(data.error || "Unable to load active Sub-sub-locations.");
+        return data.subSubLocations.filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.node_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.node_name as string }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setSubSubLocationOptions(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setMappingError(cause instanceof Error ? cause.message : "Unable to load active Sub-sub-locations.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setStorageLoading(false); });
+    return () => controller.abort();
+  }, [mappingRetry, params.organizationId, record?.location, record?.location_id, selectedSubLocationId]);
+
+  async function mapStockToSubSubLocation() {
+    if (!record || !selectedSubSubLocationId || mapping) return;
+    setMapping(true);
+    setMappingError("");
+    setMappingMessage("");
+    try {
+      const response = await fetch("/api/inventory/stock/fg-sku", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId: params.organizationId,
+          recordId: record.id,
+          recordType: params.recordType,
+          storageNodeId: selectedSubSubLocationId,
+        }),
+      });
+      const data = await response.json() as { error?: string; record?: { storageNodeId?: string } };
+      if (!response.ok) throw new Error(data.error || "Unable to map finished-goods stock.");
+      const leaf = subSubLocationOptions.find((option) => option.id === selectedSubSubLocationId);
+      setRecord({ ...record, storage_node_id: selectedSubSubLocationId, storageNode: { id: selectedSubSubLocationId, node_name: leaf?.label ?? "" } });
+      setMappingMessage("Stock is now assigned to this active POS issue location.");
+    } catch (cause) {
+      setMappingError(cause instanceof Error ? cause.message : "Unable to map finished-goods stock.");
+    } finally {
+      setMapping(false);
+    }
+  }
 
   return (
     <Page as="div">
@@ -185,6 +269,66 @@ export default function FinishedGoodsStockRecordPage() {
                 return <DetailField key={key} label={label} value={displayValue} />;
               })}
             </dl>
+          </Card>
+        ) : null}
+        {record?.storage_node_id ? (
+          <Card className="text-sm">
+            <p className="font-semibold text-[var(--erp-text)]">POS issue location</p>
+            <p className="mt-1 text-[var(--erp-muted)]">{record.storageNode?.node_name || "Assigned Sub-sub-location"}</p>
+          </Card>
+        ) : params.recordType === "general" && record ? (
+          <Card className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--erp-text)]">Assign POS issue location</h2>
+              <p className="mt-1 text-xs text-[var(--erp-muted)]">This existing balance is unavailable to POS until explicitly assigned to an active Sub-sub-location.</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Select
+                label="Sub-location"
+                value={selectedSubLocationId}
+                disabled={storageLoading || subLocationOptions.length === 0}
+                onChange={(event) => {
+                  setSelectedSubLocationId(event.target.value);
+                  setSelectedSubSubLocationId("");
+                  setSubSubLocationOptions([]);
+                  setStorageLoading(Boolean(event.target.value));
+                  setMappingError("");
+                }}
+                options={[
+                  { value: "", label: storageLoading ? "Loading Sub-locations…" : subLocationOptions.length ? "Select Sub-location" : "No active Sub-locations" },
+                  ...subLocationOptions.map((option) => ({ value: option.id, label: option.label })),
+                ]}
+              />
+              <Select
+                label="Sub-sub-location"
+                value={selectedSubSubLocationId}
+                disabled={storageLoading || !selectedSubLocationId || subSubLocationOptions.length === 0}
+                onChange={(event) => {
+                  setSelectedSubSubLocationId(event.target.value);
+                  setMappingError("");
+                }}
+                options={[
+                  { value: "", label: storageLoading ? "Loading Sub-sub-locations…" : subSubLocationOptions.length ? "Select POS issue location" : "No active Sub-sub-locations" },
+                  ...subSubLocationOptions.map((option) => ({ value: option.id, label: option.label })),
+                ]}
+              />
+            </div>
+            {mappingError ? (
+              <p role="alert" className="text-sm text-[var(--erp-danger)]">
+                {mappingError}{" "}
+                <Button type="button" variant="secondary" size="sm" onClick={() => {
+                  setStorageLoading(true);
+                  setMappingError("");
+                  setMappingRetry((value) => value + 1);
+                }}>
+                  Retry
+                </Button>
+              </p>
+            ) : null}
+            {mappingMessage ? <p role="status" className="text-sm text-emerald-700">{mappingMessage}</p> : null}
+            <Button type="button" disabled={!selectedSubSubLocationId || mapping} onClick={mapStockToSubSubLocation}>
+              {mapping ? "Assigning…" : "Assign to POS issue location"}
+            </Button>
           </Card>
         ) : null}
       </Section>

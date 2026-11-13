@@ -14,11 +14,12 @@ type WorkOrderGrnVerificationSource = {
   receivedDate: string;
   status: string;
   workOrder: {
+    entityId?: string | null;
     workOrderNo: string;
     orderNo: string;
     styleName: string | null;
     article: string | null;
-    locations: Array<{ id: string; location_name: string }>;
+    locations: Array<{ id: string; location_name: string; division_id?: string }>;
   };
   lines: WorkOrderGrnVerificationSourceLine[];
 };
@@ -32,6 +33,7 @@ export function flattenWorkOrderGrnVerificationTasks<TLine extends WorkOrderGrnV
     id: line.id,
     line,
     grnId: grn.id,
+    workOrder: { entityId: grn.workOrder.entityId },
     grnNo: grn.grnNo,
     workOrderNo: grn.workOrder.workOrderNo,
     orderNo: grn.workOrder.orderNo,

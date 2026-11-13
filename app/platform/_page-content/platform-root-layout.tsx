@@ -17,7 +17,7 @@ type NavigationItem = {
   children?: NavigationItem[];
 };
 
-const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[] }> = [
+const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[]; directItem?: boolean }> = [
   {
     title: "CMO",
     items: [
@@ -69,6 +69,13 @@ const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[] }> = [
     ],
   },
   {
+    title: "Legacy Management",
+    directItem: true,
+    items: [
+      { label: "Legacy Management", href: "/platform/legacy-management" },
+    ],
+  },
+  {
     title: "Settings",
     items: [
       { label: "Email and OTP", href: "/platform/settings/email" },
@@ -93,6 +100,7 @@ export default function PlatformRootLayoutClient({
   canManageSalesTeam,
   canAccessWorkspace,
   canAccessSupport,
+  canAccessLegacyManagement,
   attentionCounts,
 }: {
   accessLabel: string;
@@ -104,6 +112,7 @@ export default function PlatformRootLayoutClient({
   canManageSalesTeam: boolean;
   canAccessWorkspace: boolean;
   canAccessSupport: boolean;
+  canAccessLegacyManagement: boolean;
   attentionCounts: {
     openTickets: number;
     pendingOrganizations: number;
@@ -190,6 +199,9 @@ export default function PlatformRootLayoutClient({
     if (section.title === "Support") {
       return canAccessSupport;
     }
+    if (section.title === "Legacy Management") {
+      return canAccessLegacyManagement;
+    }
 
     if (section.title === "CMO") {
       return canAccessLeadsAndSubscriptions && !canManageAccounts;
@@ -240,6 +252,14 @@ export default function PlatformRootLayoutClient({
             .filter((item) => !isSuperAdminView || section.title !== "Settings" || item.href === "/platform/settings/access");
           const isCurrentSection = items.some(isItemCurrent);
           const isOpen = openSections[section.title] ?? isCurrentSection;
+
+          if (section.directItem) {
+            return (
+              <div key={section.title} className="space-y-1">
+                {renderNavigationItems(items)}
+              </div>
+            );
+          }
 
           return (
             <div key={section.title} className="space-y-1">

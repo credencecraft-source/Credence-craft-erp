@@ -13,6 +13,7 @@ import {
   buildOrderQrPayload,
   getQrTemplateFieldLabel,
   getQrTemplateSampleValues,
+  getQrTemplateTypeLabel,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
   type QrTemplateFieldKey,
@@ -93,7 +94,9 @@ export default function BarcodeQrCodeTemplateDetailPage({
   }, [loadAttempt, query, templateId]);
 
   const sampleValues = getQrTemplateSampleValues(
-    template?.type === "POS_ITEM_BARCODE" ? "POS_ITEM_BARCODE" : "ORDER_TAGS",
+    template?.type === "POS_ITEM_BARCODE"
+      ? "POS_ITEM_BARCODE"
+      : template?.type === "FG_BARCODE" ? "FG_BARCODE" : "ORDER_TAGS",
   );
   const qrFieldLabel = template ? getQrTemplateFieldLabel(template.qrFieldKey) : undefined;
   const displayFieldLabels = template?.displayFields.map(
@@ -183,7 +186,11 @@ export default function BarcodeQrCodeTemplateDetailPage({
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-slate-900">Saved QR Sticker Preview</h2>
             <p className="text-sm text-slate-600">
-              This is the saved template layout with sample {template.type === "POS_ITEM_BARCODE" ? "POS item" : "order"} values.
+              This is the saved template layout with sample {getQrTemplateTypeLabel(
+                template.type === "POS_ITEM_BARCODE"
+                  ? "POS_ITEM_BARCODE"
+                  : template.type === "FG_BARCODE" ? "FG_BARCODE" : "ORDER_TAGS",
+              )} values.
             </p>
           </div>
           <OrderQrStickerPreview
@@ -206,7 +213,11 @@ export default function BarcodeQrCodeTemplateDetailPage({
         <Card className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-slate-900">{template.name}</h2>
-            <Badge>{template.type === "ORDER_TAGS" ? "Order Tags" : template.type}</Badge>
+            <Badge>{template.type === "ORDER_TAGS"
+              || template.type === "POS_ITEM_BARCODE"
+              || template.type === "FG_BARCODE"
+              ? getQrTemplateTypeLabel(template.type)
+              : template.type}</Badge>
           </div>
           <dl className="grid min-w-0 gap-4 sm:grid-cols-2">
             <div className="min-w-0">

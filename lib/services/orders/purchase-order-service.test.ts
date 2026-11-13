@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -177,6 +178,8 @@ describe("vendor Purchase Order generation", () => {
     const reportOrder = (id: string, procurementType: string) => ({
       id,
       entity_id: "entity-1",
+      entity_name_snapshot: id === "po-1" ? "FROZEN FACTORY" : null,
+      grand_total: id === "po-1" ? new Prisma.Decimal("99.50") : null,
       entity: { id: "entity-1", entity_name: "Factory" },
       display_no: 1,
       purchase_order_no: `PO-${id}`,
@@ -201,7 +204,7 @@ describe("vendor Purchase Order generation", () => {
     await expect(listPurchaseOrderReportPage("org-1", { cursor: "previous-page", limit: 2, search: "Factory" }))
       .resolves.toMatchObject({
         purchaseOrders: [
-          { id: "po-1", procurementType: "GENERAL", isAssetPurchase: true, total: 6, gstValues: [5], hsnCodes: ["5208"], buyingUoms: ["ROLL"] },
+          { id: "po-1", entityName: "FROZEN FACTORY", procurementType: "GENERAL", isAssetPurchase: true, total: 99.5, gstValues: [5], hsnCodes: ["5208"], buyingUoms: ["ROLL"] },
           { id: "po-2", procurementType: "STYLE_WISE", isAssetPurchase: false, total: 12.5, gstValues: [5, 12], hsnCodes: ["5208", "5512"], buyingUoms: ["ROLL", "PCS"] },
         ],
         nextCursor: "po-2",
@@ -211,7 +214,13 @@ describe("vendor Purchase Order generation", () => {
         organization_id: "org-1",
         OR: expect.arrayContaining([
           { purchase_order_no: { contains: "Factory", mode: "insensitive" } },
-          { entity: { entity_name: { contains: "Factory", mode: "insensitive" } } },
+          { entity_name_snapshot: { contains: "Factory", mode: "insensitive" } },
+          {
+            AND: [
+              { entity_name_snapshot: null },
+              { entity: { entity_name: { contains: "Factory", mode: "insensitive" } } },
+            ],
+          },
         ]),
       }),
       take: 3,

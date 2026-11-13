@@ -179,11 +179,13 @@ export default function BarcodeQrPrintRequestDetailPage({
             Back to Print/Download requests
           </Link>
           <h1 className="text-xl font-semibold text-slate-900">
-            QR Print Request · {request.orderNo}
+          {request.isFinishedGoodsBarcode ? "FG Barcode Print Request" : "QR Print Request"} · {request.orderNo}
           </h1>
           <p className="text-sm text-[var(--erp-text-muted)]">
             {request.sourceType === "POS_PURCHASE_BILL"
               ? "Purchase bill QR labels routed through Design & Development."
+              : request.isFinishedGoodsBarcode
+                ? "Finished-goods barcode labels generated from the SKU and barcode assigned to each order size."
               : "Saved request design and print-ready preview."}
           </p>
         </div>

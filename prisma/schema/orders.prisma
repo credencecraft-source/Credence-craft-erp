@@ -5,13 +5,19 @@ model MerchandisingOrder {
   counterparty_role_code              String?                              @db.VarChar(40)
   entity_id                           String?
   orderNo                             String                               @db.VarChar(100)
+  sku_code                            String?                              @db.VarChar(100)
+  barcode                             String?                              @db.VarChar(150)
   entityName                          String?                              @db.VarChar(255)
   category                            String?                              @db.VarChar(255)
   subCategory                         String?                              @db.VarChar(255)
   season                              String?                              @db.VarChar(255)
   article                             String?                              @db.VarChar(255)
+  articleCode                         String?                              @map("article_code") @db.VarChar(100)
+  master_article_id                   String?
+  master_variant_id                   String?
   styleName                           String?                              @db.VarChar(255)
   colors                              String?                              @db.VarChar(255)
+  variantCode                         String?                              @map("variant_code") @db.VarChar(100)
   buyer                               String?                              @db.VarChar(255)
   brand                               String?                              @db.VarChar(255)
   sizeGroup                           String?                              @db.VarChar(255)
@@ -29,6 +35,8 @@ model MerchandisingOrder {
   contact                             Contact?                             @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
   counterpartyRole                    ContactRoleAssignment?               @relation(fields: [organization_id, contact_id, counterparty_role_code], references: [organization_id, contact_id, role_code], onDelete: Restrict)
   entity                              MasterEntity?                        @relation("MerchandisingOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  masterArticle                       MasterArticle?                       @relation("MerchandisingOrderMasterArticle", fields: [organization_id, master_article_id], references: [organization_id, id], onDelete: Restrict, map: "merch_orders_org_master_article_fkey")
+  masterVariant                       MasterArticleVariant?                @relation("MerchandisingOrderMasterVariant", fields: [organization_id, master_article_id, master_variant_id], references: [organization_id, article_id, id], onDelete: Restrict, map: "merch_orders_org_master_variant_fkey")
   processTemplate                     MasterProcessTemplate?               @relation(fields: [process_template_id], references: [id], onDelete: SetNull)
   processSteps                        MerchandisingOrderProcessStep[]
   processController                   OrderProcessController?
@@ -44,11 +52,17 @@ model MerchandisingOrder {
   qrPrintRequests                     MerchandisingOrderQrPrintRequest[]
 
   @@unique([organization_id, orderNo])
+  @@unique([organization_id, sku_code])
+  @@unique([organization_id, barcode])
   @@unique([organization_id, id])
   @@index([organization_id, entity_id, created_at])
   @@index([organization_id, created_at])
   @@index([organization_id, finalStatus, created_at(sort: Desc), id(sort: Desc)], map: "merch_orders_org_status_created_id_idx")
   @@index([organization_id, contact_id])
+  @@index([organization_id, master_article_id], map: "merch_orders_org_master_article_idx")
+  @@index([organization_id, master_variant_id], map: "merch_orders_org_master_variant_idx")
+  @@index([articleCode(ops: raw("gin_trgm_ops"))], type: Gin, map: "merch_orders_article_code_trgm_idx")
+  @@index([variantCode(ops: raw("gin_trgm_ops"))], type: Gin, map: "merch_orders_variant_code_trgm_idx")
   @@index([orderNo(ops: raw("gin_trgm_ops"))], type: Gin, map: "merch_orders_order_no_trgm_idx")
   @@index([article(ops: raw("gin_trgm_ops"))], type: Gin, map: "merch_orders_article_trgm_idx")
   @@index([styleName(ops: raw("gin_trgm_ops"))], type: Gin, map: "merch_orders_style_name_trgm_idx")
@@ -58,6 +72,7 @@ model MerchandisingOrder {
 enum OrderQrTemplateType {
   ORDER_TAGS
   POS_ITEM_BARCODE
+  FG_BARCODE
 }
 
 model MerchandisingOrderQrTemplate {
@@ -242,6 +257,8 @@ model FinishedGoodsSizeWise {
   order                     MerchandisingOrder                @relation(fields: [order_id], references: [id], onDelete: Cascade)
   buyerSize                 String?                           @db.VarChar(100)
   size                      String?                           @db.VarChar(100)
+  sku_code                  String?                           @db.VarChar(100)
+  barcode                   String?                           @db.VarChar(150)
   beforeExcessQty           Int?
   excess                    Decimal?                          @db.Decimal(10, 2)
   excessQty                 Int?
@@ -256,6 +273,8 @@ model FinishedGoodsSizeWise {
   bundleTransferSizeLines   FactoryBundleTransferSizeLine[]
 
   @@index([order_id])
+  @@index([sku_code])
+  @@index([barcode])
   @@map("finished_goods_size_wise")
 }
 
@@ -294,6 +313,7 @@ model GroupedPurchaseOrder {
   id                   String                        @id @default(cuid())
   organization_id      String
   entity_id            String?
+  entity_name_snapshot String?                       @db.VarChar(255)
   source_type          String                        @default("VENDOR") @db.VarChar(20)
   vendor_id            String
   grouped_po_no        String                        @db.VarChar(100)
@@ -358,6 +378,7 @@ model MasterPurchaseOrder {
   id                   String                      @id @default(cuid())
   organization_id      String
   entity_id            String?
+  entity_name_snapshot String?                     @db.VarChar(255)
   vendor_id            String
   master_po_no         String                      @db.VarChar(100)
   display_no           Int?
@@ -490,6 +511,8 @@ model PurchaseOrder {
   id                           String                        @id @default(cuid())
   organization_id              String
   entity_id                    String?
+  entity_name_snapshot         String?                       @db.VarChar(255)
+  grand_total                  Decimal?                      @db.Decimal(14, 2)
   vendor_id                    String
   contact_id                   String?
   counterparty_role_code       String?                       @db.VarChar(40)
@@ -654,6 +677,7 @@ model PosPurchaseBill {
   id              String                @id @default(cuid())
   organization_id String
   entity_id       String?
+  entity_name_snapshot String?           @db.VarChar(255)
   document_number String                @db.VarChar(30)
   vendor_id       String
   bill_number     String                @db.VarChar(100)
@@ -802,10 +826,27 @@ model PosOfferTarget {
   @@map("pos_offer_targets")
 }
 
+model PosCounter {
+  id                    String       @id @default(cuid())
+  organization_id       String
+  counter_name          String       @db.VarChar(150)
+  sub_sub_location_id   String
+  created_by            String       @db.VarChar(255)
+  created_at            DateTime     @default(now())
+  organization          Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  subSubLocation        StorageNode  @relation(fields: [organization_id, sub_sub_location_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, counter_name], map: "pos_counters_org_name_key")
+  @@index([organization_id, sub_sub_location_id], map: "pos_counters_org_sub_sub_location_idx")
+  @@map("pos_counters")
+}
+
 model PosSalesInvoice {
   id              String                @id @default(cuid())
   organization_id String
   entity_id       String?
+  entity_name_snapshot String?           @db.VarChar(255)
   invoice_no      String                @db.VarChar(100)
   request_key     String                @db.VarChar(100)
   invoice_date    DateTime              @db.Date
@@ -963,6 +1004,7 @@ model PosSalesReturn {
   id                 String                @id @default(cuid())
   organization_id    String
   invoice_id         String
+  entity_name_snapshot String?              @db.VarChar(255)
   return_no          String                @db.VarChar(100)
   request_key        String                @db.VarChar(100)
   return_date        DateTime              @default(now()) @db.Date
@@ -1057,7 +1099,9 @@ model InventoryReceipt {
   id                String                 @id @default(cuid())
   organization_id   String
   entity_id         String
+  entity_name_snapshot String?             @db.VarChar(255)
   location_id       String
+  location_name_snapshot String?           @db.VarChar(255)
   purchase_order_id String
   receipt_no        String                 @db.VarChar(100)
   status            String                 @default("POSTED") @db.VarChar(30)
@@ -1365,6 +1409,7 @@ model FinishedGoodsSkuStock {
   organization_id       String
   entity_id             String
   location_id           String
+  storage_node_id       String?
   style_name            String               @db.VarChar(255)
   order_no              String               @db.VarChar(100)
   article_no            String               @db.VarChar(100)
@@ -1387,6 +1432,7 @@ model FinishedGoodsSkuStock {
   purchase_bill_line_id String?              @unique
   organization          Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   location              MasterLocation       @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  storageNode           StorageNode?          @relation(fields: [organization_id, storage_node_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_sku_stocks_storage_node_fkey")
   purchase_bill_line    PosPurchaseBillLine? @relation(fields: [purchase_bill_line_id], references: [id], onDelete: SetNull)
   posSalesLines         PosSalesInvoiceLine[]
   fgMaterialIssueLines  FGMaterialIssueLine[]
@@ -1396,6 +1442,7 @@ model FinishedGoodsSkuStock {
   @@unique([organization_id, barcode])
   @@index([organization_id, style_name])
   @@index([organization_id, location_id])
+  @@index([organization_id, storage_node_id], map: "finished_goods_sku_stocks_org_storage_node_idx")
   @@index([organization_id, added_time])
   @@map("finished_goods_sku_stocks")
 }
@@ -1405,6 +1452,7 @@ model FinishedGoodsGeneralStockReceipt {
   organization_id          String
   entity_id                String
   location_id              String
+  storage_node_id          String?
   grn_id                   String
   grn_line_id              String                    @unique(map: "fg_general_receipt_grn_line_key")
   work_order_id            String
@@ -1434,6 +1482,7 @@ model FinishedGoodsGeneralStockReceipt {
   created_at               DateTime                  @default(now())
   organization             Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "finished_goods_general_stock_receipts_organization_id_fkey")
   location                 MasterLocation            @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_location_fkey")
+  storageNode              StorageNode?              @relation(fields: [organization_id, storage_node_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_storage_node_fkey")
   workOrder                FactoryWorkOrder          @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_work_order_fkey")
   order                    MerchandisingOrder        @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_order_fkey")
   grnLine                  WorkOrderInventoryGrnLine @relation(fields: [grn_id, work_order_id, grn_line_id], references: [grn_id, work_order_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_grn_line_fkey")
@@ -1443,6 +1492,7 @@ model FinishedGoodsGeneralStockReceipt {
   @@unique([organization_id, id], map: "fg_general_receipt_org_id_key")
   @@unique([grn_id, work_order_id, grn_line_id], map: "fg_general_stock_grn_line_scope_key")
   @@index([organization_id, location_id, posted_at], map: "fg_general_receipt_location_posted_idx")
+  @@index([organization_id, storage_node_id], map: "fg_general_receipt_org_storage_node_idx")
   @@index([organization_id, order_no, size], map: "fg_general_receipt_order_size_idx")
   @@map("finished_goods_general_stock_receipts")
 }

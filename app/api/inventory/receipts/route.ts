@@ -72,7 +72,20 @@ export async function GET(request: Request) {
       },
       orderBy: { received_date: "desc" },
     });
-    return receiptId || purchaseOrderId ? NextResponse.json({ receipt: receipts[0] ?? null }) : NextResponse.json({ receipts });
+    const serializedReceipts = receipts.map((receipt) => ({
+      ...receipt,
+      entity: {
+        ...receipt.entity,
+        entity_name: receipt.entity_name_snapshot ?? receipt.entity.entity_name,
+      },
+      location: {
+        ...receipt.location,
+        location_name: receipt.location_name_snapshot ?? receipt.location.location_name,
+      },
+    }));
+    return receiptId || purchaseOrderId
+      ? NextResponse.json({ receipt: serializedReceipts[0] ?? null })
+      : NextResponse.json({ receipts: serializedReceipts });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load inventory receipts." }, { status: 400 });
   }
@@ -107,7 +120,7 @@ export async function POST(request: Request) {
           organization_id: organization.id,
           ...(body.assetPurchaseOnly ? { procurement_type: "GENERAL", is_asset_purchase: true } : {}),
         },
-        include: { lines: true, entity: { select: { id: true, is_active: true } } },
+        include: { lines: true, entity: { select: { id: true, entity_name: true, is_active: true } } },
       });
       if (!purchaseOrder) throw new Error("Purchase Order not found in this organization.");
       if (!["APPROVED", "SHARED"].includes(purchaseOrder.status)) throw new Error("Only approved Purchase Orders can be received.");
@@ -195,7 +208,9 @@ export async function POST(request: Request) {
         data: {
           organization_id: organization.id,
           entity_id: purchaseOrder.entity_id,
+          entity_name_snapshot: purchaseOrder.entity.entity_name,
           location_id: location.id,
+          location_name_snapshot: location.location_name,
           purchase_order_id: purchaseOrder.id,
           receipt_no: await reserveChallanNumber(organization.id, "RM_GRN", transaction),
           received_date: body.receivedDate ? new Date(body.receivedDate) : new Date(),

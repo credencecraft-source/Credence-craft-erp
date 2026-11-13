@@ -34,8 +34,73 @@ model WorkspaceUser {
   supportTicketMessages          TicketMessage[]          @relation("TicketMessageWorkspaceAuthor")
   auditEvents                    AuditEvent[]
   createdUniformOrders           UniformOrder[]             @relation("UniformOrderCreator")
+  createdTenantUsageBills        TenantUsageBill[]          @relation("TenantUsageBillCreator")
 
   @@map("workspace_users")
+}
+
+model TenantUsageLog {
+  id              String   @id @default(cuid())
+  tenant_id       String
+  endpoint        String   @db.VarChar(255)
+  http_method     String   @db.VarChar(10)
+  execution_ms    Int
+  egress_bytes    BigInt?
+  timestamp       DateTime @default(now()) @db.Timestamptz(6)
+  organization    Organization @relation(fields: [tenant_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([tenant_id, timestamp])
+  @@map("tenant_usage_logs")
+}
+
+model TenantUsageDaily {
+  id                         String   @id @default(cuid())
+  tenant_id                  String
+  date                       DateTime @db.Date
+  total_requests             Int      @default(0)
+  total_execution_ms         BigInt   @default(0)
+  total_egress_bytes         BigInt   @default(0)
+  db_storage_bytes           BigInt   @default(0)
+  media_storage_bytes        BigInt   @default(0)
+  neon_compute_cost_usd      Decimal  @default(0) @db.Decimal(14, 8)
+  db_storage_cost_usd        Decimal  @default(0) @db.Decimal(14, 8)
+  vercel_invocation_cost_usd Decimal  @default(0) @db.Decimal(14, 8)
+  egress_cost_usd            Decimal  @default(0) @db.Decimal(14, 8)
+  media_storage_cost_usd     Decimal  @default(0) @db.Decimal(14, 8)
+  estimated_cost_usd         Decimal  @default(0) @db.Decimal(14, 8)
+  updated_at                 DateTime @updatedAt @db.Timestamptz(6)
+  organization               Organization @relation(fields: [tenant_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([tenant_id, date])
+  @@map("tenant_usage_daily")
+}
+
+model TenantUsageBill {
+  id                         String       @id
+  tenant_id                  String
+  billing_month              DateTime     @db.Date
+  bill_name                  String       @db.VarChar(100)
+  organization_name          String       @db.VarChar(255)
+  total_requests             Int
+  total_execution_ms         BigInt
+  total_egress_bytes         BigInt
+  db_storage_bytes           BigInt
+  media_storage_bytes        BigInt
+  neon_compute_cost_usd      Decimal      @db.Decimal(14, 8)
+  db_storage_cost_usd        Decimal      @db.Decimal(14, 8)
+  vercel_invocation_cost_usd Decimal      @db.Decimal(14, 8)
+  egress_cost_usd            Decimal      @db.Decimal(14, 8)
+  media_storage_cost_usd     Decimal      @db.Decimal(14, 8)
+  estimated_cost_usd         Decimal      @db.Decimal(14, 8)
+  daily_breakdown            Json?
+  billed_by_id               String?
+  billed_at                  DateTime     @default(now()) @db.Timestamptz(6)
+  organization               Organization @relation(fields: [tenant_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  billedBy                   WorkspaceUser? @relation("TenantUsageBillCreator", fields: [billed_by_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([tenant_id, billing_month])
+  @@index([billing_month])
+  @@map("tenant_usage_bills")
 }
 
 model Organization {
@@ -74,12 +139,16 @@ model Organization {
   platformVersion                         PlatformVersion?                          @relation(fields: [platform_version_id], references: [id], onDelete: SetNull)
   databaseConnection                      DatabaseConnection?                       @relation(fields: [database_connection_id], references: [id])
   memberships                             OrganizationMembership[]
+  tenantUsageLogs                         TenantUsageLog[]
+  tenantUsageDaily                        TenantUsageDaily[]
+  tenantUsageBills                        TenantUsageBill[]
   taxProfiles                             OrganizationTaxProfile[]
   erpSoftware                             ERPSoftware[]
   masterModules                           MasterModule[]
   priceListContactAssignments             PriceListContactAssignment[]
   merchandisingOrders                     MerchandisingOrder[]
   posOffers                               PosOffer[]
+  posCounters                             PosCounter[]
   posOfferTargets                         PosOfferTarget[]
   posCoupons                              PosCoupon[]
   posCouponIssues                         PosCouponIssue[]
@@ -1147,6 +1216,9 @@ model StorageNode {
   parent                StorageNode?    @relation("StorageNodeHierarchy", fields: [organization_id, parent_node_id, parent_node_type], references: [organization_id, id, node_type], onDelete: Restrict)
   children              StorageNode[]   @relation("StorageNodeHierarchy")
   rawMaterialStocks     RawMaterialStock[]
+  finishedGoodsSkuStocks FinishedGoodsSkuStock[]
+  finishedGoodsGeneralStockReceipts FinishedGoodsGeneralStockReceipt[]
+  posCounters           PosCounter[]
 
   @@unique([organization_id, id])
   @@unique([organization_id, id, node_type])
@@ -1389,6 +1461,7 @@ model MasterArticle {
   brand             MasterBrand?           @relation(fields: [brand_id], references: [id], onDelete: SetNull)
   size_group        MasterSizeGroup?       @relation(fields: [size_group_id], references: [id], onDelete: Restrict)
   variants          MasterArticleVariant[]
+  merchandisingOrders MerchandisingOrder[] @relation("MerchandisingOrderMasterArticle")
   sizes             MasterArticleSize[]
   uniformMeasurementFields UniformStyleMeasurementField[]
   uniformAssignments UniformOrderAssignment[]
@@ -1425,8 +1498,10 @@ model MasterArticleVariant {
   article         MasterArticle @relation(fields: [article_id], references: [id], onDelete: Cascade)
   color           MasterColor   @relation(fields: [color_id], references: [id], onDelete: Restrict)
   uniformAssignments UniformOrderAssignment[]
+  merchandisingOrders MerchandisingOrder[] @relation("MerchandisingOrderMasterVariant")
 
   @@unique([organization_id, id])
+  @@unique([organization_id, article_id, id], map: "master_article_variants_org_article_id_id_key")
   @@unique([organization_id, article_id, color_id])
   @@unique([organization_id, variant_code])
   @@unique([organization_id, sku])

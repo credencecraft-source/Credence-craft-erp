@@ -147,8 +147,22 @@ export async function POST(request: Request): Promise<NextResponse> {
         return NextResponse.json(
           { error: parsed.data.purchaseBillId
             ? "The selected QR field has no value on one of the selected purchase bill lines."
-            : "The selected QR field has no value on this order." },
+            : parsed.data.finishedGoodsRows || parsed.data.finishedGoodsItems
+              ? "The selected QR field has no value on one of the selected finished-goods sizes."
+              : "The selected QR field has no value on this order." },
           { status: 400 },
+        );
+      }
+      if (result.reason === "FG_VARIANT_NOT_FOUND") {
+        return NextResponse.json(
+          { error: "One or more selected finished-goods sizes do not belong to their selected orders." },
+          { status: 404 },
+        );
+      }
+      if (result.reason === "FG_IDENTIFIERS_MISSING") {
+        return NextResponse.json(
+          { error: "Every selected finished-goods size must have its order-assigned SKU and barcode before labels can be requested." },
+          { status: 409 },
         );
       }
       if (result.reason === "PAGE_SETUP_REQUIRED") {

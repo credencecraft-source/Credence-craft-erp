@@ -80,7 +80,7 @@ function setupStockTransaction(options: {
       update: vi.fn().mockResolvedValue({ ...bill, status: "APPROVED" }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
-    masterEntity: { findFirst: vi.fn().mockResolvedValue({ id: "entity-1" }) },
+    masterEntity: { findFirst: vi.fn().mockResolvedValue({ id: "entity-1", entity_name: "Factory" }) },
     masterVendor: {
       findFirst: vi.fn().mockResolvedValue({
         id: "vendor-1",
@@ -97,8 +97,15 @@ function setupStockTransaction(options: {
     masterSubCategory: { findMany: vi.fn().mockResolvedValue([]) },
     masterLocation: {
       findFirst: vi.fn().mockResolvedValue(options.location === undefined
-        ? { id: "location-1", entity_id: "entity-1" }
+        ? { id: "location-1", entity_id: "entity-1", division_id: "division-1" }
         : options.location),
+    },
+    storageNode: {
+      findFirst: vi.fn().mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+        if (where.node_type === "SUB_STORE") return { id: "leaf-1", parent_node_id: "sub-1", parent_node_type: "WAREHOUSE" };
+        if (where.node_type === "WAREHOUSE") return { id: "sub-1", parent_node_id: "site-1", parent_node_type: "LOCATION_SITE" };
+        return { id: "site-1", entity_id: "entity-1", master_location_id: "location-1", parent_node_id: null, parent_node_type: null };
+      }),
     },
     procurementDocumentCounter: {
       upsert: vi.fn().mockResolvedValue({ current_value: 1 }),
@@ -131,6 +138,8 @@ describe("listPurchaseRecords", () => {
           id: "bill-1",
           document_number: "PB-001",
           vendor_id: "vendor-1",
+          entity_id: null,
+          entity_name_snapshot: "FROZEN ENTITY",
           bill_number: "SUPPLIER-001",
           bill_date: createdAt,
           status: "POSTED",
@@ -158,6 +167,7 @@ describe("listPurchaseRecords", () => {
       expect(result.bills[0]).toMatchObject({
         documentNumber: "PB-001",
         party: "Vendor",
+        entity: "FROZEN ENTITY",
         net: 105,
       });
       expect(result.hasMore).toBe(false);
@@ -252,7 +262,7 @@ describe("listPurchaseRecords", () => {
   it("allows enough time for finished-goods stock creation to complete its transaction", async () => {
     mocks.transaction.mockRejectedValue(new Error("transaction test sentinel"));
 
-    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "location-1"))
+    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "location-1", "leaf-1"))
       .rejects.toThrow("transaction test sentinel");
 
     expect(mocks.transaction).toHaveBeenCalledWith(
@@ -268,8 +278,12 @@ describe("listPurchaseRecords", () => {
   it("creates purchase-bill stock with the variant SKU and sequential POS barcode", async () => {
     const transaction = setupStockTransaction();
 
-    await createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "location-1");
+    await createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "location-1", "leaf-1");
 
+    expect(transaction.posPurchaseBill.updateMany).toHaveBeenCalledWith({
+      where: { id: "bill-1", organization_id: "organization-1", entity_id: null },
+      data: { entity_id: "entity-1", entity_name_snapshot: "Factory" },
+    });
     expect(transaction.masterLocation.findFirst).toHaveBeenCalledWith({
       where: { id: "location-1", organization_id: "organization-1", is_active: true },
       select: { id: true, entity_id: true },
@@ -298,7 +312,7 @@ describe("listPurchaseRecords", () => {
   it("rejects purchase-bill stock creation when a variant attribute is missing", async () => {
     const transaction = setupStockTransaction({ color: null });
 
-    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "location-1"))
+    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "location-1", "leaf-1"))
       .rejects.toThrow("needs a style, colour, and size to generate its POS SKU");
 
     expect(transaction.procurementDocumentCounter.upsert).not.toHaveBeenCalled();
@@ -308,7 +322,7 @@ describe("listPurchaseRecords", () => {
   it("rejects a location that is inactive or outside the authorized organization", async () => {
     const transaction = setupStockTransaction({ location: null });
 
-    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "foreign-location"))
+    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "foreign-location", "leaf-1"))
       .rejects.toThrow("inactive or unavailable in this organization");
 
     expect(transaction.masterLocation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
@@ -321,14 +335,14 @@ describe("listPurchaseRecords", () => {
   it("does not create stock at a location belonging to another bill Entity", async () => {
     const transaction = setupStockTransaction({ billEntityId: "entity-2" });
 
-    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "location-1"))
+    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "location-1", "leaf-1"))
       .rejects.toThrow("different Entity");
 
     expect(transaction.finishedGoodsSkuStock.create).not.toHaveBeenCalled();
   });
 
   it("requires a selected location before opening a stock transaction", async () => {
-    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", ""))
+    await expect(createPurchaseBillFinishedGoodsStock("organization-1", "actor-1", "bill-1", "", "leaf-1"))
       .rejects.toThrow("Select an active location before approving");
 
     expect(mocks.transaction).not.toHaveBeenCalled();

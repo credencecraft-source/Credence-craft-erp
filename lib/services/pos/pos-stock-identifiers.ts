@@ -1,4 +1,4 @@
-import { normalizeUppercase } from "@/lib/utilities/text-case";
+import { buildFinishedGoodsSkuCode } from "@/lib/utilities/finished-goods-sku";
 
 type PosStockIdentifierDatabase = {
   procurementDocumentCounter: {
@@ -29,22 +29,12 @@ type PosStockIdentifierDatabase = {
 const POS_BARCODE_COUNTER_TYPE = "POS_BARCODE";
 const MAX_BARCODE_RESERVATIONS = 1000;
 
-function normalizeSkuPart(value: string) {
-  return normalizeUppercase(value)
-    .trim()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 export function buildPosStockSkuCode(
   styleName: string,
   colour: string,
   size: string,
 ) {
-  const parts = [styleName, colour, size].map(normalizeSkuPart);
-  if (parts.some((part) => !part)) return null;
-  const skuCode = parts.join("-");
-  return skuCode.length <= 50 ? skuCode : null;
+  return buildFinishedGoodsSkuCode(styleName, colour, size);
 }
 
 export async function reserveNextPosBarcode(

@@ -90,6 +90,7 @@ function createInvoice(stockType: "SKU" | "GENERAL_GRN" = "SKU") {
     customer: "CUSTOMER",
     customer_contact_id: "contact-1",
     customer_contact: { phone: "9876543210" },
+    entity_name_snapshot: "FROZEN STORE",
     entity: { entity_name: "MAIN STORE" },
     status: "POSTED",
     subtotal: d(200),
@@ -236,6 +237,7 @@ describe("POS sales return service", () => {
       returnableQuantity: 2,
       totalAmount: "210.00",
     });
+    expect(result?.entityName).toBe("FROZEN STORE");
   });
 
   it("posts a partial SKU return with prorated credit and a linked stock reversal", async () => {
@@ -287,6 +289,7 @@ describe("POS sales return service", () => {
     });
     expect(mocks.returnCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
+        entity_name_snapshot: "FROZEN STORE",
         settlement_type: "STORE_CREDIT",
         refund_method: null,
         refund_status: null,

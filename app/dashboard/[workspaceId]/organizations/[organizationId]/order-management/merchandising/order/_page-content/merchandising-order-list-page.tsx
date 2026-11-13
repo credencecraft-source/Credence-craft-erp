@@ -16,11 +16,15 @@ import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
 import {
   ORDER_QR_TEMPLATE_SIZES,
-  ORDER_QR_TEMPLATE_FIELDS,
+  ORDER_QR_TEMPLATE_TYPES,
   buildOrderQrPayload,
+  getQrTemplateFieldLabel,
+  getQrTemplateFields,
+  getQrTemplateSampleValues,
   parseOrderQrTemplateLayout,
   parseStoredOrderQrTemplateDesign,
-  type OrderQrTemplateFieldKey,
+  type OrderQrTemplateType,
+  type QrTemplateFieldKey,
   type OrderQrTemplateLayout,
   type OrderQrDisplayFieldStyle,
 } from "@/lib/services/orders/order-qr-template-contract";
@@ -68,13 +72,30 @@ type OrderRecord = {
 type OrderQrTemplate = {
   id: string;
   name: string;
-  qrFieldKey: OrderQrTemplateFieldKey;
-  displayFields: OrderQrTemplateFieldKey[];
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  type: OrderQrTemplateType;
+  qrFieldKey: QrTemplateFieldKey;
+  displayFields: QrTemplateFieldKey[];
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   layout: OrderQrTemplateLayout;
   qrSize: number;
   stickerWidthMm: number;
   stickerLengthMm: number;
+};
+
+type FinishedGoodsQrRow = {
+  finishedGoodsId: string;
+  size: string | null;
+  buyerSize: string | null;
+  skuCode: string | null;
+  barcode: string | null;
+  totalQty: number | null;
+};
+
+type FinishedGoodsQrOrder = {
+  orderId: string;
+  orderNo: string;
+  styleName: string | null;
+  finishedGoodsRows: FinishedGoodsQrRow[];
 };
 
 function parseOrderQrTemplates(value: unknown): OrderQrTemplate[] {
@@ -82,16 +103,22 @@ function parseOrderQrTemplates(value: unknown): OrderQrTemplate[] {
   const templates = value.flatMap((item) => {
     if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
     const candidate = item as Record<string, unknown>;
+    if (
+      typeof candidate.type !== "string"
+      || !ORDER_QR_TEMPLATE_TYPES.includes(candidate.type as OrderQrTemplateType)
+    ) return [];
+    const type = candidate.type as OrderQrTemplateType;
+    const allowedFields = getQrTemplateFields(type);
     const displayFields = Array.isArray(candidate.displayFields)
-      ? candidate.displayFields.filter((field): field is OrderQrTemplateFieldKey =>
-        ORDER_QR_TEMPLATE_FIELDS.some((option) => option.key === field))
+      ? candidate.displayFields.filter((field): field is QrTemplateFieldKey =>
+        allowedFields.some((option) => option.key === field))
       : [];
     const layout = parseOrderQrTemplateLayout(candidate.layout, displayFields);
     if (
       typeof candidate.id !== "string"
       || typeof candidate.name !== "string"
       || typeof candidate.qrFieldKey !== "string"
-      || !ORDER_QR_TEMPLATE_FIELDS.some((field) => field.key === candidate.qrFieldKey)
+      || !allowedFields.some((field) => field.key === candidate.qrFieldKey)
       || !Array.isArray(candidate.displayFields)
       || displayFields.length !== candidate.displayFields.length
       || !layout.success
@@ -113,7 +140,8 @@ function parseOrderQrTemplates(value: unknown): OrderQrTemplate[] {
     return [{
       id: candidate.id,
       name: candidate.name,
-      qrFieldKey: candidate.qrFieldKey as OrderQrTemplateFieldKey,
+      type,
+      qrFieldKey: candidate.qrFieldKey as QrTemplateFieldKey,
       displayFields,
       displayFieldStyles: design.displayFieldStyles,
       layout: layout.data,
@@ -126,6 +154,62 @@ function parseOrderQrTemplates(value: unknown): OrderQrTemplate[] {
     throw new Error("One or more QR templates could not be loaded. Review the saved templates and try again.");
   }
   return templates;
+}
+
+function parseFinishedGoodsQrOrders(value: unknown): FinishedGoodsQrOrder[] {
+  if (!Array.isArray(value)) throw new Error("Finished-goods response was invalid.");
+  return value.map((item) => {
+    if (
+      typeof item !== "object"
+      || item === null
+      || Array.isArray(item)
+    ) {
+      throw new Error("Finished-goods response was invalid.");
+    }
+    const candidate = item as Record<string, unknown>;
+    if (
+      typeof candidate.orderId !== "string"
+      || typeof candidate.orderNo !== "string"
+      || !(typeof candidate.styleName === "string" || candidate.styleName === null)
+      || !Array.isArray(candidate.finishedGoodsRows)
+    ) {
+      throw new Error("Finished-goods response was invalid.");
+    }
+    const finishedGoodsRows = candidate.finishedGoodsRows.map((row) => {
+      if (
+        typeof row !== "object"
+        || row === null
+        || Array.isArray(row)
+      ) {
+        throw new Error("Finished-goods size details were invalid.");
+      }
+      const sizeRow = row as Record<string, unknown>;
+      if (
+        typeof sizeRow.finishedGoodsId !== "string"
+        || !(typeof sizeRow.size === "string" || sizeRow.size === null)
+        || !(typeof sizeRow.buyerSize === "string" || sizeRow.buyerSize === null)
+        || !(typeof sizeRow.skuCode === "string" || sizeRow.skuCode === null)
+        || !(typeof sizeRow.barcode === "string" || sizeRow.barcode === null)
+        || !(sizeRow.totalQty === null || (typeof sizeRow.totalQty === "number" && Number.isSafeInteger(sizeRow.totalQty)))
+      ) {
+        throw new Error("Finished-goods size details were invalid.");
+      }
+      return {
+        finishedGoodsId: sizeRow.finishedGoodsId,
+        size: sizeRow.size,
+        buyerSize: sizeRow.buyerSize,
+        skuCode: sizeRow.skuCode,
+        barcode: sizeRow.barcode,
+        totalQty: sizeRow.totalQty,
+      };
+    });
+    return {
+      orderId: candidate.orderId,
+      orderNo: candidate.orderNo,
+      styleName: candidate.styleName,
+      finishedGoodsRows,
+    };
+  });
 }
 
 function getOrderQrFieldValues(order: OrderRecord, quantity: number) {
@@ -143,7 +227,7 @@ function getOrderQrFieldValues(order: OrderRecord, quantity: number) {
     sizeGroup: order.sizeGroup,
     orderQty: quantity,
     deliveryDate: order.deliveryDate,
-  } satisfies Partial<Record<OrderQrTemplateFieldKey, string | number | null>>;
+  } satisfies Partial<Record<QrTemplateFieldKey, string | number | null>>;
 }
 
 type FilterableOrderField =
@@ -242,7 +326,14 @@ export default function MerchandisingOrdersPage({
   const [showBulkQrRequest, setShowBulkQrRequest] = useState(false);
   const [bulkQrQuantityMode, setBulkQrQuantityMode] = useState<"PCS" | "BULK_QTY">("PCS");
   const [bulkQrQuantities, setBulkQrQuantities] = useState<Record<string, string>>({});
+  const [finishedGoodsQrOrders, setFinishedGoodsQrOrders] = useState<FinishedGoodsQrOrder[]>([]);
+  const [finishedGoodsQrQuantities, setFinishedGoodsQrQuantities] = useState<Record<string, string>>({});
+  const [isLoadingFinishedGoodsQrRows, setIsLoadingFinishedGoodsQrRows] = useState(false);
+  const [finishedGoodsQrRowsError, setFinishedGoodsQrRowsError] = useState("");
+  const [finishedGoodsQrRowsRetry, setFinishedGoodsQrRowsRetry] = useState(0);
+  const [finishedGoodsQrRowsLoadedKey, setFinishedGoodsQrRowsLoadedKey] = useState("");
   const [qrTemplates, setQrTemplates] = useState<OrderQrTemplate[]>([]);
+  const [bulkQrTemplateType, setBulkQrTemplateType] = useState<"ORDER_TAGS" | "FG_BARCODE">("ORDER_TAGS");
   const [selectedQrTemplateId, setSelectedQrTemplateId] = useState("");
   const [isLoadingQrTemplates, setIsLoadingQrTemplates] = useState(false);
   const [qrTemplateError, setQrTemplateError] = useState("");
@@ -291,14 +382,26 @@ export default function MerchandisingOrdersPage({
     [orders, selectedOrderIds],
   );
   const selectedQrTemplate = qrTemplates.find((template) => template.id === selectedQrTemplateId);
+  const bulkQrTemplates = qrTemplates.filter((template) => template.type === bulkQrTemplateType);
+  const finishedGoodsQrSelectionKey = selectedOrderIds.join("|");
+  const selectedFinishedGoodsQrRows = finishedGoodsQrOrders.flatMap((order) =>
+    order.finishedGoodsRows.map((row) => ({
+      ...row,
+      orderId: order.orderId,
+      orderNo: order.orderNo,
+      styleName: order.styleName,
+    })),
+  );
   const sampleQrOrder = selectedQrOrders[0];
   const sampleQrQuantity = sampleQrOrder
     ? bulkQrQuantityMode === "PCS"
       ? 1
       : Number(bulkQrQuantities[sampleQrOrder.id] ?? sampleQrOrder.orderQty ?? 1)
     : 1;
-  const sampleQrFields: Partial<Record<OrderQrTemplateFieldKey, string | number | null>> =
-    sampleQrOrder ? getOrderQrFieldValues(sampleQrOrder, sampleQrQuantity) : {};
+  const sampleQrFields: Partial<Record<QrTemplateFieldKey, string | number | null>> =
+    selectedQrTemplate?.type === "FG_BARCODE"
+      ? getQrTemplateSampleValues("FG_BARCODE")
+      : sampleQrOrder ? getOrderQrFieldValues(sampleQrOrder, sampleQrQuantity) : {};
   const sampleQrPayload = selectedQrTemplate
     ? buildOrderQrPayload([selectedQrTemplate.qrFieldKey], sampleQrFields).payload
     : "";
@@ -310,17 +413,21 @@ export default function MerchandisingOrdersPage({
     ? sampleQrPreviewError.error
     : "";
   const sampleQrDisplayFields = selectedQrTemplate?.displayFields.map((key) => {
-    const definition = ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === key);
     const value = sampleQrFields[key];
     return {
       key,
-      label: definition?.label ?? key,
+      label: getQrTemplateFieldLabel(key),
       value: value === null || value === undefined ? "" : String(value),
       style: selectedQrTemplate.displayFieldStyles[key],
     };
   }) ?? [];
   const bulkQrLabelTotal = selectedQrOrders.reduce((total, order) => {
     const quantity = Number(bulkQrQuantities[order.id]);
+    return total + (Number.isSafeInteger(quantity) && quantity > 0 ? quantity : 0);
+  }, 0);
+  const finishedGoodsQrLabelTotal = selectedFinishedGoodsQrRows.reduce((total, row) => {
+    if (bulkQrQuantityMode === "PCS") return total + 1;
+    const quantity = Number(finishedGoodsQrQuantities[row.finishedGoodsId]);
     return total + (Number.isSafeInteger(quantity) && quantity > 0 ? quantity : 0);
   }, 0);
 
@@ -422,7 +529,6 @@ export default function MerchandisingOrdersPage({
     const query = new URLSearchParams({
       organizationId,
       workspaceId,
-      type: "ORDER_TAGS",
     });
     void (async () => {
       setIsLoadingQrTemplates(true);
@@ -447,9 +553,9 @@ export default function MerchandisingOrdersPage({
         if (controller.signal.aborted) return;
         setQrTemplates(templates);
         setSelectedQrTemplateId((current) =>
-          templates.some((template) => template.id === current)
+          templates.some((template) => template.id === current && template.type === "ORDER_TAGS")
             ? current
-            : templates[0]?.id ?? "",
+            : templates.find((template) => template.type === "ORDER_TAGS")?.id ?? "",
         );
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -461,6 +567,70 @@ export default function MerchandisingOrdersPage({
     })();
     return () => controller.abort();
   }, [organizationId, qrTemplateRetry, showBulkQrRequest, workspaceId]);
+
+  useEffect(() => {
+    if (
+      !showBulkQrRequest
+      || bulkQrTemplateType !== "FG_BARCODE"
+      || selectedOrderIds.length === 0
+      || finishedGoodsQrRowsLoadedKey === finishedGoodsQrSelectionKey
+    ) return;
+    const controller = new AbortController();
+    void (async () => {
+      setIsLoadingFinishedGoodsQrRows(true);
+      setFinishedGoodsQrRowsError("");
+      try {
+        const query = new URLSearchParams({ organizationId, workspaceId });
+        for (const orderId of selectedOrderIds) query.append("orderId", orderId);
+        const response = await fetch(`/api/orders/fg-barcode-rows?${query.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const data: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          const errorMessage = typeof data === "object" && data !== null
+            && "error" in data && typeof data.error === "string"
+            ? data.error
+            : "Unable to load finished-goods sizes.";
+          throw new Error(errorMessage);
+        }
+        const payload = typeof data === "object" && data !== null ? data : {};
+        const rows = parseFinishedGoodsQrOrders(
+          "orders" in payload ? payload.orders : undefined,
+        );
+        if (rows.length !== selectedOrderIds.length) {
+          throw new Error("Finished-goods sizes were not returned for every selected order.");
+        }
+        if (controller.signal.aborted) return;
+        setFinishedGoodsQrOrders(rows);
+        setFinishedGoodsQrQuantities(Object.fromEntries(rows.flatMap((order) =>
+          order.finishedGoodsRows.map((row) => [
+            row.finishedGoodsId,
+            row.totalQty === null ? "" : String(row.totalQty),
+          ]),
+        )));
+        setFinishedGoodsQrRowsLoadedKey(finishedGoodsQrSelectionKey);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setFinishedGoodsQrRowsError(
+            error instanceof Error ? error.message : "Unable to load finished-goods sizes.",
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingFinishedGoodsQrRows(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [
+    bulkQrTemplateType,
+    finishedGoodsQrRowsLoadedKey,
+    finishedGoodsQrSelectionKey,
+    organizationId,
+    selectedOrderIds,
+    showBulkQrRequest,
+    workspaceId,
+    finishedGoodsQrRowsRetry,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -611,12 +781,19 @@ export default function MerchandisingOrdersPage({
   const openBulkQrRequest = useCallback(() => {
     setQrRequestError("");
     setBulkQrQuantityMode("PCS");
+    setBulkQrTemplateType("ORDER_TAGS");
+    setSelectedQrTemplateId(qrTemplates.find((template) => template.type === "ORDER_TAGS")?.id ?? "");
+    setFinishedGoodsQrOrders([]);
+    setFinishedGoodsQrQuantities({});
+    setIsLoadingFinishedGoodsQrRows(false);
+    setFinishedGoodsQrRowsError("");
+    setFinishedGoodsQrRowsLoadedKey("");
     setBulkQrQuantities(Object.fromEntries(selectedQrOrders.map((order) => [
       order.id,
       String(Math.max(1, Number(order.orderQty) || 1)),
     ])));
     setShowBulkQrRequest(true);
-  }, [selectedQrOrders]);
+  }, [qrTemplates, selectedQrOrders]);
 
   const handleOpenArticleOrderDialog = useCallback(() => {
     setArticleOrderSuccess("");
@@ -660,19 +837,65 @@ export default function MerchandisingOrdersPage({
       setQrRequestError("Create or select a QR template before requesting labels.");
       return;
     }
-    const bulkOrders = selectedQrOrders.map((order) => ({
+    const isFinishedGoodsRequest = selectedQrTemplate?.type === "FG_BARCODE";
+    let finishedGoodsItems: Array<{ orderId: string; finishedGoodsId: string; quantity: number }> = [];
+    const bulkOrders = isFinishedGoodsRequest ? [] : selectedQrOrders.map((order) => ({
       orderId: order.id,
       quantity: bulkQrQuantityMode === "PCS" ? 1 : Number(bulkQrQuantities[order.id]),
     }));
-    if (bulkOrders.some(({ quantity }) => !Number.isSafeInteger(quantity) || quantity < 1)) {
-      setQrRequestError("Enter a positive whole-number quantity for every selected order.");
-      return;
-    }
-    if (bulkOrders.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
-      setQrRequestError(
-        `A single QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
-      );
-      return;
+    if (isFinishedGoodsRequest) {
+      if (
+        isLoadingFinishedGoodsQrRows
+        || finishedGoodsQrRowsError
+        || finishedGoodsQrRowsLoadedKey !== finishedGoodsQrSelectionKey
+      ) {
+        setQrRequestError("Wait for the selected orders' finished-goods sizes to load before requesting labels.");
+        return;
+      }
+      if (
+        finishedGoodsQrOrders.length !== selectedQrOrders.length
+        || finishedGoodsQrOrders.some((order) => order.finishedGoodsRows.length === 0)
+        || selectedFinishedGoodsQrRows.length === 0
+      ) {
+        setQrRequestError("Every selected order must have at least one saved finished-goods size.");
+        return;
+      }
+      if (selectedFinishedGoodsQrRows.some((row) =>
+        !row.skuCode?.trim() || !row.barcode?.trim()
+      )) {
+        setQrRequestError("Every selected finished-goods size needs its assigned SKU and barcode before labels can be requested.");
+        return;
+      }
+      finishedGoodsItems = selectedFinishedGoodsQrRows.map((row) => ({
+        orderId: row.orderId,
+        finishedGoodsId: row.finishedGoodsId,
+        quantity: bulkQrQuantityMode === "PCS"
+          ? 1
+          : Number(finishedGoodsQrQuantities[row.finishedGoodsId]),
+      }));
+      if (finishedGoodsItems.some(({ quantity }) =>
+        !Number.isSafeInteger(quantity) || quantity < 1
+      )) {
+        setQrRequestError("Enter a positive whole-number label quantity for every finished-goods size.");
+        return;
+      }
+      if (finishedGoodsItems.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
+        setQrRequestError(
+          `A single QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+        );
+        return;
+      }
+    } else {
+      if (bulkOrders.some(({ quantity }) => !Number.isSafeInteger(quantity) || quantity < 1)) {
+        setQrRequestError("Enter a positive whole-number quantity for every selected order.");
+        return;
+      }
+      if (bulkOrders.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
+        setQrRequestError(
+          `A single QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+        );
+        return;
+      }
     }
 
     setIsSubmittingQrRequest(true);
@@ -682,10 +905,11 @@ export default function MerchandisingOrdersPage({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          bulkOrders,
+          ...(isFinishedGoodsRequest
+            ? { finishedGoodsItems, quantityMode: bulkQrQuantityMode }
+            : { bulkOrders, quantityMode: bulkQrQuantityMode }),
           templateId: selectedQrTemplateId,
           requestType: "PRINT",
-          quantityMode: bulkQrQuantityMode,
         }),
       });
       const data: unknown = await response.json().catch(() => null);
@@ -699,7 +923,7 @@ export default function MerchandisingOrdersPage({
       setShowBulkQrRequest(false);
       setSelectedOrderIds([]);
       setQrRequestSuccess(
-        `One QR request for ${selectedQrOrders.length} orders was sent to Design & Development. They can choose to print or download it.`,
+        `One ${isFinishedGoodsRequest ? "FG Barcode" : "QR"} print request for ${selectedQrOrders.length} orders was sent to Design & Development.`,
       );
     } catch (error) {
       setQrRequestError(error instanceof Error ? error.message : "Unable to send the QR request.");
@@ -982,10 +1206,10 @@ export default function MerchandisingOrdersPage({
           <div className="mb-5 flex shrink-0 flex-wrap items-start justify-between gap-3">
             <div>
               <h2 id="bulk-order-qr-title" className="text-lg font-semibold text-[var(--erp-text)]">
-                Request QR labels
+                Request {bulkQrTemplateType === "FG_BARCODE" ? "FG Barcode" : "QR"} labels
               </h2>
               <p className="mt-1 text-sm text-[var(--erp-text-muted)]">
-                One request will be sent to Design & Development for {selectedOrderIds.length} selected orders. They will choose print or download.
+                One print request will be sent to Design & Development for {selectedOrderIds.length} selected orders.
               </p>
             </div>
             <span className="rounded-full border border-[var(--erp-border)] px-3 py-1 text-xs font-medium text-[var(--erp-text-muted)]">
@@ -1009,23 +1233,40 @@ export default function MerchandisingOrdersPage({
               </div>
             )}
 
+            <Tabs
+              ariaLabel="Barcode template type"
+              compact
+              value={bulkQrTemplateType}
+              onChange={(value) => {
+                if (value !== "ORDER_TAGS" && value !== "FG_BARCODE") return;
+                setBulkQrTemplateType(value);
+                setSelectedQrTemplateId(
+                  qrTemplates.find((template) => template.type === value)?.id ?? "",
+                );
+              }}
+              tabs={[
+                { value: "ORDER_TAGS", label: "Order Tags" },
+                { value: "FG_BARCODE", label: "FG Barcode" },
+              ]}
+            />
+
             <Select
               label="Saved QR template"
               value={selectedQrTemplateId}
               onChange={(event) => setSelectedQrTemplateId(event.target.value)}
-              disabled={isLoadingQrTemplates || qrTemplates.length === 0}
+              disabled={isLoadingQrTemplates || bulkQrTemplates.length === 0}
             >
               <option value="">
                 {isLoadingQrTemplates ? "Loading templates..." : "Select a template"}
               </option>
-              {qrTemplates.map((template) => (
+              {bulkQrTemplates.map((template) => (
                 <option key={template.id} value={template.id}>{template.name}</option>
               ))}
             </Select>
 
-            {!isLoadingQrTemplates && !qrTemplateError && qrTemplates.length === 0 && (
+            {!isLoadingQrTemplates && !qrTemplateError && bulkQrTemplates.length === 0 && (
               <p className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-text-muted)]">
-                No saved QR templates are available.{" "}
+                No saved {bulkQrTemplateType === "FG_BARCODE" ? "FG Barcode" : "Order Tags"} templates are available.{" "}
                 <Link
                   href={`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/templates`}
                   className="font-semibold text-[var(--erp-brand)] underline-offset-2 hover:underline"
@@ -1036,6 +1277,105 @@ export default function MerchandisingOrdersPage({
               </p>
             )}
 
+            {bulkQrTemplateType === "FG_BARCODE" ? (
+              <>
+                <p className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-text-muted)]">
+                  Each row is a saved finished-goods size. PCS requests one label per size; Bulk Qty starts from the order quantity and can be changed without updating the order.
+                </p>
+                <Tabs
+                  ariaLabel="FG barcode label quantity mode"
+                  compact
+                  value={bulkQrQuantityMode}
+                  onChange={setBulkQrQuantityMode}
+                  tabs={[
+                    { value: "PCS", label: "PCS" },
+                    { value: "BULK_QTY", label: "Bulk Qty" },
+                  ]}
+                />
+                {isLoadingFinishedGoodsQrRows ? (
+                  <p role="status" className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-text-muted)]">
+                    Loading finished-goods sizes...
+                  </p>
+                ) : finishedGoodsQrRowsError ? (
+                  <div className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
+                    <p>{finishedGoodsQrRowsError}</p>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => {
+                        setFinishedGoodsQrRowsLoadedKey("");
+                        setFinishedGoodsQrRowsRetry((retry) => retry + 1);
+                      }}
+                    >
+                      Retry sizes
+                    </Button>
+                  </div>
+                ) : selectedFinishedGoodsQrRows.length === 0 ? (
+                  <p className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-text-muted)]">
+                    No saved finished-goods sizes are available for the selected orders.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-right text-xs font-medium text-[var(--erp-text-muted)]">
+                      Total labels: {finishedGoodsQrLabelTotal.toLocaleString()} / {MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()}
+                    </p>
+                    <Table className="max-h-56 overflow-y-auto">
+                      <thead className="sticky top-0 bg-[var(--erp-surface-soft)] text-xs uppercase text-[var(--erp-text-muted)]">
+                        <tr>
+                          <th scope="col" className="px-3 py-2">Order No</th>
+                          <th scope="col" className="px-3 py-2">Style Name</th>
+                          <th scope="col" className="px-3 py-2">Size</th>
+                          <th scope="col" className="px-3 py-2">FG SKU</th>
+                          <th scope="col" className="px-3 py-2">FG Barcode</th>
+                          <th scope="col" className="px-3 py-2">Order Qty</th>
+                          <th scope="col" className="w-36 px-3 py-2">Label Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--erp-border)]">
+                        {selectedFinishedGoodsQrRows.map((row) => (
+                          <tr key={row.finishedGoodsId}>
+                            <td className="px-3 py-2 font-medium text-[var(--erp-text)]">{normalizeUppercase(row.orderNo)}</td>
+                            <td className="px-3 py-2 text-[var(--erp-text-muted)]">{normalizeUppercase(row.styleName ?? "") || "—"}</td>
+                            <td className="px-3 py-2 text-[var(--erp-text-muted)]">{normalizeUppercase(row.size ?? row.buyerSize ?? "") || "—"}</td>
+                            <td className={`px-3 py-2 ${row.skuCode?.trim() ? "text-[var(--erp-text-muted)]" : "text-[var(--erp-danger)]"}`}>
+                              {normalizeUppercase(row.skuCode ?? "") || "Missing"}
+                            </td>
+                            <td className={`px-3 py-2 ${row.barcode?.trim() ? "text-[var(--erp-text-muted)]" : "text-[var(--erp-danger)]"}`}>
+                              {normalizeUppercase(row.barcode ?? "") || "Missing"}
+                            </td>
+                            <td className="px-3 py-2 text-[var(--erp-text-muted)]">
+                              {row.totalQty === null ? "—" : row.totalQty.toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2">
+                              {bulkQrQuantityMode === "PCS" ? (
+                                <span className="text-[var(--erp-text)]">1</span>
+                              ) : (
+                                <Input
+                                  aria-label={`Label quantity for ${row.orderNo} ${row.size ?? row.buyerSize ?? "size"}`}
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={1}
+                                  max={MAX_ORDER_QR_PRINT_REQUEST_LABELS}
+                                  step={1}
+                                  value={finishedGoodsQrQuantities[row.finishedGoodsId] ?? ""}
+                                  onChange={(event) => setFinishedGoodsQrQuantities((current) => ({
+                                    ...current,
+                                    [row.finishedGoodsId]: event.target.value,
+                                  }))}
+                                />
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </Table>
+                  </div>
+                )}
+              </>
+            ) : (
+            <>
             <Tabs
               ariaLabel="QR label quantity mode"
               compact
@@ -1103,6 +1443,8 @@ export default function MerchandisingOrdersPage({
               </Table>
             </div>
             )}
+            </>
+            )}
 
             {selectedQrTemplate && sampleQrOrder && (
             <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(16rem,1fr)]">
@@ -1138,7 +1480,7 @@ export default function MerchandisingOrdersPage({
                 <div className="flex justify-between gap-3">
                   <dt className="text-[var(--erp-text-muted)]">QR field</dt>
                   <dd className="text-right font-medium text-[var(--erp-text)]">
-                    {ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === selectedQrTemplate.qrFieldKey)?.label}
+                    {getQrTemplateFieldLabel(selectedQrTemplate.qrFieldKey)}
                   </dd>
                 </div>
               </dl>
@@ -1173,11 +1515,20 @@ export default function MerchandisingOrdersPage({
                 || isLoadingQrTemplates
                 || Boolean(qrTemplateError)
                 || !selectedQrTemplateId
+                || (
+                  bulkQrTemplateType === "FG_BARCODE"
+                  && (
+                    isLoadingFinishedGoodsQrRows
+                    || Boolean(finishedGoodsQrRowsError)
+                    || finishedGoodsQrRowsLoadedKey !== finishedGoodsQrSelectionKey
+                    || selectedFinishedGoodsQrRows.length === 0
+                  )
+                )
                 || selectedOrderIds.length < 2
                 || selectedOrderIds.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS
               }
             >
-              {isSubmittingQrRequest ? "Sending request..." : "Send one QR request"}
+              {isSubmittingQrRequest ? "Sending request..." : "Send one print request"}
             </Button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { resolveActivePosStockLocationByLeaf } from "@/lib/services/pos/pos-stock-location-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 import {
@@ -378,11 +379,12 @@ function mapGrnPayload(record: {
     total_qty: number;
     status: string;
     order: {
+      entity_id: string | null;
       article: string | null;
       styleName: string | null;
       brand: string | null;
       sizeGroup: string | null;
-      entity: { is_active: boolean; locations: Array<{ id: string; location_name: string }> } | null;
+      entity: { is_active: boolean; locations: Array<{ id: string; location_name: string; division_id: string }> } | null;
     };
   };
   lines: Array<{
@@ -445,6 +447,7 @@ function mapGrnPayload(record: {
       orderNo: record.workOrder.order_no,
       totalQty: record.workOrder.total_qty,
       status: record.workOrder.status,
+      entityId: record.workOrder.order.entity_id,
       article: record.workOrder.order.article,
       styleName: record.workOrder.order.styleName,
       brand: record.workOrder.order.brand,
@@ -637,7 +640,7 @@ const grnIncludes = {
               is_active: true,
               locations: {
                 where: { is_active: true },
-                select: { id: true, location_name: true },
+                select: { id: true, location_name: true, division_id: true },
                 orderBy: [{ sort_order: "asc" as const }, { location_name: "asc" as const }],
               },
             },
@@ -1014,7 +1017,13 @@ export async function verifyWorkOrderInventoryGrnLine(
   userId: string,
   grnId: string,
   lineId: string,
-  input: { actualReceivedQuantity: number; approvedQuantity: number; locationId?: string; actorEmail?: string | null },
+  input: {
+    actualReceivedQuantity: number;
+    approvedQuantity: number;
+    locationId?: string;
+    storageNodeId?: string;
+    actorEmail?: string | null;
+  },
 ) {
   if (!grnId.trim() || !lineId.trim()) throw new Error("Select a Work Order GRN size line to verify.");
   const { actualReceivedQuantity, approvedQuantity } = input;
@@ -1137,6 +1146,19 @@ export async function verifyWorkOrderInventoryGrnLine(
         if (hasStockToPost && (!stockLocation || !stockLocation.entity.is_active)) {
           throw new Error("Select an active finished-goods location under an active order entity.");
         }
+        let posStockLocation: Awaited<ReturnType<typeof resolveActivePosStockLocationByLeaf>> | null = null;
+        if (verificationSplit.generalInventoryQuantity > 0) {
+          if (!input.storageNodeId?.trim() || !stockLocation) {
+            throw new Error("Select an active Sub-sub-location for the general finished-goods quantity.");
+          }
+          posStockLocation = await resolveActivePosStockLocationByLeaf(
+            transaction,
+            organizationId,
+            input.storageNodeId.trim(),
+            stockLocation.entity_id,
+            stockLocation.id,
+          );
+        }
 
         const update = await transaction.workOrderInventoryGrnLine.updateMany({
           where: {
@@ -1211,6 +1233,7 @@ export async function verifyWorkOrderInventoryGrnLine(
             const receipt = await transaction.finishedGoodsGeneralStockReceipt.create({
               data: {
                 ...commonReceiptDetails,
+                storage_node_id: posStockLocation?.subSubLocationId ?? null,
                 quantity_in: verificationSplit.generalInventoryQuantity,
                 current_stock: verificationSplit.generalInventoryQuantity,
               },

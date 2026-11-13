@@ -10,6 +10,7 @@ import {
   filterMasterOptionsByParent,
   findMasterSelectionOption,
 } from "@/lib/master-data/master-data-selection";
+import { buildStyleColorVariantCode } from "@/lib/utilities/finished-goods-variant-code";
 
 import type { OrderFormState } from "./order-form-types";
 
@@ -40,6 +41,7 @@ export default function OrderDetailsTab({
   onOpenCreateMaster,
   onSizeGroupChange,
   isCreateMode = false,
+  isEditable = true,
 }: {
   form: OrderFormState;
   setForm: React.Dispatch<React.SetStateAction<OrderFormState>>;
@@ -48,6 +50,7 @@ export default function OrderDetailsTab({
   onOpenCreateMaster: (masterKey: string) => void;
   onSizeGroupChange?: (value: string) => void;
   isCreateMode?: boolean;
+  isEditable?: boolean;
 }) {
   const handleChange = (field: keyof OrderFormState, value: string | boolean) => {
     if (field === "sizeGroup" && typeof value === "string" && onSizeGroupChange) {
@@ -176,6 +179,9 @@ export default function OrderDetailsTab({
   };
 
   const selectedSizeGroup = String(form.sizeGroup ?? "");
+  const variantCode = isEditable
+    ? buildStyleColorVariantCode(form.styleName, form.colors)
+    : form.variantCode;
   const finishedGoodsOrderQty = calculateFinishedGoodsRows(form?.rows ?? []).orderQty;
   const sizeGroupOptions = Array.isArray(masterOptions["size-group"]) ? masterOptions["size-group"] : [];
   const selectedGroup = sizeGroupOptions.find((group) => group.label === selectedSizeGroup || group.id === selectedSizeGroup || group.value_id === selectedSizeGroup);
@@ -250,6 +256,17 @@ export default function OrderDetailsTab({
         </label>
 
         {renderMasterSelect("Colors", form.colors, (val) => handleChange("colors", val), "color", "Select color")}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-semibold text-slate-700">Variant Code</span>
+          <Input
+            aria-label="Persisted variant code"
+            type="text"
+            value={variantCode ?? ""}
+            readOnly
+            placeholder="Style Name + Colour"
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 shadow-sm"
+          />
+        </label>
         {renderMasterSelect("Season", form.season, (val) => handleChange("season", val), "season", "Select season")}
         <div className="flex flex-col gap-1.5">
           {renderMasterSelect("Size Group", form.sizeGroup, (val) => handleChange("sizeGroup", val), "size-group", "Select size group")}
@@ -306,6 +323,7 @@ export default function OrderDetailsTab({
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 shadow-sm"
           />
         </label>
+
       </div>
     </div>
   );

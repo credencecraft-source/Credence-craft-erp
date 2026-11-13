@@ -79,6 +79,24 @@ describe("merchandising order detail API", () => {
     expect(mocks.getOrderDetailSection).not.toHaveBeenCalled();
   });
 
+  it("rejects a workspace mismatch before querying organization or order data", async () => {
+    mocks.requireSessionUser.mockResolvedValue({
+      id: "user-1",
+      workspace_id: "workspace-1",
+    });
+
+    const response = await GET(
+      new Request(
+        "http://localhost/api/orders/order-1?organizationId=public-org-id&workspaceId=other-workspace",
+      ),
+      { params: Promise.resolve({ orderId: "order-1" }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.getOrganizationInternalIdForUser).not.toHaveBeenCalled();
+    expect(mocks.getOrderDetailSection).not.toHaveBeenCalled();
+  });
+
   it("denies order detail reads when VIEW_ORDERS is missing", async () => {
     mocks.requireOrganizationOrderManagementPermission.mockRejectedValueOnce(
       new Error("Access denied: This role does not have the required Order Management permission."),

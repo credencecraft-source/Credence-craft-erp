@@ -14,6 +14,8 @@ const BASE_ORGANIZATION_PERMISSIONS = [
   "UPDATE_ORDERS",
   "DELETE_ORDERS",
   "VIEW_POS_SALES",
+  "VIEW_POS_COUNTERS",
+  "CREATE_POS_COUNTERS",
   "VIEW_POS_SALES_RETURNS",
   "VIEW_FACTORY_PRODUCTION",
   "UPDATE_FACTORY_PRODUCTION",
@@ -264,6 +266,8 @@ export const ORGANIZATION_PERMISSION_LABELS: Readonly<Record<string, string>> = 
   UPDATE_ORDERS: "Update orders",
   DELETE_ORDERS: "Delete orders",
   VIEW_POS_SALES: "View POS sales and invoices",
+  VIEW_POS_COUNTERS: "View POS counters",
+  CREATE_POS_COUNTERS: "Create POS counters",
   VIEW_POS_SALES_RETURNS: "View POS sales-return source invoices and credits",
   VIEW_FACTORY_PRODUCTION: "View factory production",
   UPDATE_FACTORY_PRODUCTION: "Update factory production",
@@ -414,6 +418,8 @@ export const ORGANIZATION_PERMISSION_GROUPS = [
     permissions: [
       "CREATE_POS_SALES",
       "VIEW_POS_SALES",
+      "VIEW_POS_COUNTERS",
+      "CREATE_POS_COUNTERS",
       "CREATE_POS_SALES_RETURNS",
       "VIEW_POS_SALES_RETURNS",
       "SETTLE_POS_SALES_RETURN_REFUNDS",
@@ -488,6 +494,8 @@ export const ORGANIZATION_MODULE_PERMISSION_REQUIREMENTS: Readonly<Record<string
   pos: [
     "VIEW_POS_SALES",
     "CREATE_POS_SALES",
+    "VIEW_POS_COUNTERS",
+    "CREATE_POS_COUNTERS",
     "VIEW_POS_SALES_RETURNS",
     "CREATE_POS_SALES_RETURNS",
     "VIEW_POS_PURCHASE_RECORDS",
@@ -620,6 +628,7 @@ export function getOrganizationRoutePermissionRequirements(moduleKey: string, pa
         : ["VIEW_INVENTORY_STOCK", "ADJUST_RAW_MATERIAL_STOCK", "CREATE_FINISHED_GOODS_STOCK", "ADJUST_FINISHED_GOODS_STOCK"] as const;
   }
   if (moduleKey === "pos") {
+    if (pathname.includes("/counter")) return ["VIEW_POS_COUNTERS"] as const;
     if (pathname.includes("/offers")) return ["VIEW_POS_OFFERS", "MANAGE_POS_OFFERS"] as const;
     if (pathname.includes("/cupencode")) return ["VIEW_POS_COUPONS", "MANAGE_POS_COUPONS"] as const;
     if (pathname.includes("/purchase-bill")) return ["VIEW_POS_PURCHASE_RECORDS", "MANAGE_POS_PURCHASE_RECORDS", "POST_POS_PURCHASE_BILLS"] as const;

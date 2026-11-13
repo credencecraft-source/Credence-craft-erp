@@ -102,7 +102,9 @@ export async function createDummySampleGrns(
         data: {
           organization_id: organizationId,
           entity_id: purchaseOrder.entity_id,
+          entity_name_snapshot: purchaseOrder.entity.entity_name,
           location_id: location.id,
+          location_name_snapshot: location.location_name,
           purchase_order_id: purchaseOrder.id,
           receipt_no: await reserveChallanNumber(organizationId, "RM_GRN", transaction),
           received_by: actorId,
@@ -153,7 +155,7 @@ async function findOrCreateSampleReceivingLocation(
 ) {
   const activeLocation = await transaction.masterLocation.findFirst({
     where: { organization_id: organizationId, entity_id: entityId, is_active: true },
-    select: { id: true },
+    select: { id: true, location_name: true },
   });
   if (activeLocation) return activeLocation;
 
@@ -162,7 +164,7 @@ async function findOrCreateSampleReceivingLocation(
   const locationName = `${prefix} - ${suffix}`;
   const inactiveLocation = await transaction.masterLocation.findFirst({
     where: { organization_id: organizationId, entity_id: entityId, location_name: locationName },
-    select: { id: true },
+    select: { id: true, location_name: true },
   });
   if (inactiveLocation) {
     const activated = await transaction.masterLocation.updateMany({
@@ -184,7 +186,7 @@ async function findOrCreateSampleReceivingLocation(
 
   const division = await transaction.division.findFirst({
     where: { organization_id: organizationId, entity_id: entityId },
-    select: { id: true },
+    select: { id: true, location_name: true },
   });
   if (!division) throw new Error("The sample receiving Entity must have its organization-scoped Division.");
   const location = await transaction.masterLocation.create({

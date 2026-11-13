@@ -49,7 +49,7 @@ describe("POS purchase-bill detail API", () => {
       new Request("http://localhost/api/purchase-bill/bill-1", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "create-stock", locationId: "location-1" }),
+        body: JSON.stringify({ action: "create-stock", locationId: "location-1", storageNodeId: "leaf-1" }),
       }),
       context,
     );
@@ -65,6 +65,7 @@ describe("POS purchase-bill detail API", () => {
       "user-1",
       "bill-1",
       "location-1",
+      "leaf-1",
     );
   });
 

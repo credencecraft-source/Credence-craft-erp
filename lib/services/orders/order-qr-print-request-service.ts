@@ -13,10 +13,13 @@ import {
 import {
   buildRequestQrPayload,
   getNextOrderQrPrintRequestStatus,
+  MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS,
   MAX_ORDER_QR_PRINT_REQUEST_LABELS,
   type CreateOrderQrPrintRequestInput,
   type OrderQrPrintRequestStatus,
 } from "./order-qr-print-request-contract";
+
+export { listFinishedGoodsQrRows } from "./finished-goods-qr-row-service";
 
 function normalizeTemplateFields(value: unknown) {
   if (!Array.isArray(value)) return [];
@@ -69,6 +72,7 @@ function mapRequest(request: {
       normalizeTemplateFields(request.display_fields),
     ),
     bulkItems: getBulkItems(request.display_values),
+    isFinishedGoodsBarcode: savedValues.__finishedGoodsBarcode === true,
     pageSetup,
     printQuantity: getPrintQuantity(request.display_values),
     displayFieldStyles: design.displayFieldStyles,
@@ -264,6 +268,7 @@ export async function createOrderQrPrintRequest(
     };
     let requestItems: RequestItem[];
     let sourceType: "ORDER" | "POS_PURCHASE_BILL";
+    let isFinishedGoodsBarcodeRequest = false;
     let requestOrderId: string | null = null;
     let requestPurchaseBillId: string | null = null;
     let requestOrderNo: string;
@@ -375,11 +380,16 @@ export async function createOrderQrPrintRequest(
         orderQty: true,
         deliveryDate: true,
       };
-      const orders = input.bulkOrders
+      const selectedFinishedGoodsOrderIds = input.finishedGoodsItems
+        ? [...new Set(input.finishedGoodsItems.map(({ orderId }) => orderId))]
+        : undefined;
+      const selectedOrderIds = input.bulkOrders?.map(({ orderId }) => orderId)
+        ?? selectedFinishedGoodsOrderIds;
+      const orders = selectedOrderIds
         ? await transaction.merchandisingOrder.findMany({
           where: {
             organization_id: organizationId,
-            id: { in: input.bulkOrders.map(({ orderId }) => orderId) },
+            id: { in: selectedOrderIds },
           },
           select: orderSelect,
         })
@@ -390,7 +400,7 @@ export async function createOrderQrPrintRequest(
       const scopedOrders = Array.isArray(orders) ? orders : orders ? [orders] : [];
       if (
         scopedOrders.length === 0
-        || (input.bulkOrders && scopedOrders.length !== input.bulkOrders.length)
+        || (selectedOrderIds && scopedOrders.length !== selectedOrderIds.length)
       ) {
         return { success: false as const, reason: "ORDER_NOT_FOUND" as const };
       }
@@ -403,31 +413,148 @@ export async function createOrderQrPrintRequest(
         : [{ order: scopedOrders[0], quantity: input.quantityMode === "PCS"
           ? 1
           : input.bulkQuantity ?? scopedOrders[0].orderQty ?? 0 }];
-      requestItems = selectedOrders.map(({ order, quantity }) => ({
-        id: order.id,
-        orderNo: order.orderNo,
-        styleName: order.styleName ?? "",
-        quantity: Number(quantity),
-        fields: {
+      if (input.finishedGoodsItems) {
+        const selectedRows = await transaction.finishedGoodsSizeWise.findMany({
+          where: {
+            order_id: { in: selectedFinishedGoodsOrderIds },
+            id: { in: input.finishedGoodsItems.map(({ finishedGoodsId }) => finishedGoodsId) },
+          },
+          orderBy: [{ order_id: "asc" }, { id: "asc" }],
+          take: MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS + 1,
+          select: {
+            id: true,
+            order_id: true,
+            buyerSize: true,
+            size: true,
+            sku_code: true,
+            barcode: true,
+            totalQty: true,
+          },
+        });
+        const quantityByFinishedGoodsId = new Map(
+          input.finishedGoodsItems.map((item) => [item.finishedGoodsId, item]),
+        );
+        if (
+          selectedRows.length !== input.finishedGoodsItems.length
+          || selectedRows.some((row) =>
+            quantityByFinishedGoodsId.get(row.id)?.orderId !== row.order_id)
+        ) {
+          return { success: false as const, reason: "FG_VARIANT_NOT_FOUND" as const };
+        }
+        if (selectedRows.some((row) =>
+          Number(row.totalQty ?? 0) > 0
+          && (!row.sku_code?.trim() || !row.barcode?.trim())
+        )) {
+          return { success: false as const, reason: "FG_IDENTIFIERS_MISSING" as const };
+        }
+        requestItems = selectedRows.flatMap((row) => {
+          const order = ordersById.get(row.order_id);
+          const selection = quantityByFinishedGoodsId.get(row.id);
+          if (!order || !selection) return [];
+          const sizeLabel = row.size ?? row.buyerSize ?? "";
+          const fields: Partial<Record<QrTemplateFieldKey, string | number | null>> = {
+            fgBarcode: row.barcode,
+            fgSkuCode: row.sku_code,
+            fgSize: row.size,
+            fgBuyerSize: row.buyerSize,
+            fgOrderNo: order.orderNo,
+            fgStyleName: order.styleName,
+            fgArticle: order.article,
+            fgColor: order.colors,
+            fgQuantity: row.totalQty,
+          };
+          return [{
+            id: order.id,
+            orderNo: `${order.orderNo}-${sizeLabel || row.id}`,
+            styleName: order.styleName ?? "",
+            quantity: selection.quantity,
+            fields,
+          }];
+        });
+        requestOrderId = scopedOrders[0].id;
+        requestOrderNo = scopedOrders.length > 1
+          ? `FG BARCODE: ${scopedOrders.length} ORDERS`
+          : scopedOrders[0].orderNo;
+        isFinishedGoodsBarcodeRequest = true;
+      } else if (input.finishedGoodsRows) {
+        const order = scopedOrders[0];
+        const selectedRows = await transaction.finishedGoodsSizeWise.findMany({
+          where: {
+            order_id: order.id,
+            id: { in: input.finishedGoodsRows.map(({ finishedGoodsId }) => finishedGoodsId) },
+          },
+          select: {
+            id: true,
+            buyerSize: true,
+            size: true,
+            sku_code: true,
+            barcode: true,
+            totalQty: true,
+          },
+        });
+        if (selectedRows.length !== input.finishedGoodsRows.length) {
+          return { success: false as const, reason: "FG_VARIANT_NOT_FOUND" as const };
+        }
+        const rowsById = new Map(selectedRows.map((row) => [row.id, row]));
+        requestItems = input.finishedGoodsRows.flatMap(({ finishedGoodsId, quantity }) => {
+          const row = rowsById.get(finishedGoodsId);
+          if (!row) return [];
+          if (!row.sku_code?.trim() || !row.barcode?.trim()) {
+            return [];
+          }
+          const sizeLabel = row.size ?? row.buyerSize ?? "";
+          const fields: Partial<Record<QrTemplateFieldKey, string | number | null>> = {
+            fgBarcode: row.barcode,
+            fgSkuCode: row.sku_code,
+            fgSize: row.size,
+            fgBuyerSize: row.buyerSize,
+            fgOrderNo: order.orderNo,
+            fgStyleName: order.styleName,
+            fgArticle: order.article,
+            fgColor: order.colors,
+            fgQuantity: row.totalQty,
+          };
+          return [{
+            id: order.id,
+            orderNo: `${order.orderNo}-${sizeLabel || row.id}`,
+            styleName: order.styleName ?? "",
+            quantity,
+            fields,
+          }];
+        });
+        if (requestItems.length !== selectedRows.length) {
+          return { success: false as const, reason: "FG_IDENTIFIERS_MISSING" as const };
+        }
+        requestOrderId = order.id;
+        requestOrderNo = order.orderNo;
+        isFinishedGoodsBarcodeRequest = true;
+      } else {
+        requestItems = selectedOrders.map(({ order, quantity }) => ({
+          id: order.id,
           orderNo: order.orderNo,
-          entityName: order.entityName,
-          category: order.category,
-          subCategory: order.subCategory,
-          season: order.season,
-          article: order.article,
-          styleName: order.styleName,
-          colors: order.colors,
-          buyer: order.buyer,
-          brand: order.brand,
-          sizeGroup: order.sizeGroup,
-          orderQty: quantity,
-          deliveryDate: order.deliveryDate?.toISOString().slice(0, 10) ?? null,
-        },
-      }));
-      requestOrderId = selectedOrders[0].order.id;
-      requestOrderNo = input.bulkOrders
-        ? `BULK: ${selectedOrders.length} ORDERS`
-        : selectedOrders[0].order.orderNo;
+          styleName: order.styleName ?? "",
+          quantity: Number(quantity),
+          fields: {
+            orderNo: order.orderNo,
+            entityName: order.entityName,
+            category: order.category,
+            subCategory: order.subCategory,
+            season: order.season,
+            article: order.article,
+            styleName: order.styleName,
+            colors: order.colors,
+            buyer: order.buyer,
+            brand: order.brand,
+            sizeGroup: order.sizeGroup,
+            orderQty: quantity,
+            deliveryDate: order.deliveryDate?.toISOString().slice(0, 10) ?? null,
+          },
+        }));
+        requestOrderId = selectedOrders[0].order.id;
+        requestOrderNo = input.bulkOrders
+          ? `BULK: ${selectedOrders.length} ORDERS`
+          : selectedOrders[0].order.orderNo;
+      }
     }
 
     const requestedLabelCount = requestItems.reduce((total, item) => total + item.quantity, 0);
@@ -444,7 +571,9 @@ export async function createOrderQrPrintRequest(
       where: {
         organization_id: organizationId,
         id: input.templateId,
-        type: sourceType === "POS_PURCHASE_BILL" ? "POS_ITEM_BARCODE" : "ORDER_TAGS",
+        type: isFinishedGoodsBarcodeRequest
+          ? "FG_BARCODE"
+          : sourceType === "POS_PURCHASE_BILL" ? "POS_ITEM_BARCODE" : "ORDER_TAGS",
       },
       select: {
         name: true,
@@ -499,7 +628,9 @@ export async function createOrderQrPrintRequest(
     const qrPayload = bulkSnapshots.length > 1
       ? JSON.stringify(bulkSnapshots.map(({ orderNo, qrPayload }) => ({ orderNo, qrPayload })))
       : bulkSnapshots[0].qrPayload;
-    const shouldStoreBulkItems = sourceType === "POS_PURCHASE_BILL" || bulkSnapshots.length > 1;
+    const shouldStoreBulkItems = isFinishedGoodsBarcodeRequest
+      || sourceType === "POS_PURCHASE_BILL"
+      || bulkSnapshots.length > 1;
 
     const request = await transaction.merchandisingOrderQrPrintRequest.create({
       data: {
@@ -518,7 +649,11 @@ export async function createOrderQrPrintRequest(
           __printQuantity: requestedLabelCount,
           __pageSetup: design.pageSetup,
           ...(shouldStoreBulkItems
-            ? { __displayFields: displayFields, __bulkItems: bulkSnapshots }
+            ? {
+              __displayFields: displayFields,
+              __bulkItems: bulkSnapshots,
+              ...(isFinishedGoodsBarcodeRequest ? { __finishedGoodsBarcode: true } : {}),
+            }
             : {}),
         },
         display_field_styles: serializeOrderQrTemplateDesign(

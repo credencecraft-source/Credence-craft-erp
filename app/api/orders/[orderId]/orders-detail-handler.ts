@@ -21,16 +21,23 @@ export async function GET(request: Request, { params }: { params: Promise<{ orde
   try {
     const { orderId } = await params;
     const user = await requireSessionUser();
-    const organizationId = new URL(request.url).searchParams.get("organizationId");
+    const searchParams = new URL(request.url).searchParams;
+    const organizationId = searchParams.get("organizationId");
     if (!organizationId) {
       return NextResponse.json({ error: "Organization ID is required." }, { status: 400 });
+    }
+    const requestedWorkspaceId = searchParams.get("workspaceId");
+    if (
+      requestedWorkspaceId
+      && (!user.workspace_id || requestedWorkspaceId !== user.workspace_id)
+    ) {
+      return NextResponse.json({ error: "Workspace access denied." }, { status: 403 });
     }
     const organization = await getOrganizationInternalIdForUser(user.id, organizationId);
     if (!organization) {
       return NextResponse.json({ error: "Access denied or organization not found." }, { status: 403 });
     }
     await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/order", "view");
-    const searchParams = new URL(request.url).searchParams;
     const requestedSection = searchParams.get("section");
     if (requestedSection && !ORDER_DETAIL_SECTIONS.has(requestedSection as OrderDetailSection)) {
       return NextResponse.json({ error: "Invalid order detail section." }, { status: 400 });

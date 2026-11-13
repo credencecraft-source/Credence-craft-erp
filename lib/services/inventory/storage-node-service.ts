@@ -292,6 +292,7 @@ export async function listStorageNodesForOrganization(
       node_name: node.node_name,
       entity_id: node.entity_id,
       master_location_id: node.master_location_id ?? null,
+      site_location_id: site?.master_location_id ?? null,
       parent_node_id: node.parent_node_id,
       parent_node_type: node.parent_node_type,
       path: nodePath(chain),

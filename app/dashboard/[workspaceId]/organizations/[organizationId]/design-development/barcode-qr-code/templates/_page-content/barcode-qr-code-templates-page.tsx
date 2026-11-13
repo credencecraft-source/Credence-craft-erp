@@ -6,7 +6,11 @@ import { useRouter } from "next/navigation";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
-import { getQrTemplateFieldLabel } from "@/lib/services/orders/order-qr-template-contract";
+import {
+  getQrTemplateFieldLabel,
+  ORDER_QR_TEMPLATE_TYPES,
+  getQrTemplateTypeLabel,
+} from "@/lib/services/orders/order-qr-template-contract";
 
 type TemplateReportRow = {
   id: string;
@@ -78,9 +82,11 @@ export default function BarcodeQrCodeTemplatesPage({
         setRecords(templates.map((template) => ({
           id: template.id,
           name: template.name,
-          type: template.type === "ORDER_TAGS"
-            ? "Order Tags"
-            : template.type === "POS_ITEM_BARCODE" ? "POS Item Barcode" : template.type,
+          type: ORDER_QR_TEMPLATE_TYPES.includes(
+            template.type as (typeof ORDER_QR_TEMPLATE_TYPES)[number],
+          )
+            ? getQrTemplateTypeLabel(template.type as (typeof ORDER_QR_TEMPLATE_TYPES)[number])
+            : template.type,
           fields: template.fieldKeys
             .map((key) => getQrTemplateFieldLabel(key as Parameters<typeof getQrTemplateFieldLabel>[0]))
             .join(", "),

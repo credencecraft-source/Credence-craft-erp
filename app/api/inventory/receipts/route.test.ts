@@ -68,7 +68,7 @@ describe("inventory receipt verification posting", () => {
       id: "po-1",
       status: "APPROVED",
       entity_id: "entity-1",
-      entity: { is_active: true },
+      entity: { is_active: true, entity_name: "Factory" },
       lines: [{ id: "po-line-1", quantity: new Prisma.Decimal("8"), raw_material: "Cotton" }],
     });
     mocks.transaction.masterLocation.findFirst.mockResolvedValue({ id: "location-1", entity_id: "entity-1", location_name: "Receiving" });
@@ -88,10 +88,22 @@ describe("inventory receipt verification posting", () => {
   });
 
   it("includes saved verification state for receipt report rows", async () => {
-    mocks.inventoryReceiptFindMany.mockResolvedValue([{ id: "receipt-1" }]);
+    mocks.inventoryReceiptFindMany.mockResolvedValue([{
+      id: "receipt-1",
+      entity_name_snapshot: "FROZEN ENTITY",
+      location_name_snapshot: "FROZEN LOCATION",
+      entity: { entity_name: "CURRENT ENTITY" },
+      location: { location_name: "CURRENT LOCATION" },
+    }]);
     const response = await GET(new Request("http://localhost/api/inventory/receipts?organizationId=public-org"));
 
     expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      receipts: [{
+        entity: { entity_name: "FROZEN ENTITY" },
+        location: { location_name: "FROZEN LOCATION" },
+      }],
+    });
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
     expect(mocks.inventoryReceiptFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1" },
@@ -170,6 +182,8 @@ describe("inventory receipt verification posting", () => {
     const receiptCreate = mocks.transaction.inventoryReceipt.create.mock.calls[0][0];
     expect(receiptCreate.data).toMatchObject({
       organization_id: "internal-org-1",
+      entity_name_snapshot: "Factory",
+      location_name_snapshot: "Receiving",
       purchase_order_id: "po-1",
       location_id: "location-1",
     });

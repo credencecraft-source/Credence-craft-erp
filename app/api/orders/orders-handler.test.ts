@@ -93,7 +93,6 @@ describe("merchandising orders list API", () => {
       search: "Jacket",
       filters,
       purpose: undefined,
-      includeArticleMetadata: true,
     });
   });
 

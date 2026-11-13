@@ -20,6 +20,7 @@ export type OrderQrPrintPreviewMode =
   | "single-sticker";
 export const MAX_ORDER_QR_PRINT_REQUEST_ORDERS = 100;
 export const MAX_ORDER_QR_PRINT_REQUEST_LABELS = 10_000;
+export const MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS = 1_000;
 
 export function getOrderQrPrintPreviewMode(
   printerType: string,
@@ -32,6 +33,8 @@ export function getOrderQrPrintPreviewMode(
 export type CreateOrderQrPrintRequestInput = {
   orderId?: string;
   bulkOrders?: Array<{ orderId: string; quantity: number }>;
+  finishedGoodsItems?: Array<{ orderId: string; finishedGoodsId: string; quantity: number }>;
+  finishedGoodsRows?: Array<{ finishedGoodsId: string; quantity: number }>;
   purchaseBillId?: string;
   billLines?: Array<{ billLineId: string; quantity: number }>;
   templateId: string;
@@ -50,6 +53,8 @@ export function parseCreateOrderQrPrintRequestInput(
   }
   const orderId = typeof value.orderId === "string" ? value.orderId.trim() : "";
   let bulkOrders: Array<{ orderId: string; quantity: number }> | undefined;
+  let finishedGoodsItems: Array<{ orderId: string; finishedGoodsId: string; quantity: number }> | undefined;
+  let finishedGoodsRows: Array<{ finishedGoodsId: string; quantity: number }> | undefined;
   const purchaseBillId = typeof value.purchaseBillId === "string"
     ? value.purchaseBillId.trim()
     : "";
@@ -95,6 +100,110 @@ export function parseCreateOrderQrPrintRequestInput(
       };
     }
     bulkOrders = parsedBulkOrders;
+  }
+  if (value.finishedGoodsItems !== undefined) {
+    if (
+      !Array.isArray(value.finishedGoodsItems)
+      || value.finishedGoodsItems.length === 0
+      || value.finishedGoodsItems.length > MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS
+    ) {
+      return {
+        success: false,
+        error: `Select between 1 and ${MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS.toLocaleString()} finished-goods sizes for a barcode request.`,
+      };
+    }
+    const parsedItems: Array<{ orderId: string; finishedGoodsId: string; quantity: number }> = [];
+    const seenFinishedGoodsIds = new Set<string>();
+    const selectedOrderIds = new Set<string>();
+    for (const entry of value.finishedGoodsItems) {
+      if (
+        !isRecord(entry)
+        || typeof entry.orderId !== "string"
+        || !entry.orderId.trim()
+        || entry.orderId.length > 100
+        || typeof entry.finishedGoodsId !== "string"
+        || !entry.finishedGoodsId.trim()
+        || entry.finishedGoodsId.length > 100
+      ) {
+        return {
+          success: false,
+          error: "Every finished-goods label must identify its order and size.",
+        };
+      }
+      const selectedOrderId = entry.orderId.trim();
+      const finishedGoodsId = entry.finishedGoodsId.trim();
+      if (seenFinishedGoodsIds.has(finishedGoodsId)) {
+        return { success: false, error: "A finished-goods size cannot be selected more than once." };
+      }
+      if (
+        typeof entry.quantity !== "number"
+        || !Number.isSafeInteger(entry.quantity)
+        || entry.quantity < 1
+        || entry.quantity > MAX_ORDER_QR_PRINT_REQUEST_LABELS
+      ) {
+        return { success: false, error: "Each finished-goods label quantity must be a positive whole number." };
+      }
+      seenFinishedGoodsIds.add(finishedGoodsId);
+      selectedOrderIds.add(selectedOrderId);
+      parsedItems.push({ orderId: selectedOrderId, finishedGoodsId, quantity: entry.quantity });
+    }
+    if (selectedOrderIds.size > MAX_ORDER_QR_PRINT_REQUEST_ORDERS) {
+      return {
+        success: false,
+        error: `A finished-goods barcode request can contain up to ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} orders.`,
+      };
+    }
+    if (parsedItems.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
+      return {
+        success: false,
+        error: `A QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+      };
+    }
+    finishedGoodsItems = parsedItems;
+  }
+  if (value.finishedGoodsRows !== undefined) {
+    if (
+      !Array.isArray(value.finishedGoodsRows)
+      || value.finishedGoodsRows.length === 0
+      || value.finishedGoodsRows.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS
+    ) {
+      return {
+        success: false,
+        error: `Select between 1 and ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} finished-goods sizes.`,
+      };
+    }
+    const parsedRows: Array<{ finishedGoodsId: string; quantity: number }> = [];
+    const seenIds = new Set<string>();
+    for (const entry of value.finishedGoodsRows) {
+      if (
+        !isRecord(entry)
+        || typeof entry.finishedGoodsId !== "string"
+        || !entry.finishedGoodsId.trim()
+      ) {
+        return { success: false, error: "Every finished-goods size must have a valid ID." };
+      }
+      const finishedGoodsId = entry.finishedGoodsId.trim();
+      if (seenIds.has(finishedGoodsId)) {
+        return { success: false, error: "A finished-goods size cannot be selected more than once." };
+      }
+      if (
+        typeof entry.quantity !== "number"
+        || !Number.isSafeInteger(entry.quantity)
+        || entry.quantity < 1
+        || entry.quantity > MAX_ORDER_QR_PRINT_REQUEST_LABELS
+      ) {
+        return { success: false, error: "Each finished-goods label quantity must be a positive whole number." };
+      }
+      seenIds.add(finishedGoodsId);
+      parsedRows.push({ finishedGoodsId, quantity: entry.quantity });
+    }
+    if (parsedRows.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
+      return {
+        success: false,
+        error: `A QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+      };
+    }
+    finishedGoodsRows = parsedRows;
   }
   if (value.billLines !== undefined) {
     if (
@@ -142,7 +251,7 @@ export function parseCreateOrderQrPrintRequestInput(
     }
     billLines = parsedBillLines;
   }
-  const hasOrderSource = Boolean(orderId || bulkOrders);
+  const hasOrderSource = Boolean(orderId || bulkOrders || finishedGoodsItems);
   const hasPurchaseBillSource = Boolean(purchaseBillId || billLines);
   if (hasPurchaseBillSource && (!purchaseBillId || !billLines)) {
     return { success: false, error: "A purchase bill and at least one of its lines are required." };
@@ -150,8 +259,21 @@ export function parseCreateOrderQrPrintRequestInput(
   if (!hasOrderSource && !hasPurchaseBillSource) {
     return { success: false, error: "A valid order is required." };
   }
-  if ((orderId && bulkOrders) || (hasOrderSource && hasPurchaseBillSource)) {
+  if (
+    (orderId && bulkOrders)
+    || (hasOrderSource && hasPurchaseBillSource)
+    || (finishedGoodsItems && (orderId || bulkOrders || finishedGoodsRows))
+  ) {
     return { success: false, error: "Submit either an order request or a purchase bill request, not both." };
+  }
+  if (
+    (finishedGoodsRows && (!orderId || bulkOrders || finishedGoodsItems || hasPurchaseBillSource))
+    || (!finishedGoodsRows && value.finishedGoodsRows !== undefined)
+  ) {
+    return {
+      success: false,
+      error: "Finished-goods labels require one order and cannot be combined with bulk orders or purchase bills.",
+    };
   }
   if (
     typeof value.requestType !== "string"
@@ -175,6 +297,13 @@ export function parseCreateOrderQrPrintRequestInput(
     && bulkOrders.some((item) => item.quantity !== 1)
   ) {
     return { success: false, error: "PCS requests must use quantity 1 for every selected order." };
+  }
+  if (
+    finishedGoodsItems
+    && value.quantityMode === "PCS"
+    && finishedGoodsItems.some((item) => item.quantity !== 1)
+  ) {
+    return { success: false, error: "PCS requests must use quantity 1 for every selected finished-goods size." };
   }
   if (
     billLines
@@ -201,6 +330,8 @@ export function parseCreateOrderQrPrintRequestInput(
     data: {
       ...(orderId ? { orderId } : {}),
       ...(bulkOrders ? { bulkOrders } : {}),
+      ...(finishedGoodsItems ? { finishedGoodsItems } : {}),
+      ...(finishedGoodsRows ? { finishedGoodsRows } : {}),
       ...(purchaseBillId ? { purchaseBillId } : {}),
       ...(billLines ? { billLines } : {}),
       templateId: value.templateId.trim(),

@@ -3,8 +3,9 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { ensureDefaultProcessTemplate } from "@/lib/services/organizations/organization-process-template-service";
-import { reserveNextOrderNumbers } from "@/lib/services/orders/order-service";
+import { reserveNextOrderNumbers, resolveOrderMasterSnapshots } from "@/lib/services/orders/order-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
+import { calculatePurchaseOrderGrandTotal } from "@/lib/services/orders/purchase-order-financial-snapshot";
 import { createGroupedPurchaseOrder } from "@/lib/services/orders/grouped-purchase-order-service";
 import { createMasterPurchaseOrder } from "@/lib/services/orders/master-purchase-order-service";
 import { generatePurchaseOrders, submitPurchaseOrderForApproval } from "@/lib/services/orders/purchase-order-service";
@@ -20,6 +21,7 @@ import {
   validateMonthlyFormLimits,
   validateRestrictedFormFields,
 } from "@/lib/services/platform/segment-form-restriction-service";
+import { buildPersistedOrderVariantCode } from "@/lib/utilities/finished-goods-variant-code";
 
 type DemoMasterRecord = { moduleKey: string; id: string; sourceType?: "STOCK" | "VENDOR" };
 const SAMPLE_DATASET_VERSION = "apparel-10-orders-2026-10";
@@ -577,6 +579,7 @@ async function createOrganizationDummyDataForUser(
       article: sampleOrder.article,
       styleName: sampleOrder.article,
       colors: sampleOrder.color,
+      variantCode: buildPersistedOrderVariantCode(sampleOrder.article, sampleOrder.color),
       buyer: sampleOrder.buyer,
       brand: sampleOrder.brand,
       sizeGroup: sampleOrder.sizeGroup,
@@ -996,6 +999,14 @@ async function createOrganizationDummyDataForUser(
 
     const orderNumbers = await reserveNextOrderNumbers(organization.id, SAMPLE_VALUES.sampleOrders.length, transaction);
     const processTemplateId = await ensureDefaultProcessTemplate(transaction, organization.id);
+    const masterSnapshots = await resolveOrderMasterSnapshots(
+      transaction,
+      organization.id,
+      SAMPLE_VALUES.sampleOrders.map((sampleOrder) => ({
+        article: sampleOrder.article,
+        colors: sampleOrder.color,
+      })),
+    );
     const orderRows = SAMPLE_VALUES.sampleOrders.map((sampleOrder, orderIndex) => ({
       organization_id: organization.id,
       process_template_id: processTemplateId,
@@ -1006,8 +1017,12 @@ async function createOrganizationDummyDataForUser(
       subCategory: sampleOrder.subCategory,
       season: SAMPLE_VALUES.season,
       article: sampleOrder.article,
+      articleCode: masterSnapshots[orderIndex].articleCode,
+      master_article_id: masterSnapshots[orderIndex].master_article_id,
+      master_variant_id: masterSnapshots[orderIndex].master_variant_id,
       styleName: sampleOrder.article,
       colors: sampleOrder.color,
+      variantCode: buildPersistedOrderVariantCode(sampleOrder.article, sampleOrder.color),
       buyer: sampleOrder.buyer,
       brand: sampleOrder.brand,
       sizeGroup: sampleOrder.sizeGroup,
@@ -1190,11 +1205,18 @@ async function createOrganizationDummyDataForUser(
         const order = createdSampleOrders.find((sampleOrder) => sampleOrder.id === row.order_id);
         if (!order) throw new Error("A sample BOM row could not be matched to its order.");
         const sampleOrder = sampleOrdersByNumber.get(order.orderNo);
+        const orderNo = order.orderNo.trim();
+        const styleName = sampleOrder?.styleName?.trim();
+        if (!orderNo || !styleName) {
+          throw new Error("Every sample order needs an Order No and Style Name before grouped procurement.");
+        }
+        const requiredQty = new Prisma.Decimal(row.totalRequiredQty ?? row.requiredQty ?? 0);
+        const lineTotal = requiredQty.mul(new Prisma.Decimal(vendorPrice));
         return {
           source_bom_item_id: row.id,
           source_order_id: row.order_id,
-          order_no: order.orderNo,
-          style_name: sampleOrder?.article ?? null,
+          order_no: orderNo,
+          style_name: styleName,
           brand: sampleOrder?.brand ?? null,
           category: row.category,
           category_type: row.categoryType,
@@ -1203,10 +1225,10 @@ async function createOrganizationDummyDataForUser(
           stock_uom: row.stockUom,
           internal_consumption: row.internalConsumption,
           internal_price_bom: row.internalPrice,
-          required_qty: row.totalRequiredQty ?? row.requiredQty ?? "0",
-          grouped_qty: row.totalRequiredQty ?? row.requiredQty ?? "0",
-          vendor_price: vendorPrice,
-          total_spend: Number(row.totalRequiredQty ?? row.requiredQty) * vendorPrice,
+          required_qty: requiredQty,
+          grouped_qty: requiredQty,
+          vendor_price: new Prisma.Decimal(vendorPrice),
+          total_spend: lineTotal,
         };
       });
       const groupedPoInternalNo = `GPO-${batch.id}-${randomUUID().slice(0, 8).toUpperCase()}`;
@@ -1214,6 +1236,7 @@ async function createOrganizationDummyDataForUser(
         data: {
           organization_id: organization.id,
           entity_id: entity.id,
+          entity_name_snapshot: entity.entity_name,
           vendor_id: vendorId,
           grouped_po_no: groupedPoInternalNo,
           display_no: Number(groupedPoNo.replace("GP-", "")),
@@ -1246,6 +1269,7 @@ async function createOrganizationDummyDataForUser(
         data: {
           organization_id: organization.id,
           entity_id: entity.id,
+          entity_name_snapshot: entity.entity_name,
           vendor_id: vendorId,
           master_po_no: `MPO-${batch.id}-${randomUUID().slice(0, 8).toUpperCase()}`,
           display_no: Number(masterGroupNumber.replace("MGP-", "")),
@@ -1304,9 +1328,12 @@ async function createOrganizationDummyDataForUser(
         const sourceValues = master.sourceRecords.flatMap((source) => [source.groupedPurchaseOrder.gst, source.groupedPurchaseOrder.hsn_code]);
         const gst = sourceValues.find((value) => value !== null && typeof value !== "string") ?? null;
         const hsnCode = sourceValues.find((value): value is string => typeof value === "string") ?? null;
-        const quantity = master.lines.reduce((total, line) => total + Number(line.grouped_qty), 0);
+        const quantity = master.lines.reduce((total, line) => total.plus(line.grouped_qty), new Prisma.Decimal(0));
         const price = master.lines.find((line) => line.vendor_price !== null)?.vendor_price ?? null;
-        const total = master.lines.reduce((sum, line) => sum + Number(line.total_spend ?? (Number(line.grouped_qty) * Number(line.vendor_price ?? 0))), 0);
+        const total = master.lines.reduce(
+          (sum, line) => sum.plus(line.total_spend ?? line.grouped_qty.mul(line.vendor_price ?? 0)),
+          new Prisma.Decimal(0),
+        );
         return {
           source_master_line_id: master.lines[0]?.id ?? master.id,
           master_purchase_order_id: master.id,
@@ -1322,10 +1349,13 @@ async function createOrganizationDummyDataForUser(
           total,
         };
       });
+      const grandTotal = calculatePurchaseOrderGrandTotal(purchaseOrderLines);
       const purchaseOrder = await transaction.purchaseOrder.create({
         data: {
           organization_id: organization.id,
           entity_id: masters[0].entity_id,
+          entity_name_snapshot: masters[0].entity_name_snapshot,
+          grand_total: grandTotal,
           vendor_id: masters[0].vendor_id,
           purchase_order_no: `PO-${batch.id}-${randomUUID().slice(0, 8).toUpperCase()}`,
           display_no: Number(purchaseOrderNumber.replace("PO-", "")),

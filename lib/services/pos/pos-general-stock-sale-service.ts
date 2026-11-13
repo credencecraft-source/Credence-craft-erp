@@ -19,6 +19,10 @@ import { GENERAL_FINISHED_GOODS_SKU_SOURCES } from "@/lib/services/inventory/fin
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
+import {
+  resolveActivePosStockLocation,
+  type PosStockHierarchy,
+} from "@/lib/services/pos/pos-stock-location-service";
 
 type PosSaleLineInput = {
   stockId: string;
@@ -47,6 +51,7 @@ type CreatePosSaleInput = {
   actorId: string | null;
   requestKey: string;
   entityId: string;
+  stockHierarchy?: PosStockHierarchy;
   invoiceDate: string;
   customer?: string | null;
   customerContactId?: string | null;
@@ -70,6 +75,7 @@ type PosSaleStockRecord = {
   product_category: string | null;
   sub_product_category: string | null;
   location_id: string;
+  storage_node_id: string | null;
   current_stock: number | Prisma.Decimal;
   sales_price?: number | Prisma.Decimal | null;
   mrp?: number | Prisma.Decimal | null;
@@ -338,6 +344,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         store_credit_applied_amount: true,
         coupon_discount_amount: true,
         shipping_address: true,
+        entity_name_snapshot: true,
         entity: { select: { entity_name: true } },
         couponRedemption: { select: { coupon_code: true } },
         issuedCoupon: { select: { coupon_code: true } },
@@ -349,7 +356,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         invoiceNo: existingInvoice.invoice_no,
         invoiceDate: existingInvoice.invoice_date,
         customer: existingInvoice.customer,
-        entityName: existingInvoice.entity?.entity_name ?? "",
+        entityName: existingInvoice.entity_name_snapshot ?? existingInvoice.entity?.entity_name ?? "",
         taxMode: existingInvoice.tax_mode as "LOCAL" | "INTERSTATE",
         subtotal: existingInvoice.subtotal.toFixed(2),
         cgstAmount: existingInvoice.cgst_amount.toFixed(2),
@@ -369,6 +376,15 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       select: { id: true, entity_name: true },
     });
     if (!entity) throw new Error("Select an active Entity belonging to this organization.");
+    if (salesChannel === "COUNTER" && !input.stockHierarchy) {
+      throw new Error("Select the complete stock hierarchy through an active Sub-sub-location.");
+    }
+    const stockLocation = input.stockHierarchy
+      ? await resolveActivePosStockLocation(transaction, input.organizationId, input.stockHierarchy)
+      : null;
+    if (stockLocation && stockLocation.entityId !== entity.id) {
+      throw new Error("The stock hierarchy must belong to the selected Entity.");
+    }
     let invoiceTaxMode = input.taxMode;
     if (salesChannel === "ONLINE_STORE" && shippingAddress) {
       const organization = await transaction.organization.findFirst({
@@ -408,7 +424,11 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     const [generalReceiptRecords, skuStockRecords] = await Promise.all([
       generalReceiptIds.length
         ? transaction.finishedGoodsGeneralStockReceipt.findMany({
-            where: { organization_id: input.organizationId, id: { in: generalReceiptIds } },
+            where: {
+              organization_id: input.organizationId,
+              id: { in: generalReceiptIds },
+              ...(stockLocation ? { storage_node_id: stockLocation.subSubLocationId } : {}),
+            },
             select: {
               id: true,
               entity_id: true,
@@ -419,6 +439,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
               colour: true,
               product_category: true,
               location_id: true,
+              storage_node_id: true,
               current_stock: true,
             },
           })
@@ -429,6 +450,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
               organization_id: input.organizationId,
               id: { in: skuStockIds },
               source: { in: [...GENERAL_FINISHED_GOODS_SKU_SOURCES] },
+              ...(stockLocation ? { storage_node_id: stockLocation.subSubLocationId } : {}),
             },
             select: {
               id: true,
@@ -441,6 +463,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
               product_category: true,
               sub_product_category: true,
               location_id: true,
+              storage_node_id: true,
               current_stock: true,
               sales_price: true,
               mrp: true,
@@ -463,6 +486,12 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     }
     if (stockRecords.some((stock) => stock.entity_id !== entity.id)) {
       throw new Error("Every selected stock item must belong to the selected Entity.");
+    }
+    if (stockLocation && stockRecords.some((stock) =>
+      stock.storage_node_id !== stockLocation.subSubLocationId
+      || stock.location_id !== stockLocation.locationId
+    )) {
+      throw new Error("Every selected stock item must be available at the selected Sub-sub-location.");
     }
     const stockByKey = new Map(stockRecords.map((stock) => [stockKey(stock.stockType, stock.id), stock]));
     if (salesChannel === "ONLINE_STORE") {
@@ -777,6 +806,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       data: {
         organization_id: input.organizationId,
         entity_id: entity.id,
+        entity_name_snapshot: entity.entity_name,
         invoice_no: invoiceNo,
         request_key: requestKey,
         invoice_date: invoiceDate,
@@ -922,6 +952,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         id: stock.id,
         organization_id: input.organizationId,
         current_stock: { gte: line.quantity },
+        ...(stockLocation ? { storage_node_id: stockLocation.subSubLocationId } : {}),
       };
       const deducted = stock.stockType === "SKU"
         ? await transaction.finishedGoodsSkuStock.updateMany({

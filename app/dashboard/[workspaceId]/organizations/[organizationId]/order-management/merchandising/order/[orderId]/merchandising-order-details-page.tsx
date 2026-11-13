@@ -15,6 +15,7 @@ import Skeleton from "@/components/ui/Skeleton";
 import Tabs from "@/components/ui/Tabs";
 import OrderDetailsTab from "./components/OrderDetailsTab";
 import OrderQrCodeCard from "./components/order-qr-code-card";
+import { normalizeFinishedGoodsOrderRow } from "./components/finished-goods-row-mapping";
 import { getProcessRows } from "./components/process-tab-state";
 import { getMissingRequiredOrderField } from "./components/order-form-validation";
 import type { OrderFormState } from "./components/order-form-types";
@@ -251,6 +252,7 @@ export default function MerchandisingOrderDetailsPage() {
     season: "",
     styleName: "",
     colors: "",
+    variantCode: null,
     buyer: "",
     brand: "",
     sizeGroup: "",
@@ -402,7 +404,7 @@ export default function MerchandisingOrderDetailsPage() {
           const matchingVariantRow = variantRowsLookup.find((candidate) => String(candidate.size ?? "").trim() === rowSize);
           const rowQty = matchingVariantRow?.qty !== undefined && matchingVariantRow?.qty !== null ? Number(matchingVariantRow.qty) : "";
 
-          return {
+          return normalizeFinishedGoodsOrderRow({
             ...row,
             buyerSize: row.buyerSize ?? "",
             size: row.size ?? row.buyerSize ?? "",
@@ -413,7 +415,7 @@ export default function MerchandisingOrderDetailsPage() {
             buyerPoPrice: row.buyerPoPrice ?? "",
             exchangePrice: row.exchangePrice ?? "",
             priceInInr: row.priceInInr ?? "",
-          };
+          });
         });
 
         setForm((current) => {
@@ -447,7 +449,7 @@ export default function MerchandisingOrderDetailsPage() {
           orderQty: variantFrom ? calculateFinishedGoodsRows(variantRows).orderQty : (order.orderQty ?? ""),
           rows: variantFrom
             ? variantRows
-            : (order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
+            : (order.finishedGoods ?? []).map((row: Record<string, unknown>) => normalizeFinishedGoodsOrderRow({
                 ...row,
                 beforeExcessQty: row.beforeExcessQty ?? "",
                 excess: row.excess ?? "",
@@ -549,7 +551,7 @@ export default function MerchandisingOrderDetailsPage() {
       const sectionFormData: Partial<OrderFormState> = section === "finishedGoods"
         ? {
             rows: Array.isArray(order.finishedGoods)
-              ? order.finishedGoods.map((row) => ({
+              ? order.finishedGoods.map((row) => normalizeFinishedGoodsOrderRow({
                   ...row,
                   beforeExcessQty: row.beforeExcessQty ?? "",
                   excess: row.excess ?? "",
@@ -937,9 +939,19 @@ export default function MerchandisingOrderDetailsPage() {
         const serverMessage = errorData?.message || errorData?.error || `Server responded with status ${response.status}`;
         throw new Error(`Blocking Error: ${serverMessage}`);
       }
+      const responseData: unknown = await response.json();
+      if (!isRecord(responseData) || !isRecord(responseData.order)) {
+        throw new Error("The order save response was invalid.");
+      }
 
       if (orderId) {
-        originalFormRef.current = form;
+        const variantCode = responseData.order.variantCode;
+        if (variantCode !== null && typeof variantCode !== "string") {
+          throw new Error("The saved order Variant Code was invalid.");
+        }
+        const savedForm = { ...form, variantCode };
+        originalFormRef.current = savedForm;
+        setForm(savedForm);
         setSaveNotice("Order updated successfully.");
         router.replace(detailPath);
       } else {
@@ -1014,13 +1026,14 @@ export default function MerchandisingOrderDetailsPage() {
           onOpenCreateMaster={handleOpenCreateMaster}
           onSizeGroupChange={handleSizeGroupChange}
           isCreateMode={!orderId}
+          isEditable={isEditing}
         />
       );
     }
 
     return (
       <Suspense fallback={tabContentFallback}>
-        {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} isVariantMode={Boolean(variantFrom)} />}
+        {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} isEditable={isEditing} isVariantMode={Boolean(variantFrom)} />}
         {activeTab === "bom" && <BomTab form={form} setForm={setForm} renderMasterSelect={renderBomMasterSelect} onOpenCreateMaster={handleOpenCreateMaster} masterOptions={masterOptions} />}
         {activeTab === "costing" && <CostingTab form={form} setForm={setForm} />}
         {activeTab === "techPack" && <TecPackTab form={form} setForm={setForm} />}

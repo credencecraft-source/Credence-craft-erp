@@ -18,6 +18,7 @@ const POS_RETURN_INVOICE_SELECT = {
   customer: true,
   customer_contact_id: true,
   customer_contact: { select: { phone: true } },
+  entity_name_snapshot: true,
   entity: { select: { entity_name: true } },
   status: true,
   subtotal: true,
@@ -103,7 +104,7 @@ function mapReturnInvoice(invoice: PosReturnInvoice, returnableLineIds?: Set<str
     customer: invoice.customer ?? "",
     customerContactId: invoice.customer_contact_id,
     customerPhone: invoice.customer_contact?.phone ?? "",
-    entityName: invoice.entity?.entity_name ?? "",
+    entityName: invoice.entity_name_snapshot ?? invoice.entity?.entity_name ?? "",
     status: invoice.status,
     subtotal: invoice.subtotal.toFixed(2),
     taxAmount: invoice.tax_amount.toFixed(2),
@@ -255,11 +256,14 @@ export async function listPosSalesReturns(input: {
       refund_status: true,
       store_credit_balance_amount: true,
       posted_at: true,
+      entity_name_snapshot: true,
       invoice: {
         select: {
           invoice_no: true,
+          entity_name_snapshot: true,
           customer: true,
           customer_contact: { select: { phone: true } },
+          entity: { select: { entity_name: true } },
         },
       },
       _count: { select: { lines: true } },
@@ -277,6 +281,10 @@ export async function listPosSalesReturns(input: {
       invoiceNumber: record.invoice.invoice_no,
       customer: record.invoice.customer ?? "",
       customerPhone: record.invoice.customer_contact?.phone ?? "",
+      entityName: record.entity_name_snapshot
+        ?? record.invoice.entity_name_snapshot
+        ?? record.invoice.entity?.entity_name
+        ?? "",
       reason: record.reason,
       status: record.status,
       lineCount: record._count.lines,
@@ -322,10 +330,12 @@ export async function getPosSalesReturn(organizationId: string, returnNumber: st
       store_credit_balance_amount: true,
       posted_at: true,
       created_by: true,
+      entity_name_snapshot: true,
       invoice: {
         select: {
           invoice_no: true,
           invoice_date: true,
+          entity_name_snapshot: true,
           customer: true,
           customer_contact: { select: { phone: true } },
           entity: { select: { entity_name: true } },
@@ -366,7 +376,10 @@ export async function getPosSalesReturn(organizationId: string, returnNumber: st
     invoiceDate: record.invoice.invoice_date.toISOString().slice(0, 10),
     customer: record.invoice.customer ?? "",
     customerPhone: record.invoice.customer_contact?.phone ?? "",
-    entityName: record.invoice.entity?.entity_name ?? "",
+    entityName: record.entity_name_snapshot
+      ?? record.invoice.entity_name_snapshot
+      ?? record.invoice.entity?.entity_name
+      ?? "",
     subtotal: record.subtotal.toFixed(2),
     cgstAmount: record.cgst_amount.toFixed(2),
     sgstAmount: record.sgst_amount.toFixed(2),
@@ -831,6 +844,7 @@ export async function createPosSalesReturn(input: {
       data: {
         organization_id: input.organizationId,
         invoice_id: invoice.id,
+        entity_name_snapshot: invoice.entity_name_snapshot ?? invoice.entity?.entity_name ?? null,
         return_no: returnNumber,
         request_key: requestKey,
         reason,

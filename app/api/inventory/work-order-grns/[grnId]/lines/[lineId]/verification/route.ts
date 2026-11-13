@@ -43,6 +43,7 @@ export async function POST(request: Request, context: RouteContext) {
         actualReceivedQuantity: parseQuantity(body.actualReceivedQuantity, "Actual received"),
         approvedQuantity: parseQuantity(body.approvedQuantity, "Approved"),
         locationId: typeof body.locationId === "string" ? body.locationId.trim() : "",
+        storageNodeId: typeof body.storageNodeId === "string" ? body.storageNodeId.trim() : "",
         actorEmail: user.email,
       },
     );

@@ -35,6 +35,12 @@ export default function WorkspaceConfigurationSidebar({
         >
           Usage
         </Link>
+        <Link
+          href={`${configurationPath}/server-cost`}
+          className={linkClassName(pathname.startsWith(`${configurationPath}/server-cost`))}
+        >
+          Server cost
+        </Link>
       </nav>
       <div className="mt-5 border-t border-slate-200 pt-4">
         <Link

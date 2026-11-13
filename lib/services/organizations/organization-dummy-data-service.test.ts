@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
-const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPurchaseOrderMock, masterPurchaseOrderMock, stockBookingsMock, generatePurchaseOrdersMock, submitPurchaseOrderMock, createSampleGateEntriesMock, createSampleGrnsMock, verifySampleGrnsMock, allocateSampleGrnsMock, createSampleWorkOrdersMock, monthlyFormLimitsMock, orderLimitLockMock } = vi.hoisted(() => {
+const { prismaMock, transactionMock, permissionMock, orderNumbersMock, orderMasterSnapshotsMock, groupedPurchaseOrderMock, masterPurchaseOrderMock, stockBookingsMock, generatePurchaseOrdersMock, submitPurchaseOrderMock, createSampleGateEntriesMock, createSampleGrnsMock, verifySampleGrnsMock, allocateSampleGrnsMock, createSampleWorkOrdersMock, monthlyFormLimitsMock, orderLimitLockMock } = vi.hoisted(() => {
   const delegate = () => ({
     count: vi.fn().mockResolvedValue(0),
     create: vi.fn().mockResolvedValue({ id: "created-id" }),
@@ -91,6 +91,7 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     transactionMock,
     permissionMock: vi.fn(),
     orderNumbersMock: vi.fn(),
+    orderMasterSnapshotsMock: vi.fn(),
     groupedPurchaseOrderMock: vi.fn(),
     masterPurchaseOrderMock: vi.fn(),
     stockBookingsMock: vi.fn(),
@@ -112,6 +113,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 }));
 vi.mock("@/lib/services/orders/order-service", () => ({
   reserveNextOrderNumbers: orderNumbersMock,
+  resolveOrderMasterSnapshots: orderMasterSnapshotsMock,
 }));
 vi.mock("@/lib/services/orders/grouped-purchase-order-service", () => ({
   createGroupedPurchaseOrder: groupedPurchaseOrderMock,
@@ -200,6 +202,13 @@ beforeEach(() => {
   prismaMock.masterLocation.create.mockResolvedValue({ id: "location-demo-created" });
   permissionMock.mockResolvedValue({ organization_id: organization.id, role: "OWNER" });
   orderNumbersMock.mockResolvedValue(Array.from({ length: 10 }, (_, index) => `ORD-${String(index + 1).padStart(4, "0")}`));
+  orderMasterSnapshotsMock.mockImplementation((_, __, sources: Array<{ article: string }>) =>
+    sources.map((source) => ({
+      articleCode: `${source.article.toUpperCase()}-CODE`,
+      master_article_id: `${source.article.toLowerCase()}-id`,
+      master_variant_id: `${source.article.toLowerCase()}-variant-id`,
+    })),
+  );
   groupedPurchaseOrderMock.mockImplementation(async () => ({ id: `grouped-demo-${groupedPurchaseOrderMock.mock.calls.length}` }));
   masterPurchaseOrderMock.mockImplementation(async () => ({ id: `master-demo-${masterPurchaseOrderMock.mock.calls.length}` }));
   stockBookingsMock.mockImplementation(async () => ({
@@ -392,6 +401,11 @@ describe("organization dummy data service", () => {
     const sampleOrderRows = transactionMock.merchandisingOrder.createManyAndReturn.mock.calls[0][0].data;
     expect(sampleOrderRows).toHaveLength(10);
     expect(sampleOrderRows.every((order: { process_template_id: string }) => order.process_template_id === "sample-process-template-id")).toBe(true);
+    expect(sampleOrderRows[0]).toMatchObject({
+      articleCode: expect.stringMatching(/-CODE$/),
+      master_article_id: expect.stringMatching(/-id$/),
+      master_variant_id: expect.stringMatching(/-variant-id$/),
+    });
     expect(transactionMock.masterProcessTemplate.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         organization_id: organization.id,
@@ -546,11 +560,13 @@ describe("organization dummy data service", () => {
       category: string;
       subCategory: string;
       colors: string;
+      variantCode: string | null;
       sourceStatus: string;
       finalStatus: string;
     }> = transactionMock.merchandisingOrder.createManyAndReturn.mock.calls[0][0].data;
     expect(orderRows).toHaveLength(10);
     expect(orderRows.every((order) => order.entity_id === "org-entity-id")).toBe(true);
+    expect(orderRows[0].variantCode).toBe("CLASSIC-COTTON-FULL-SLEEVE-SHIRT-BLACK");
     expect(Math.max(...orderRows.map((order) => order.orderQty))).toBeLessThanOrEqual(4000);
     expect(orderRows.map((order) => order.orderQty)).toEqual([360, 420, 390, 410, 450, 480, 350, 400, 430, 330]);
     expect(orderRows.reduce((total, order) => total + order.orderQty, 0)).toBe(4020);

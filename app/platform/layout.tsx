@@ -144,6 +144,7 @@ export default async function PlatformRootLayout({
             isSuperAdminView={admin.role === "SUPER_ADMIN"}
             canManageAccounts={admin.role === "SUPER_ADMIN" || (admin.role === "ADMIN" && admin.team_role === null)}
             {...navigationAccess}
+            canAccessLegacyManagement={admin.team_role === "CTO"}
             attentionCounts={attentionCounts}
           />
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden p-4 lg:p-8">

@@ -1,6 +1,8 @@
 export type FinishedGoodsQuantityInput = {
   buyerSize?: string | null;
   size?: string | null;
+  skuCode?: string | null;
+  barcode?: string | null;
   beforeExcessQty?: number | string | null;
   excess?: number | string | null;
   excessQty?: number | string | null;

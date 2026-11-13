@@ -238,6 +238,13 @@ describe("POS sales invoice detail route", () => {
         body: JSON.stringify({
           requestKey: "sale-request-1",
           entityId: "entity-1",
+          stockHierarchy: {
+            entityId: "entity-1",
+            divisionId: "division-1",
+            locationId: "location-1",
+            subLocationId: "sub-location-1",
+            subSubLocationId: "leaf-1",
+          },
           invoiceDate: "2026-10-17",
           taxMode: "LOCAL",
           customerContactId: "customer-contact-1",
@@ -266,6 +273,7 @@ describe("POS sales invoice detail route", () => {
     expect(mocks.createPosGeneralStockSale).toHaveBeenCalledWith(expect.objectContaining({
       organizationId: "internal-org-1",
       customerContactId: "customer-contact-1",
+      stockHierarchy: expect.objectContaining({ subSubLocationId: "leaf-1" }),
       returnCreditApplications: [{ returnId: "return-1", amount: "12.50" }],
       lines: [expect.objectContaining({
         stockId: "sku-stock-1",
@@ -296,6 +304,29 @@ describe("POS sales invoice detail route", () => {
     );
 
     expect(response.status).toBe(403);
+    expect(mocks.createPosGeneralStockSale).not.toHaveBeenCalled();
+  });
+
+  it("rejects a counter invoice without a complete stock hierarchy before posting", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/organizations/public-org/pos/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestKey: "sale-missing-location",
+          entityId: "entity-1",
+          invoiceDate: "2026-10-17",
+          taxMode: "LOCAL",
+          customerContactId: "customer-contact-1",
+          lines: [{ stockId: "sku-stock-1", quantity: 1, rate: 100, gstRate: 0, discountPercent: 0 }],
+        }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("complete stock hierarchy");
     expect(mocks.createPosGeneralStockSale).not.toHaveBeenCalled();
   });
 

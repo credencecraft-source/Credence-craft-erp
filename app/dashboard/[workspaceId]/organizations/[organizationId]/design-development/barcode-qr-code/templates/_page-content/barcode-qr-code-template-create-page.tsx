@@ -25,6 +25,7 @@ import {
   getQrTemplateFieldLabel,
   getQrTemplateFields,
   getQrTemplateSampleValues,
+  getQrTemplateTypeLabel,
   ORDER_QR_TEMPLATE_SIZES,
   type OrderQrTemplateType,
   type QrTemplateFieldKey,
@@ -238,7 +239,8 @@ export default function BarcodeQrCodeTemplateCreatePage({
         if (!active) return;
         setName(template.name);
         const loadedType: OrderQrTemplateType = template.type === "POS_ITEM_BARCODE"
-          ? "POS_ITEM_BARCODE"
+          || template.type === "FG_BARCODE"
+          ? template.type
           : "ORDER_TAGS";
         const loadedFields = getQrTemplateFields(loadedType);
         setTemplateType(loadedType);
@@ -506,7 +508,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
             {templateId ? "Edit Template" : "Create Template"}
           </h1>
           <p className="text-sm text-slate-600">
-            Select order or POS item fields and preview the barcode template before saving.
+            Select order, POS item, or finished-goods fields and preview the barcode template before saving.
           </p>
         </div>
       </header>
@@ -560,7 +562,9 @@ export default function BarcodeQrCodeTemplateCreatePage({
                 const nextFields = getQrTemplateFields(nextType);
                 const nextDisplayFields = nextType === "POS_ITEM_BARCODE"
                   ? ["posItemCode", "posItemName", "posSize"] as QrTemplateFieldKey[]
-                  : ["orderNo", "styleName", "buyer"] as QrTemplateFieldKey[];
+                  : nextType === "FG_BARCODE"
+                    ? ["fgBarcode", "fgSkuCode", "fgSize"] as QrTemplateFieldKey[]
+                    : ["orderNo", "styleName", "buyer"] as QrTemplateFieldKey[];
                 setTemplateType(nextType);
                 setQrFieldKey(nextFields[0].key);
                 setDisplayFields(nextDisplayFields);
@@ -575,8 +579,14 @@ export default function BarcodeQrCodeTemplateCreatePage({
               options={[
                 { value: "ORDER_TAGS", label: "Order Tags" },
                 { value: "POS_ITEM_BARCODE", label: "POS Item Barcode" },
+                { value: "FG_BARCODE", label: "FG Barcode" },
               ]}
             />
+            {templateType === "FG_BARCODE" && (
+              <p className="text-sm text-[var(--erp-text-muted)]" role="status">
+                FG Barcode templates use the SKU and barcode assigned to each finished-goods size on its order. Missing identifiers must be corrected on the order before labels can be requested.
+              </p>
+            )}
             <Select
               label="QR Code Size"
               name="qrSize"
@@ -660,7 +670,9 @@ export default function BarcodeQrCodeTemplateCreatePage({
             <div className="space-y-1">
               <h2 className="text-base font-semibold text-slate-900">QR Code Field</h2>
               <p className="text-sm text-slate-600">
-                Choose exactly one {templateType === "POS_ITEM_BARCODE" ? "POS item" : "order"} field to encode in the QR code.
+                Choose exactly one {templateType === "POS_ITEM_BARCODE"
+                  ? "POS item"
+                  : templateType === "FG_BARCODE" ? "finished-goods" : "order"} field to encode in the QR code.
               </p>
             </div>
             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
@@ -684,7 +696,9 @@ export default function BarcodeQrCodeTemplateCreatePage({
               <div className="space-y-1">
                 <h2 className="text-base font-semibold text-slate-900">Display Fields</h2>
                 <p className="text-sm text-slate-600">
-                  Select the {templateType === "POS_ITEM_BARCODE" ? "POS item" : "order"} details to print beside the QR code and customize each field.
+                  Select the {templateType === "POS_ITEM_BARCODE"
+                    ? "POS item"
+                    : templateType === "FG_BARCODE" ? "finished-goods" : "order"} details to print beside the QR code and customize each field.
                 </p>
               </div>
               <div className="grid min-w-0 gap-3 sm:grid-cols-2">
@@ -730,7 +744,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-slate-900">QR Preview</h2>
             <p className="text-sm text-slate-600">
-              Sample {templateType === "POS_ITEM_BARCODE" ? "POS item" : "order"} values show how your selected fields will be encoded.
+              Sample {getQrTemplateTypeLabel(templateType)} values show how your selected fields will be encoded.
             </p>
           </div>
           {displayFields.length > 0 && (

@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { GENERAL_FINISHED_GOODS_SKU_SOURCES } from "@/lib/services/inventory/finished-goods-stock-overview";
+import {
+  PosStockLocationError,
+  resolveActivePosStockLocation,
+  type PosStockHierarchy,
+} from "@/lib/services/pos/pos-stock-location-service";
 import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 export async function GET(
@@ -17,6 +22,19 @@ export async function GET(
     const searchParams = new URL(request.url).searchParams;
     const stockId = searchParams.get("stockId")?.trim();
     const entityId = searchParams.get("entityId")?.trim();
+    const rawHierarchy = {
+      entityId: searchParams.get("entityId")?.trim() ?? "",
+      divisionId: searchParams.get("divisionId")?.trim() ?? "",
+      locationId: searchParams.get("locationId")?.trim() ?? "",
+      subLocationId: searchParams.get("subLocationId")?.trim() ?? "",
+      subSubLocationId: searchParams.get("subSubLocationId")?.trim() ?? "",
+    };
+    const hasHierarchy = [
+      rawHierarchy.divisionId,
+      rawHierarchy.locationId,
+      rawHierarchy.subLocationId,
+      rawHierarchy.subSubLocationId,
+    ].some(Boolean);
     const stockType = searchParams.get("stockType");
     const search = searchParams.get("search")?.trim() ?? "";
     const rawLimit = searchParams.get("limit");
@@ -43,6 +61,20 @@ export async function GET(
       });
       if (!entity) return NextResponse.json({ error: "Select an active Entity belonging to this organization." }, { status: 400 });
     }
+    let stockLocation: Awaited<ReturnType<typeof resolveActivePosStockLocation>> | null = null;
+    if (hasHierarchy) {
+      if (Object.values(rawHierarchy).some((value) => !value || value.length > 128)) {
+        return NextResponse.json({ error: "Select a complete stock hierarchy." }, { status: 400 });
+      }
+      try {
+        stockLocation = await resolveActivePosStockLocation(prisma, organization.id, rawHierarchy as PosStockHierarchy);
+      } catch (error) {
+        if (error instanceof PosStockLocationError) {
+          return NextResponse.json({ error: error.message }, { status: 400 });
+        }
+        throw error;
+      }
+    }
     const resultLimit = stockId ? 1 : requestedLimit;
     const take = resultLimit + 1;
     const [skuRecords, generalReceiptRecords] = await Promise.all([
@@ -52,6 +84,7 @@ export async function GET(
           source: { in: [...GENERAL_FINISHED_GOODS_SKU_SOURCES] },
           current_stock: { gt: 0 },
           ...(entityId ? { entity_id: entityId } : {}),
+          ...(stockLocation ? { storage_node_id: stockLocation.subSubLocationId } : {}),
           ...(stockId ? { id: stockId } : {}),
           ...(search ? {
             OR: [
@@ -101,6 +134,7 @@ export async function GET(
         organization_id: organization.id,
         current_stock: { gt: 0 },
         ...(entityId ? { entity_id: entityId } : {}),
+        ...(stockLocation ? { storage_node_id: stockLocation.subSubLocationId } : {}),
         ...(stockId ? { id: stockId } : {}),
         ...(search ? {
           OR: [

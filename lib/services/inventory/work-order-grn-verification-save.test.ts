@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     workOrderInventoryGrnBookingAllocation: { create: vi.fn() },
     workOrderInventoryGrn: { updateMany: vi.fn() },
     masterLocation: { findFirst: vi.fn() },
+    storageNode: { findFirst: vi.fn() },
     finishedGoodsGeneralStockReceipt: { create: vi.fn() },
     finishedGoodsAllocatedStockReceipt: { create: vi.fn() },
     finishedGoodsStock: { upsert: vi.fn() },
@@ -82,6 +83,12 @@ describe("verifyWorkOrderInventoryGrnLine", () => {
       id: "location-1",
       entity_id: "entity-1",
       entity: { is_active: true },
+      division_id: "division-1",
+    });
+    mocks.transaction.storageNode.findFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+      if (where.node_type === "SUB_STORE") return { id: "leaf-1", parent_node_id: "sub-1", parent_node_type: "WAREHOUSE" };
+      if (where.node_type === "WAREHOUSE") return { id: "sub-1", parent_node_id: "site-1", parent_node_type: "LOCATION_SITE" };
+      return { id: "site-1", entity_id: "entity-1", master_location_id: "location-1", parent_node_id: null, parent_node_type: null };
     });
     mocks.transaction.workOrderInventoryGrnBookingAllocation.create.mockImplementation(() =>
       Promise.resolve({ id: `grn-allocation-${mocks.transaction.workOrderInventoryGrnBookingAllocation.create.mock.calls.length}` }));
@@ -165,6 +172,46 @@ describe("verifyWorkOrderInventoryGrnLine", () => {
     expect(mocks.createAuditEvent).toHaveBeenCalledOnce();
   });
 
+  it("assigns newly posted general FG receipts to a verified active Sub-sub-location", async () => {
+    const unallocatedLine = {
+      ...mocks.line,
+      workOrderSizeLine: { bookingAssignments: [] },
+    };
+    mocks.transaction.workOrderInventoryGrnLine.findFirst.mockResolvedValue(unallocatedLine);
+
+    await verifyWorkOrderInventoryGrnLine("internal-org-1", "verifier-1", "grn-1", "line-1", {
+      actualReceivedQuantity: 8,
+      approvedQuantity: 6,
+      locationId: "location-1",
+      storageNodeId: "leaf-1",
+    });
+
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "internal-org-1",
+        location_id: "location-1",
+        storage_node_id: "leaf-1",
+        quantity_in: 6,
+      }),
+    }));
+  });
+
+  it("rejects general FG receipt posting without an explicit Sub-sub-location", async () => {
+    const unallocatedLine = {
+      ...mocks.line,
+      workOrderSizeLine: { bookingAssignments: [] },
+    };
+    mocks.transaction.workOrderInventoryGrnLine.findFirst.mockResolvedValue(unallocatedLine);
+
+    await expect(verifyWorkOrderInventoryGrnLine("internal-org-1", "verifier-1", "grn-1", "line-1", {
+      actualReceivedQuantity: 8,
+      approvedQuantity: 6,
+      locationId: "location-1",
+    })).rejects.toThrow("Sub-sub-location");
+
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.create).not.toHaveBeenCalled();
+  });
+
   it("allows the GRN submitter to verify and post the receipt", async () => {
     const result = await verifyWorkOrderInventoryGrnLine("internal-org-1", "submitter-1", "grn-1", "line-1", {
       actualReceivedQuantity: 8,
@@ -213,6 +260,7 @@ describe("verifyWorkOrderInventoryGrnLine", () => {
       actualReceivedQuantity: 10,
       approvedQuantity: 10,
       locationId: "location-1",
+      storageNodeId: "leaf-1",
     });
 
     expect(result.advanceBookedQuantity).toBe(8);
@@ -221,7 +269,7 @@ describe("verifyWorkOrderInventoryGrnLine", () => {
       data: expect.objectContaining({ advance_booked_quantity: 8, general_inventory_quantity: 2 }),
     }));
     expect(mocks.transaction.finishedGoodsGeneralStockReceipt.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ quantity_in: 2, current_stock: 2 }),
+      data: expect.objectContaining({ quantity_in: 2, current_stock: 2, storage_node_id: "leaf-1" }),
     }));
     expect(mocks.transaction.finishedGoodsAllocatedStockReceipt.create).toHaveBeenCalledTimes(2);
     expect(mocks.transaction.finishedGoodsStock.upsert).toHaveBeenCalledTimes(3);

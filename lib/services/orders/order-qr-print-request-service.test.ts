@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => {
   const transaction = {
     $executeRaw: vi.fn(),
     merchandisingOrder: { findFirst: vi.fn(), findMany: vi.fn() },
+    finishedGoodsSizeWise: { findMany: vi.fn() },
     posPurchaseBill: { findFirst: vi.fn() },
     posPurchaseBillLine: { findMany: vi.fn() },
     masterVendor: { findFirst: vi.fn() },
@@ -21,6 +22,8 @@ const mocks = vi.hoisted(() => {
     transaction,
     prisma: {
       $transaction: vi.fn(),
+      merchandisingOrder: { findMany: vi.fn() },
+      finishedGoodsSizeWise: { findMany: vi.fn() },
       merchandisingOrderQrPrintRequest: {
         findMany: vi.fn(),
         findFirst: vi.fn(),
@@ -37,6 +40,7 @@ import {
   createOrderQrPrintRequest,
   deletePendingOrderQrPrintRequests,
   getOrderQrPrintRequest,
+  listFinishedGoodsQrRows,
   listOrderQrPrintRequests,
 } from "./order-qr-print-request-service";
 
@@ -61,6 +65,8 @@ const pageSetupSnapshot = {
 describe("order QR print request service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.prisma.merchandisingOrder.findMany.mockResolvedValue([]);
+    mocks.prisma.finishedGoodsSizeWise.findMany.mockResolvedValue([]);
     mocks.prisma.$transaction.mockImplementation(
       async (callback: (transaction: typeof mocks.transaction) => Promise<unknown>) =>
         callback(mocks.transaction),
@@ -170,6 +176,76 @@ describe("order QR print request service", () => {
     });
   });
 
+  it("loads bounded finished-goods rows for selected orders within one organization", async () => {
+    mocks.prisma.merchandisingOrder.findMany.mockResolvedValue([
+      { id: "order-1", orderNo: "ORD-1", styleName: "STYLE-1" },
+      { id: "order-2", orderNo: "ORD-2", styleName: "STYLE-2" },
+    ]);
+    mocks.prisma.finishedGoodsSizeWise.findMany.mockResolvedValue([
+      {
+        id: "fg-1",
+        order_id: "order-1",
+        size: "M",
+        buyerSize: null,
+        sku_code: "SKU-1",
+        barcode: "BAR-1",
+        totalQty: 15,
+      },
+      {
+        id: "fg-2",
+        order_id: "order-2",
+        size: "L",
+        buyerSize: "LARGE",
+        sku_code: "SKU-2",
+        barcode: "BAR-2",
+        totalQty: 25,
+      },
+    ]);
+
+    await expect(listFinishedGoodsQrRows("internal-org-1", ["order-1", "order-2"])).resolves.toEqual({
+      success: true,
+      orders: [
+        {
+          orderId: "order-1",
+          orderNo: "ORD-1",
+          styleName: "STYLE-1",
+          finishedGoodsRows: [{
+            finishedGoodsId: "fg-1",
+            size: "M",
+            buyerSize: null,
+            skuCode: "SKU-1",
+            barcode: "BAR-1",
+            totalQty: 15,
+          }],
+        },
+        {
+          orderId: "order-2",
+          orderNo: "ORD-2",
+          styleName: "STYLE-2",
+          finishedGoodsRows: [{
+            finishedGoodsId: "fg-2",
+            size: "L",
+            buyerSize: "LARGE",
+            skuCode: "SKU-2",
+            barcode: "BAR-2",
+            totalQty: 25,
+          }],
+        },
+      ],
+    });
+    expect(mocks.prisma.merchandisingOrder.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organization_id: "internal-org-1", id: { in: ["order-1", "order-2"] } },
+      }),
+    );
+    expect(mocks.prisma.finishedGoodsSizeWise.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { order_id: { in: ["order-1", "order-2"] } },
+        take: expect.any(Number),
+      }),
+    );
+  });
+
   it("builds a request snapshot from an order and template in the authorized organization", async () => {
     const result = await createOrderQrPrintRequest("internal-org-1", "user-1", {
       orderId: "order-1",
@@ -252,6 +328,280 @@ describe("order QR print request service", () => {
           sticker_length_mm: 30,
           qr_payload: JSON.stringify({ "Order Number": "ORD-1" }),
         }),
+      }),
+    );
+  });
+
+  it("creates an order-scoped FG barcode request with each finished-goods SKU and barcode snapshot", async () => {
+    mocks.transaction.merchandisingOrder.findFirst.mockResolvedValue({
+      id: "order-1",
+      orderNo: "ORD-1",
+      entityName: null,
+      category: null,
+      subCategory: null,
+      season: null,
+      article: "ART-1",
+      styleName: "STYLE-1",
+      colors: "NAVY",
+      buyer: "BUYER-1",
+      brand: null,
+      sizeGroup: null,
+      orderQty: 20,
+      deliveryDate: null,
+    });
+    mocks.transaction.finishedGoodsSizeWise.findMany.mockResolvedValue([{
+      id: "fg-size-1",
+      buyerSize: "M",
+      size: "M",
+      sku_code: "FGSKU-1",
+      barcode: "FGBAR-1",
+      totalQty: 20,
+    }]);
+    mocks.transaction.merchandisingOrderQrTemplate.findFirst.mockResolvedValue({
+      name: "FG LABEL",
+      type: "FG_BARCODE",
+      field_keys: ["fgBarcode", "fgSkuCode", "fgSize"],
+      qr_field_key: "fgBarcode",
+      display_fields: ["fgBarcode", "fgSkuCode", "fgSize"],
+      display_field_styles: {
+        styles: {},
+        layout: {
+          qr: { x: 3, y: 25 },
+          fields: {
+            fgBarcode: { x: 44, y: 16 },
+            fgSkuCode: { x: 44, y: 36 },
+            fgSize: { x: 44, y: 56 },
+          },
+          printerType: "LASER",
+          pdfPaperSize: "A4_AUTO",
+        },
+        pageSetup: pageSetupSnapshot,
+      },
+      qr_size: 256,
+      sticker_width_mm: 50,
+      sticker_length_mm: 30,
+    });
+    mocks.transaction.merchandisingOrderQrPrintRequest.create.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "request-fg-1",
+        ...data,
+        status: "PENDING",
+        qr_size: 256,
+        requested_at: new Date("2026-10-27T00:00:00.000Z"),
+        updated_at: new Date("2026-10-27T00:00:00.000Z"),
+      }),
+    );
+
+    await expect(createOrderQrPrintRequest("internal-org-1", "user-1", {
+      orderId: "order-1",
+      finishedGoodsRows: [{ finishedGoodsId: "fg-size-1", quantity: 20 }],
+      templateId: "template-fg",
+      requestType: "PRINT",
+    })).resolves.toMatchObject({
+      success: true,
+      request: {
+        orderNo: "ORD-1",
+        isFinishedGoodsBarcode: true,
+        printQuantity: 20,
+        bulkItems: [{
+          orderId: "order-1",
+          quantity: 20,
+          qrPayload: JSON.stringify({ "FG Barcode": "FGBAR-1" }),
+          displayValues: {
+            fgBarcode: "FGBAR-1",
+            fgSkuCode: "FGSKU-1",
+            fgSize: "M",
+          },
+        }],
+      },
+    });
+    expect(mocks.transaction.finishedGoodsSizeWise.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          order_id: "order-1",
+          id: { in: ["fg-size-1"] },
+        },
+      }),
+    );
+    expect(mocks.transaction.merchandisingOrderQrTemplate.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organization_id: "internal-org-1",
+          id: "template-fg",
+          type: "FG_BARCODE",
+        },
+      }),
+    );
+    expect(mocks.transaction.merchandisingOrderQrPrintRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organization_id: "internal-org-1",
+          order_id: "order-1",
+          display_values: expect.objectContaining({
+            __finishedGoodsBarcode: true,
+            __bulkItems: [expect.objectContaining({
+              qrPayload: JSON.stringify({ "FG Barcode": "FGBAR-1" }),
+              displayValues: {
+                fgBarcode: "FGBAR-1",
+                fgSkuCode: "FGSKU-1",
+                fgSize: "M",
+              },
+            })],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("does not generate replacement SKU or barcode values for legacy finished-goods rows", async () => {
+    mocks.transaction.finishedGoodsSizeWise.findMany.mockResolvedValue([{
+      id: "fg-size-legacy",
+      buyerSize: "L",
+      size: "L",
+      sku_code: null,
+      barcode: null,
+      totalQty: 4,
+    }]);
+
+    await expect(createOrderQrPrintRequest("internal-org-1", "user-1", {
+      orderId: "order-1",
+      finishedGoodsRows: [{ finishedGoodsId: "fg-size-legacy", quantity: 4 }],
+      templateId: "template-fg",
+      requestType: "PRINT",
+    })).resolves.toEqual({ success: false, reason: "FG_IDENTIFIERS_MISSING" });
+    expect(mocks.transaction.merchandisingOrderQrPrintRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("creates one FG barcode request from selected orders and their saved variant identifiers", async () => {
+    const firstOrder = {
+      id: "order-1",
+      orderNo: "ORD-1",
+      entityName: null,
+      category: null,
+      subCategory: null,
+      season: null,
+      article: "ART-1",
+      styleName: "STYLE-1",
+      colors: "NAVY",
+      buyer: "BUYER-1",
+      brand: null,
+      sizeGroup: null,
+      orderQty: 20,
+      deliveryDate: null,
+    };
+    const secondOrder = {
+      ...firstOrder,
+      id: "order-2",
+      orderNo: "ORD-2",
+      styleName: "STYLE-2",
+    };
+    mocks.transaction.merchandisingOrder.findMany.mockResolvedValue([firstOrder, secondOrder]);
+    mocks.transaction.finishedGoodsSizeWise.findMany.mockResolvedValue([
+      {
+        id: "fg-size-1",
+        order_id: "order-1",
+        buyerSize: "M",
+        size: "M",
+        sku_code: "SKU-1",
+        barcode: "BAR-1",
+        totalQty: 20,
+      },
+      {
+        id: "fg-size-2",
+        order_id: "order-2",
+        buyerSize: "L",
+        size: "L",
+        sku_code: "SKU-2",
+        barcode: "BAR-2",
+        totalQty: 30,
+      },
+    ]);
+    mocks.transaction.merchandisingOrderQrTemplate.findFirst.mockResolvedValue({
+      name: "FG LABEL",
+      type: "FG_BARCODE",
+      field_keys: ["fgBarcode", "fgSkuCode"],
+      qr_field_key: "fgBarcode",
+      display_fields: ["fgBarcode", "fgSkuCode"],
+      display_field_styles: {
+        styles: {},
+        layout: {
+          qr: { x: 3, y: 25 },
+          fields: {
+            fgBarcode: { x: 44, y: 16 },
+            fgSkuCode: { x: 44, y: 36 },
+          },
+          printerType: "LASER",
+          pdfPaperSize: "A4_AUTO",
+        },
+        pageSetup: pageSetupSnapshot,
+      },
+      qr_size: 256,
+      sticker_width_mm: 50,
+      sticker_length_mm: 30,
+    });
+    mocks.transaction.merchandisingOrderQrPrintRequest.create.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "request-fg-bulk",
+        ...data,
+        status: "PENDING",
+        qr_size: 256,
+        requested_at: new Date("2026-10-27T00:00:00.000Z"),
+        updated_at: new Date("2026-10-27T00:00:00.000Z"),
+      }),
+    );
+
+    await expect(createOrderQrPrintRequest("internal-org-1", "user-1", {
+      finishedGoodsItems: [
+        { orderId: "order-1", finishedGoodsId: "fg-size-1", quantity: 3 },
+        { orderId: "order-2", finishedGoodsId: "fg-size-2", quantity: 7 },
+      ],
+      templateId: "template-fg",
+      requestType: "PRINT",
+    })).resolves.toMatchObject({
+      success: true,
+      request: {
+        orderNo: "FG BARCODE: 2 ORDERS",
+        isFinishedGoodsBarcode: true,
+        printQuantity: 10,
+        bulkItems: [
+          {
+            orderId: "order-1",
+            orderNo: "ORD-1-M",
+            quantity: 3,
+            qrPayload: JSON.stringify({ "FG Barcode": "BAR-1" }),
+          },
+          {
+            orderId: "order-2",
+            orderNo: "ORD-2-L",
+            quantity: 7,
+            qrPayload: JSON.stringify({ "FG Barcode": "BAR-2" }),
+          },
+        ],
+      },
+    });
+    expect(mocks.transaction.merchandisingOrder.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organization_id: "internal-org-1",
+          id: { in: ["order-1", "order-2"] },
+        },
+      }),
+    );
+    expect(mocks.transaction.finishedGoodsSizeWise.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          order_id: { in: ["order-1", "order-2"] },
+          id: { in: ["fg-size-1", "fg-size-2"] },
+        },
+      }),
+    );
+    expect(mocks.transaction.merchandisingOrderQrTemplate.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organization_id: "internal-org-1",
+          id: "template-fg",
+          type: "FG_BARCODE",
+        },
       }),
     );
   });

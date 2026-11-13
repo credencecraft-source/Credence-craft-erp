@@ -9,6 +9,8 @@ export function buildOrderSavePayload(
   loadedSections: ReadonlySet<OrderSection>,
 ) {
   const payload: Record<string, unknown> = { ...form, organizationId };
+  delete payload.variantCode;
+
   if (!orderId) return payload;
 
   if (!loadedSections.has("finishedGoods")) delete payload.rows;

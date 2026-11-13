@@ -8,6 +8,7 @@ import {
   type PosInvoiceShippingAddress,
 } from "@/lib/services/pos/pos-general-stock-sale-service";
 import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import type { PosStockHierarchy } from "@/lib/services/pos/pos-stock-location-service";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -411,6 +412,29 @@ export async function POST(
     if (typeof body.entityId !== "string" || !body.entityId.trim()) {
       return NextResponse.json({ error: "Select an Entity before posting the invoice." }, { status: 400 });
     }
+    let stockHierarchy: PosStockHierarchy | undefined;
+    if (salesChannel === "COUNTER") {
+      const hierarchy = body.stockHierarchy;
+      if (!hierarchy || typeof hierarchy !== "object" || Array.isArray(hierarchy)) {
+        return NextResponse.json({ error: "Select the complete stock hierarchy through a Sub-sub-location." }, { status: 400 });
+      }
+      const record = hierarchy as Record<string, unknown>;
+      const fields = ["entityId", "divisionId", "locationId", "subLocationId", "subSubLocationId"] as const;
+      if (fields.some((field) =>
+        typeof record[field] !== "string"
+        || !String(record[field]).trim()
+        || String(record[field]).length > 128
+      ) || record.entityId !== body.entityId) {
+        return NextResponse.json({ error: "Select a valid complete stock hierarchy for the selected Entity." }, { status: 400 });
+      }
+      stockHierarchy = {
+        entityId: record.entityId as string,
+        divisionId: record.divisionId as string,
+        locationId: record.locationId as string,
+        subLocationId: record.subLocationId as string,
+        subSubLocationId: record.subSubLocationId as string,
+      };
+    }
     if (body.couponCode !== undefined && body.couponCode !== null && typeof body.couponCode !== "string") {
       return NextResponse.json({ error: "Enter a valid coupon code." }, { status: 400 });
     }
@@ -424,6 +448,7 @@ export async function POST(
       actorId: user.id,
       requestKey: typeof body.requestKey === "string" ? body.requestKey : "",
       entityId: body.entityId,
+      stockHierarchy,
       invoiceDate: String(body.invoiceDate ?? ""),
       customer: typeof body.customer === "string" ? body.customer : null,
       customerContactId: typeof body.customerContactId === "string" ? body.customerContactId : null,

@@ -35,6 +35,18 @@ export const POS_ITEM_BARCODE_TEMPLATE_FIELDS = [
   { key: "posSkuCode", label: "Stock SKU" },
 ] as const;
 
+export const FINISHED_GOODS_BARCODE_TEMPLATE_FIELDS = [
+  { key: "fgBarcode", label: "FG Barcode" },
+  { key: "fgSkuCode", label: "FG SKU" },
+  { key: "fgSize", label: "Size" },
+  { key: "fgBuyerSize", label: "Buyer Size" },
+  { key: "fgOrderNo", label: "Order Number" },
+  { key: "fgStyleName", label: "Style Name" },
+  { key: "fgArticle", label: "Article" },
+  { key: "fgColor", label: "Color" },
+  { key: "fgQuantity", label: "Order Quantity" },
+] as const;
+
 export const ORDER_QR_TEMPLATE_SAMPLE_VALUES: Record<
   (typeof ORDER_QR_TEMPLATE_FIELDS)[number]["key"],
   string
@@ -70,30 +82,79 @@ export const POS_ITEM_BARCODE_TEMPLATE_SAMPLE_VALUES: Record<
   posSkuCode: "SKU-0001",
 };
 
-export const ORDER_QR_TEMPLATE_TYPES = ["ORDER_TAGS", "POS_ITEM_BARCODE"] as const;
+export const FINISHED_GOODS_BARCODE_TEMPLATE_SAMPLE_VALUES: Record<
+  (typeof FINISHED_GOODS_BARCODE_TEMPLATE_FIELDS)[number]["key"],
+  string
+> = {
+  fgBarcode: "FG-2026-001-L001",
+  fgSkuCode: "FGSKU-2026-001-L001",
+  fgSize: "M",
+  fgBuyerSize: "M",
+  fgOrderNo: "ORD-2026-001",
+  fgStyleName: "CLASSIC TEE",
+  fgArticle: "ART-001",
+  fgColor: "NAVY",
+  fgQuantity: "120",
+};
+
+export const ORDER_QR_TEMPLATE_TYPES = [
+  "ORDER_TAGS",
+  "POS_ITEM_BARCODE",
+  "FG_BARCODE",
+] as const;
 export type OrderQrTemplateType = (typeof ORDER_QR_TEMPLATE_TYPES)[number];
+
+export function getQrTemplateTypeLabel(type: OrderQrTemplateType): string {
+  switch (type) {
+    case "POS_ITEM_BARCODE":
+      return "POS Item Barcode";
+    case "FG_BARCODE":
+      return "FG Barcode";
+    default:
+      return "Order Tags";
+  }
+}
 export type OrderQrTemplateFieldKey =
   (typeof ORDER_QR_TEMPLATE_FIELDS)[number]["key"];
 export type PosItemBarcodeTemplateFieldKey =
   (typeof POS_ITEM_BARCODE_TEMPLATE_FIELDS)[number]["key"];
-export type QrTemplateFieldKey = OrderQrTemplateFieldKey | PosItemBarcodeTemplateFieldKey;
+export type FinishedGoodsBarcodeTemplateFieldKey =
+  (typeof FINISHED_GOODS_BARCODE_TEMPLATE_FIELDS)[number]["key"];
+export type QrTemplateFieldKey =
+  | OrderQrTemplateFieldKey
+  | PosItemBarcodeTemplateFieldKey
+  | FinishedGoodsBarcodeTemplateFieldKey;
 
 export function getQrTemplateFields(type: OrderQrTemplateType) {
-  return type === "POS_ITEM_BARCODE"
-    ? POS_ITEM_BARCODE_TEMPLATE_FIELDS
-    : ORDER_QR_TEMPLATE_FIELDS;
+  switch (type) {
+    case "POS_ITEM_BARCODE":
+      return POS_ITEM_BARCODE_TEMPLATE_FIELDS;
+    case "FG_BARCODE":
+      return FINISHED_GOODS_BARCODE_TEMPLATE_FIELDS;
+    default:
+      return ORDER_QR_TEMPLATE_FIELDS;
+  }
 }
 
 export function getQrTemplateSampleValues(
   type: OrderQrTemplateType,
 ): Partial<Record<QrTemplateFieldKey, string>> {
-  return type === "POS_ITEM_BARCODE"
-    ? POS_ITEM_BARCODE_TEMPLATE_SAMPLE_VALUES
-    : ORDER_QR_TEMPLATE_SAMPLE_VALUES;
+  switch (type) {
+    case "POS_ITEM_BARCODE":
+      return POS_ITEM_BARCODE_TEMPLATE_SAMPLE_VALUES;
+    case "FG_BARCODE":
+      return FINISHED_GOODS_BARCODE_TEMPLATE_SAMPLE_VALUES;
+    default:
+      return ORDER_QR_TEMPLATE_SAMPLE_VALUES;
+  }
 }
 
 export function getQrTemplateFieldLabel(key: QrTemplateFieldKey): string {
-  return [...ORDER_QR_TEMPLATE_FIELDS, ...POS_ITEM_BARCODE_TEMPLATE_FIELDS]
+  return [
+    ...ORDER_QR_TEMPLATE_FIELDS,
+    ...POS_ITEM_BARCODE_TEMPLATE_FIELDS,
+    ...FINISHED_GOODS_BARCODE_TEMPLATE_FIELDS,
+  ]
     .find((field) => field.key === key)?.label ?? key;
 }
 
@@ -452,7 +513,11 @@ export function parseOrderQrTemplateInput(
 
 export function isOrderQrTemplateFieldKey(value: unknown): value is QrTemplateFieldKey {
   return typeof value === "string"
-    && [...ORDER_QR_TEMPLATE_FIELDS, ...POS_ITEM_BARCODE_TEMPLATE_FIELDS]
+    && [
+      ...ORDER_QR_TEMPLATE_FIELDS,
+      ...POS_ITEM_BARCODE_TEMPLATE_FIELDS,
+      ...FINISHED_GOODS_BARCODE_TEMPLATE_FIELDS,
+    ]
       .some((option) => option.key === value);
 }
 

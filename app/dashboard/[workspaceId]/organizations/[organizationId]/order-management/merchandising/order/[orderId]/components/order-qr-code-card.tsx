@@ -6,6 +6,7 @@ import QRCode from "qrcode";
 import { Download, Printer, QrCode, X } from "lucide-react";
 
 import Button from "@/components/ui/Button";
+import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
@@ -14,25 +15,40 @@ import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
 import {
   DEFAULT_QR_FIELD_STYLE,
   buildOrderQrPayload,
-  ORDER_QR_TEMPLATE_FIELDS,
+  getQrTemplateFieldLabel,
+  getQrTemplateFields,
+  type OrderQrTemplateType,
   type OrderQrTemplateFieldKey,
+  type QrTemplateFieldKey,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
 } from "@/lib/services/orders/order-qr-template-contract";
-import type { OrderQrQuantityMode } from "@/lib/services/orders/order-qr-print-request-contract";
+import {
+  MAX_ORDER_QR_PRINT_REQUEST_LABELS,
+  type OrderQrQuantityMode,
+} from "@/lib/services/orders/order-qr-print-request-contract";
 
 type OrderQrTemplate = {
   id: string;
   name: string;
-  type: string;
-  fieldKeys: OrderQrTemplateFieldKey[];
-  qrFieldKey: OrderQrTemplateFieldKey;
-  displayFields: OrderQrTemplateFieldKey[];
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  type: OrderQrTemplateType;
+  fieldKeys: QrTemplateFieldKey[];
+  qrFieldKey: QrTemplateFieldKey;
+  displayFields: QrTemplateFieldKey[];
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   layout: OrderQrTemplateLayout;
   qrSize: number;
   stickerWidthMm: number;
   stickerLengthMm: number;
+};
+
+type FinishedGoodsBarcodeRow = {
+  id: string;
+  buyerSize: string | null;
+  size: string | null;
+  sku_code: string | null;
+  barcode: string | null;
+  totalQty: number | null;
 };
 
 type QrState = {
@@ -60,14 +76,23 @@ export default function OrderQrCodeCard({
   orderFields: Partial<Record<OrderQrTemplateFieldKey, string | number | null>>;
 }) {
   const [open, setOpen] = useState(false);
+  const [activeTemplateType, setActiveTemplateType] =
+    useState<OrderQrTemplateType>("ORDER_TAGS");
   const [quantityMode, setQuantityMode] = useState<OrderQrQuantityMode>("PCS");
   const [bulkQuantity, setBulkQuantity] = useState(String(orderFields.orderQty ?? ""));
   const [qrState, setQrState] = useState<QrState>({ payload: "", size: 0 });
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [templates, setTemplates] = useState<OrderQrTemplate[]>([]);
+  const [finishedGoodsRows, setFinishedGoodsRows] = useState<FinishedGoodsBarcodeRow[]>([]);
+  const [selectedFinishedGoodsIds, setSelectedFinishedGoodsIds] = useState<string[]>([]);
+  const [finishedGoodsQuantities, setFinishedGoodsQuantities] =
+    useState<Record<string, string>>({});
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [isLoadingFinishedGoods, setIsLoadingFinishedGoods] = useState(false);
   const [templateError, setTemplateError] = useState("");
+  const [finishedGoodsError, setFinishedGoodsError] = useState("");
   const [templateRetryCount, setTemplateRetryCount] = useState(0);
+  const [finishedGoodsRetryCount, setFinishedGoodsRetryCount] = useState(0);
   const [qrRetryCount, setQrRetryCount] = useState(0);
   const [requestState, setRequestState] = useState<{
     type: "PRINT" | "DOWNLOAD" | null;
@@ -75,9 +100,14 @@ export default function OrderQrCodeCard({
     message: string;
   }>({ type: null, status: "idle", message: "" });
 
-  const selectedTemplate = templates.find(({ id }) => id === selectedTemplateId);
+  const activeTemplates = templates.filter(({ type }) => type === activeTemplateType);
+  const selectedTemplate = activeTemplates.find(({ id }) => id === selectedTemplateId);
   const parsedBulkQuantity = Number(bulkQuantity);
   const isBulkQuantityValid = Number.isSafeInteger(parsedBulkQuantity) && parsedBulkQuantity > 0;
+  const selectedFinishedGoodsRows = finishedGoodsRows.filter(({ id }) =>
+    selectedFinishedGoodsIds.includes(id),
+  );
+  const selectedPreviewVariant = selectedFinishedGoodsRows[0];
   const qrOrderFields = useMemo(
     () => ({
       ...orderFields,
@@ -87,12 +117,43 @@ export default function OrderQrCodeCard({
     }),
     [isBulkQuantityValid, orderFields, parsedBulkQuantity, quantityMode],
   );
-  const qrPayload = useMemo(
-    () => selectedTemplate
-      ? buildOrderQrPayload([selectedTemplate.qrFieldKey], qrOrderFields).payload
-      : "",
-    [qrOrderFields, selectedTemplate],
+  const finishedGoodsFieldValues: Partial<
+    Record<QrTemplateFieldKey, string | number | null>
+  > = {
+    fgBarcode: selectedPreviewVariant?.barcode,
+    fgSkuCode: selectedPreviewVariant?.sku_code,
+    fgSize: selectedPreviewVariant?.size,
+    fgBuyerSize: selectedPreviewVariant?.buyerSize,
+    fgOrderNo: orderNo,
+    fgStyleName: styleName,
+    fgArticle: orderFields.article,
+    fgColor: colors,
+    fgQuantity: selectedPreviewVariant?.totalQty,
+  };
+  const templateFieldValues: Partial<
+    Record<QrTemplateFieldKey, string | number | null>
+  > = activeTemplateType === "FG_BARCODE"
+    ? finishedGoodsFieldValues
+    : qrOrderFields;
+  const finishedGoodsLabelQuantities = selectedFinishedGoodsRows.map((row) => ({
+    finishedGoodsId: row.id,
+    quantity: Number(finishedGoodsQuantities[row.id]),
+  }));
+  const finishedGoodsLabelCount = finishedGoodsLabelQuantities.reduce(
+    (total, row) => total + row.quantity,
+    0,
   );
+  const hasValidFinishedGoodsSelection = selectedFinishedGoodsRows.length > 0
+    && selectedFinishedGoodsRows.every((row) =>
+      Boolean(row.sku_code?.trim() && row.barcode?.trim())
+      && Number.isSafeInteger(Number(finishedGoodsQuantities[row.id]))
+      && Number(finishedGoodsQuantities[row.id]) > 0
+    )
+    && Number.isSafeInteger(finishedGoodsLabelCount)
+    && finishedGoodsLabelCount <= MAX_ORDER_QR_PRINT_REQUEST_LABELS;
+  const qrPayload = selectedTemplate
+    ? buildOrderQrPayload([selectedTemplate.qrFieldKey], templateFieldValues).payload
+    : "";
   const qrFieldHasValue = Boolean(qrPayload);
   const qrSize = selectedTemplate?.qrSize ?? 0;
   const qrDataUrl = selectedTemplate
@@ -115,18 +176,28 @@ export default function OrderQrCodeCard({
   const openQrModal = () => {
     setIsLoadingTemplates(true);
     setTemplateError("");
+    setActiveTemplateType("ORDER_TAGS");
+    setSelectedTemplateId("");
     setRequestState({ type: null, status: "idle", message: "" });
     setOpen(true);
   };
 
   const submitOutputRequest = async (requestType: "PRINT" | "DOWNLOAD") => {
-    if (!selectedTemplate || (quantityMode === "BULK_QTY" && !isBulkQuantityValid)) {
+    if (
+      !selectedTemplate
+      || (activeTemplateType === "FG_BARCODE" && !hasValidFinishedGoodsSelection)
+      || (activeTemplateType !== "FG_BARCODE"
+        && quantityMode === "BULK_QTY"
+        && !isBulkQuantityValid)
+    ) {
       setRequestState({
         type: requestType,
         status: "error",
         message: !selectedTemplate
           ? "Select a saved QR template before requesting print or download."
-          : "Enter a positive whole-number bulk quantity.",
+          : activeTemplateType === "FG_BARCODE"
+            ? "Select finished-goods sizes with saved SKU and barcode values and valid label quantities."
+            : "Enter a positive whole-number bulk quantity.",
       });
       return;
     }
@@ -134,8 +205,8 @@ export default function OrderQrCodeCard({
     const query = new URLSearchParams({
       organizationId,
       workspaceId,
-      type: "ORDER_TAGS",
     });
+    if (activeTemplateType === "FG_BARCODE") query.set("type", "FG_BARCODE");
     try {
       const response = await fetch(`/api/orders/qr-print-requests?${query}`, {
         method: "POST",
@@ -144,8 +215,12 @@ export default function OrderQrCodeCard({
           orderId,
           templateId: selectedTemplate.id,
           requestType,
-          quantityMode,
-          ...(quantityMode === "BULK_QTY" ? { bulkQuantity: parsedBulkQuantity } : {}),
+          ...(activeTemplateType === "FG_BARCODE"
+            ? { finishedGoodsRows: finishedGoodsLabelQuantities }
+            : {
+              quantityMode,
+              ...(quantityMode === "BULK_QTY" ? { bulkQuantity: parsedBulkQuantity } : {}),
+            }),
         }),
       });
       const data = await response.json();
@@ -155,7 +230,7 @@ export default function OrderQrCodeCard({
       setRequestState({
         type: requestType,
         status: "success",
-        message: `${requestType === "PRINT" ? "Print" : "Download"} request sent to Design and Development.`,
+        message: `${activeTemplateType === "FG_BARCODE" ? "Finished-goods barcode" : "Order QR"} ${requestType.toLowerCase()} request sent to Design and Development.`,
       });
     } catch (error) {
       setRequestState({
@@ -183,7 +258,9 @@ export default function OrderQrCodeCard({
         if (!active) return;
         setTemplates(loadedTemplates.map((template) => ({
           ...template,
-          qrFieldKey: template.qrFieldKey ?? template.fieldKeys[0] ?? "orderNo",
+          qrFieldKey: template.qrFieldKey
+            ?? template.fieldKeys[0]
+            ?? getQrTemplateFields(template.type)[0].key,
           displayFields: template.displayFields ?? template.fieldKeys,
           displayFieldStyles: template.displayFieldStyles ?? {},
           stickerWidthMm: template.stickerWidthMm ?? 50,
@@ -206,6 +283,47 @@ export default function OrderQrCodeCard({
       active = false;
     };
   }, [open, organizationId, templateRetryCount, workspaceId]);
+
+  useEffect(() => {
+    if (!open || activeTemplateType !== "FG_BARCODE") return;
+    let active = true;
+    const query = new URLSearchParams({
+      organizationId,
+      workspaceId,
+      section: "finishedGoods",
+    });
+    void fetch(`/api/orders/${encodeURIComponent(orderId)}?${query}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error || "Unable to load finished-goods sizes.");
+        }
+        return data as { order: { finishedGoods: FinishedGoodsBarcodeRow[] } };
+      })
+      .then(({ order: loadedOrder }) => {
+        if (!active) return;
+        const rows = loadedOrder.finishedGoods ?? [];
+        setFinishedGoodsRows(rows);
+        setSelectedFinishedGoodsIds(rows.map(({ id }) => id));
+        setFinishedGoodsQuantities(Object.fromEntries(rows.map((row) => [
+          row.id,
+          String(Math.max(1, row.totalQty ?? 1)),
+        ])));
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setFinishedGoodsError(
+            error instanceof Error ? error.message : "Unable to load finished-goods sizes.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoadingFinishedGoods(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeTemplateType, finishedGoodsRetryCount, open, orderId, organizationId, workspaceId]);
 
   useEffect(() => {
     if (!open || !selectedTemplate || !qrPayload) return;
@@ -258,10 +376,12 @@ export default function OrderQrCodeCard({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 id="order-qr-dialog-title" className="text-lg font-semibold text-slate-900">
-                Order QR details
+                {activeTemplateType === "FG_BARCODE" ? "Finished-goods barcode labels" : "Order QR details"}
               </h2>
               <p className="mt-1 text-sm text-slate-600">
-                Select an Order Tags template to encode its chosen order fields.
+                {activeTemplateType === "FG_BARCODE"
+                  ? "Select finished-goods sizes to print using their saved SKU and barcode."
+                  : "Select an Order Tags template to encode its chosen order fields."}
               </p>
             </div>
             <Button
@@ -275,15 +395,34 @@ export default function OrderQrCodeCard({
             </Button>
           </div>
 
+          <Tabs
+            ariaLabel="Barcode template type"
+            value={activeTemplateType}
+            onChange={(value) => {
+              const nextType = value as OrderQrTemplateType;
+              setActiveTemplateType(nextType);
+              setSelectedTemplateId("");
+              setRequestState({ type: null, status: "idle", message: "" });
+              if (nextType === "FG_BARCODE") {
+                setIsLoadingFinishedGoods(true);
+                setFinishedGoodsError("");
+              }
+            }}
+            tabs={[
+              { value: "ORDER_TAGS", label: "Order Tags" },
+              { value: "FG_BARCODE", label: "FG Barcode" },
+            ]}
+          />
+
           <div className="grid min-w-0 gap-4 sm:grid-cols-2 sm:items-end">
             <Select
-              label="Order Tags Template"
+              label={activeTemplateType === "FG_BARCODE" ? "FG Barcode Template" : "Order Tags Template"}
               value={selectedTemplateId}
               onChange={(event) => setSelectedTemplateId(event.target.value)}
-              disabled={isLoadingTemplates || templateError.length > 0 || templates.length === 0}
+              disabled={isLoadingTemplates || templateError.length > 0 || activeTemplates.length === 0}
               options={[
                 { value: "", label: "Select a saved template" },
-                ...templates.map((template) => ({
+                ...activeTemplates.map((template) => ({
                   value: template.id,
                   label: template.name,
                 })),
@@ -297,17 +436,19 @@ export default function OrderQrCodeCard({
             </Link>
           </div>
 
-          <Tabs
-            ariaLabel="QR quantity mode"
-            value={quantityMode}
-            onChange={setQuantityMode}
-            tabs={[
-              { value: "PCS", label: "PCS" },
-              { value: "BULK_QTY", label: "Bulk Qty" },
-            ]}
-          />
+          {activeTemplateType !== "FG_BARCODE" && (
+            <Tabs
+              ariaLabel="QR quantity mode"
+              value={quantityMode}
+              onChange={setQuantityMode}
+              tabs={[
+                { value: "PCS", label: "PCS" },
+                { value: "BULK_QTY", label: "Bulk Qty" },
+              ]}
+            />
+          )}
 
-          {quantityMode === "BULK_QTY" && (
+          {activeTemplateType !== "FG_BARCODE" && quantityMode === "BULK_QTY" && (
             <div className="max-w-xs space-y-1">
               <Input
                 label="Bulk Quantity (PCS)"
@@ -329,6 +470,96 @@ export default function OrderQrCodeCard({
                 </p>
               )}
             </div>
+          )}
+
+          {activeTemplateType === "FG_BARCODE" && (
+            <section className="space-y-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-4">
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-slate-900">Finished-goods sizes</h3>
+                <p className="text-xs text-[var(--erp-text-muted)]">
+                  Each selected size produces its own QR code. Label quantity defaults to the size&apos;s order quantity.
+                </p>
+              </div>
+              {isLoadingFinishedGoods && (
+                <p className="text-sm text-[var(--erp-text-muted)]" role="status">
+                  Loading finished-goods sizes...
+                </p>
+              )}
+              {finishedGoodsError && (
+                <div className="flex flex-wrap items-center gap-3" role="alert">
+                  <p className="text-sm text-[var(--erp-danger)]">{finishedGoodsError}</p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setIsLoadingFinishedGoods(true);
+                      setFinishedGoodsError("");
+                      setFinishedGoodsRetryCount((count) => count + 1);
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              )}
+              {!isLoadingFinishedGoods && !finishedGoodsError && finishedGoodsRows.length === 0 && (
+                <p className="text-sm text-[var(--erp-text-muted)]" role="status">
+                  This order has no saved finished-goods sizes yet. Add sizes in the order&apos;s Finished Goods tab and save it first.
+                </p>
+              )}
+              {!isLoadingFinishedGoods && finishedGoodsRows.length > 0 && (
+                <div className="max-h-64 space-y-3 overflow-y-auto">
+                  {finishedGoodsRows.map((row) => {
+                    const isSelected = selectedFinishedGoodsIds.includes(row.id);
+                    const identifiersMissing = !row.sku_code?.trim() || !row.barcode?.trim();
+                    return (
+                      <div
+                        key={row.id}
+                        className="grid min-w-0 gap-3 rounded-lg border border-[var(--erp-border)] p-3 sm:grid-cols-[minmax(0,1fr)_10rem]"
+                      >
+                        <div className="min-w-0 space-y-2">
+                          <Checkbox
+                            label={`Size ${row.size ?? row.buyerSize ?? "—"} · ${row.sku_code || "SKU missing"} · ${row.barcode || "Barcode missing"}`}
+                            checked={isSelected}
+                            onChange={(event) => setSelectedFinishedGoodsIds((current) =>
+                              event.target.checked
+                                ? [...new Set([...current, row.id])]
+                                : current.filter((id) => id !== row.id))}
+                          />
+                          {identifiersMissing && (
+                            <p className="text-xs text-[var(--erp-danger)]" role="status">
+                              Add both SKU and barcode to this finished-goods size in the order before printing.
+                            </p>
+                          )}
+                        </div>
+                        <Input
+                          label="Label quantity"
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={finishedGoodsQuantities[row.id] ?? ""}
+                          disabled={!isSelected}
+                          onChange={(event) => setFinishedGoodsQuantities((current) => ({
+                            ...current,
+                            [row.id]: event.target.value,
+                          }))}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {selectedFinishedGoodsRows.length > 0 && (
+                <p className="text-sm text-[var(--erp-text-muted)]" role="status">
+                  {selectedFinishedGoodsRows.length} size variant{selectedFinishedGoodsRows.length === 1 ? "" : "s"} · {finishedGoodsLabelCount} labels selected
+                </p>
+              )}
+              {finishedGoodsLabelCount > MAX_ORDER_QR_PRINT_REQUEST_LABELS && (
+                <p className="text-sm text-[var(--erp-danger)]" role="alert">
+                  The total label quantity cannot exceed {MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()}.
+                </p>
+              )}
+            </section>
           )}
 
           {selectedTemplate && (
@@ -354,17 +585,17 @@ export default function OrderQrCodeCard({
               <div>
                 <p className="text-xs text-[var(--erp-text-muted)]">Quantity mode</p>
                 <p className="text-sm font-medium text-slate-900">
-                  {quantityMode === "PCS"
-                    ? "1 PCS"
-                    : `${isBulkQuantityValid ? parsedBulkQuantity : "—"} PCS`}
+                  {activeTemplateType === "FG_BARCODE"
+                    ? `${finishedGoodsLabelCount} labels`
+                    : quantityMode === "PCS"
+                      ? "1 PCS"
+                      : `${isBulkQuantityValid ? parsedBulkQuantity : "—"} PCS`}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-[var(--erp-text-muted)]">QR encodes</p>
                 <p className="text-sm font-medium text-slate-900">
-                  {ORDER_QR_TEMPLATE_FIELDS.find(
-                    ({ key }) => key === selectedTemplate.qrFieldKey,
-                  )?.label ?? selectedTemplate.qrFieldKey}
+                  {getQrTemplateFieldLabel(selectedTemplate.qrFieldKey)}
                 </p>
               </div>
             </div>
@@ -392,9 +623,9 @@ export default function OrderQrCodeCard({
               </Button>
             </div>
           )}
-          {!isLoadingTemplates && !templateError && templates.length === 0 && (
+          {!isLoadingTemplates && !templateError && activeTemplates.length === 0 && (
             <p className="text-sm text-[var(--erp-text-muted)]">
-              No QR templates have been created. Create a template before generating an order QR code.
+              No {activeTemplateType === "FG_BARCODE" ? "FG Barcode" : "Order Tags"} templates have been created. Create a matching template before generating labels.
             </p>
           )}
 
@@ -402,20 +633,13 @@ export default function OrderQrCodeCard({
             <OrderQrStickerPreview
               qrDataUrl={qrDataUrl}
               qrError={qrError}
-              qrAlt={`QR code for order ${orderNo}`}
+              qrAlt={activeTemplateType === "FG_BARCODE"
+                ? `FG barcode QR code for ${selectedPreviewVariant?.barcode ?? orderNo}`
+                : `QR code for order ${orderNo}`}
               fields={selectedTemplate.displayFields.map((fieldKey) => ({
                 key: fieldKey,
-                label: ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === fieldKey)?.label ?? fieldKey,
-                value: String(
-                  qrOrderFields[fieldKey]
-                    ?? (fieldKey === "orderNo"
-                      ? orderNo
-                      : fieldKey === "styleName"
-                        ? styleName
-                        : fieldKey === "colors"
-                          ? colors
-                          : ""),
-                ),
+                label: getQrTemplateFieldLabel(fieldKey),
+                value: String(templateFieldValues[fieldKey] ?? ""),
                 style: {
                   ...DEFAULT_QR_FIELD_STYLE,
                   ...selectedTemplate.displayFieldStyles[fieldKey],
@@ -440,15 +664,17 @@ export default function OrderQrCodeCard({
                   ? "Loading saved templates..."
                   : templateError
                     ? "Load templates to preview the saved QR design."
-                    : templates.length === 0
-                      ? "Create a template to preview its QR sticker here."
+                    : activeTemplates.length === 0
+                      ? `Create a ${activeTemplateType === "FG_BARCODE" ? "FG Barcode" : "Order Tags"} template to preview its sticker here.`
                       : "Select a saved template to preview its QR sticker."}
               </p>
             </div>
           )}
           <div className="space-y-3 border-t border-[var(--erp-border)] pt-4">
             <p className="text-sm text-[var(--erp-text-muted)]">
-              Send this QR code and the selected order details to Design and Development for processing.
+              {activeTemplateType === "FG_BARCODE"
+                ? "Send one QR label per selected finished-goods size to Design and Development."
+                : "Send this QR code and the selected order details to Design and Development for processing."}
             </p>
             <div className="flex flex-wrap gap-3">
               <Button
@@ -456,7 +682,9 @@ export default function OrderQrCodeCard({
                 variant="secondary"
                 size="sm"
                 disabled={!selectedTemplate || !qrFieldHasValue
-                  || (quantityMode === "BULK_QTY" && !isBulkQuantityValid)
+                  || (activeTemplateType === "FG_BARCODE"
+                    ? !hasValidFinishedGoodsSelection
+                    : quantityMode === "BULK_QTY" && !isBulkQuantityValid)
                   || requestState.status === "submitting"}
                 onClick={() => void submitOutputRequest("PRINT")}
               >
@@ -468,7 +696,9 @@ export default function OrderQrCodeCard({
                 variant="secondary"
                 size="sm"
                 disabled={!selectedTemplate || !qrFieldHasValue
-                  || (quantityMode === "BULK_QTY" && !isBulkQuantityValid)
+                  || (activeTemplateType === "FG_BARCODE"
+                    ? !hasValidFinishedGoodsSelection
+                    : quantityMode === "BULK_QTY" && !isBulkQuantityValid)
                   || requestState.status === "submitting"}
                 onClick={() => void submitOutputRequest("DOWNLOAD")}
               >

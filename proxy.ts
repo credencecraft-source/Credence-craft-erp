@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import {
   PLATFORM_SESSION_COOKIE_NAME,
   SESSION_COOKIE_NAME,
@@ -85,7 +85,6 @@ export function proxy(request: NextRequest) {
   if (isPublicAuthRoute) {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set("x-current-path", pathname);
-
     return addApiCorsHeaders(
       request,
       NextResponse.next({
@@ -107,6 +106,12 @@ export function proxy(request: NextRequest) {
       request,
       NextResponse.next({ request: { headers: requestHeaders } }),
     );
+  }
+
+  if (pathname === "/api/cron/aggregate-usage") {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-current-path", pathname);
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   const isPublicOnlineStoreManagementRoute =
@@ -163,6 +168,39 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(
       new URL(isPlatformPageRoute ? "/platform" : "/", request.url),
     );
+  }
+
+  const organizationRouteMatch = pathname.match(
+    /^\/api\/organizations\/([A-Za-z0-9_-]+)(?:\/|$)/,
+  );
+  if (
+    organizationRouteMatch &&
+    !isSupportSession &&
+    request.method !== "OPTIONS"
+  ) {
+    const requestStartedAt = performance.now();
+    const workspaceUserId = authenticatedUserId;
+    const publicOrganizationId = organizationRouteMatch[1];
+    const endpoint = pathname.slice(0, 255);
+    const method = request.method.slice(0, 10);
+    after(async () => {
+      try {
+        const { recordOrganizationRequestUsage } = await import(
+          "@/lib/services/workspace/tenant-usage-metering-service"
+        );
+        await recordOrganizationRequestUsage({
+          workspaceUserId,
+          publicOrganizationId,
+          endpoint,
+          method,
+          executionMs: Math.max(0, Math.round(performance.now() - requestStartedAt)),
+        });
+      } catch (error) {
+        console.error("Tenant request usage metering failed.", {
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    });
   }
 
   const roleSettingsMatch = pathname.match(

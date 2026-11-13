@@ -47,6 +47,8 @@ export const ERP_MODULES: ErpModule[] = [
     pathSegment: "pos",
     children: [
       { key: "quick-invoice", label: "Quick Invoice", pathSegment: "quick-invoice" },
+      { key: "counter", label: "Counter", pathSegment: "counter" },
+      { key: "daybook", label: "Day Book", pathSegment: "daybook" },
       { key: "purchase-bill", label: "Purchase Bill", pathSegment: "purchase-bill" },
       { key: "offers", label: "Offers", pathSegment: "offers" },
       { key: "coupon-code", label: "Coupon Code", pathSegment: "cupencode" },

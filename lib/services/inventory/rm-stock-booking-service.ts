@@ -204,7 +204,7 @@ export async function createRawMaterialStockBookings(input: {
             styleName: true,
             brand: true,
             entity_id: true,
-            entity: { select: { is_active: true } },
+            entity: { select: { entity_name: true, is_active: true } },
           },
         },
       },
@@ -295,6 +295,11 @@ export async function createRawMaterialStockBookings(input: {
     }
 
     const groupedLines = bomItems.map((item) => {
+      const orderNo = item.order.orderNo.trim();
+      const styleName = item.order.styleName?.trim();
+      if (!orderNo || !styleName) {
+        throw new Error("Every selected order needs an Order No and Style Name before grouped stock booking.");
+      }
       const required = new Prisma.Decimal(item.totalRequiredQty ?? item.requiredQty ?? 0);
       const remaining = required
         .minus(bookedByBomId.get(item.id) ?? 0)
@@ -303,8 +308,8 @@ export async function createRawMaterialStockBookings(input: {
       return {
         source_bom_item_id: item.id,
         source_order_id: item.order_id,
-        order_no: item.order.orderNo,
-        style_name: item.order.styleName,
+        order_no: orderNo,
+        style_name: styleName,
         brand: item.order.brand,
         category: item.category,
         category_type: item.categoryType,
@@ -325,6 +330,7 @@ export async function createRawMaterialStockBookings(input: {
       data: {
         organization_id: input.organizationId,
         entity_id: entityId,
+        entity_name_snapshot: bomItems[0].order.entity?.entity_name ?? null,
         source_type: "STOCK",
         vendor_id: currentStoreVendor.id,
         grouped_po_no: input.sampleBatchId && input.sampleGroupOrdinal

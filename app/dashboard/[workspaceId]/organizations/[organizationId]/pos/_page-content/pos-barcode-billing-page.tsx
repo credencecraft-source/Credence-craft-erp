@@ -67,6 +67,12 @@ function stockRecordKey(record: Pick<StockRecord, "id" | "stock_type">) {
   return `${record.stock_type}:${record.id}`;
 }
 
+function stockAgeInDays(addedTime: string) {
+  const addedTimeMilliseconds = Date.parse(addedTime);
+  if (!Number.isFinite(addedTimeMilliseconds)) return null;
+  return Math.max(0, Math.floor((Date.now() - addedTimeMilliseconds) / 86_400_000));
+}
+
 function offerDiscountForLine(line: BillLine, offers: PosOfferOption[]) {
   const offer = offers.find((candidate) => candidate.id === line.selectedOfferId);
   if (!offer) return 0;
@@ -136,6 +142,8 @@ type ReturnCreditOption = {
   availableAmount: string;
 };
 type EntityOption = { id: string; label: string };
+type HierarchyOption = { id: string; label: string; isActive: boolean };
+type HierarchyLevel = "entities" | "divisions" | "locations" | "subLocations" | "subSubLocations";
 type StoredFinanceDocument = {
   id: string;
   documentType: string;
@@ -154,9 +162,11 @@ type StoredFinanceDocument = {
 export default function PosBarcodeBillingPage({
   workspaceId,
   organizationId,
+  salespersonName,
 }: {
   workspaceId: string;
   organizationId: string;
+  salespersonName: string;
 }) {
   const router = useRouter();
   const scannerRef = useRef<HTMLInputElement>(null);
@@ -179,7 +189,30 @@ export default function PosBarcodeBillingPage({
   const [offerLimitReached, setOfferLimitReached] = useState(false);
   const [offerLookupRetry, setOfferLookupRetry] = useState(0);
   const [entities, setEntities] = useState<EntityOption[]>([]);
+  const [divisions, setDivisions] = useState<HierarchyOption[]>([]);
+  const [locations, setLocations] = useState<HierarchyOption[]>([]);
+  const [subLocations, setSubLocations] = useState<HierarchyOption[]>([]);
+  const [subSubLocations, setSubSubLocations] = useState<HierarchyOption[]>([]);
   const [entityId, setEntityId] = useState("");
+  const [divisionId, setDivisionId] = useState("");
+  const [locationId, setLocationId] = useState("");
+  const [subLocationId, setSubLocationId] = useState("");
+  const [subSubLocationId, setSubSubLocationId] = useState("");
+  const [hierarchyLoading, setHierarchyLoading] = useState<Record<HierarchyLevel, boolean>>({
+    entities: true,
+    divisions: false,
+    locations: false,
+    subLocations: false,
+    subSubLocations: false,
+  });
+  const [hierarchyErrors, setHierarchyErrors] = useState<Record<HierarchyLevel, string>>({
+    entities: "",
+    divisions: "",
+    locations: "",
+    subLocations: "",
+    subSubLocations: "",
+  });
+  const [hierarchyRetry, setHierarchyRetry] = useState(0);
   const [customerContactId, setCustomerContactId] = useState("");
   const [customerDisplayName, setCustomerDisplayName] = useState("");
   const [returnCredits, setReturnCredits] = useState<ReturnCreditOption[]>([]);
@@ -237,21 +270,41 @@ export default function PosBarcodeBillingPage({
     || Boolean(entityId && billLineKeys && offersLoadedForKey !== offerLookupKey && offerLookupErrorKey !== offerLookupKey);
   const visibleOfferLookupError = offerLookupErrorKey === offerLookupKey ? offerLookupError : "";
   const visibleOfferLimitReached = offersLoadedForKey === offerLookupKey && offerLimitReached;
+  const stockHierarchyComplete = Boolean(
+    entityId && divisionId && locationId && subLocationId && subSubLocationId,
+  );
+  const resetStockAndCart = () => {
+    setSelectedRecord(null);
+    setRecords([]);
+    setBillLines([]);
+    setOffersByStock({});
+    setOffersLoadedForKey("");
+    setOfferLookupError("");
+    setOfferLookupErrorKey("");
+    setOfferLookupLoading(false);
+    setHasMoreStockResults(false);
+    setStockSearch("");
+    setStockSearchError("");
+    setStockSearchLoading(false);
+    setScanValue("");
+    setError("");
+  };
 
   useEffect(() => {
     scannerRef.current?.focus();
+    const controller = new AbortController();
     Promise.all([
       fetch(
         `/api/organizations/${encodeURIComponent(organizationId)}/master-data/gst?includeInactive=false`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       ).then((response) => response.json()),
       fetch(
         `/api/organizations/${encodeURIComponent(organizationId)}/tax-rules`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       ).then((response) => response.json()),
       fetch(
         `/api/organizations/${encodeURIComponent(organizationId)}/master-data/entity?includeInactive=false&limit=200`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       ).then(async (response) => {
         const data: unknown = await response.json();
         if (!response.ok || !Array.isArray(data)) {
@@ -265,14 +318,132 @@ export default function PosBarcodeBillingPage({
       }),
     ])
       .then(([gstData, taxData, entityData]) => {
+        if (controller.signal.aborted) return;
         setGstOptions(Array.isArray(gstData) ? gstData : []);
         setTaxProfile(taxData.profile ?? null);
         setEntities(entityData);
       })
-      .catch((loadError: unknown) => setError(
-        loadError instanceof Error ? loadError.message : "Unable to load POS tax and Entity data.",
-      ));
-  }, [organizationId]);
+      .catch((loadError: unknown) => {
+        if (controller.signal.aborted) return;
+        const message = loadError instanceof Error ? loadError.message : "Unable to load active organization Entities.";
+        setHierarchyErrors((current) => ({ ...current, entities: message }));
+        setError(message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setHierarchyLoading((current) => ({ ...current, entities: false }));
+        }
+      });
+    return () => controller.abort();
+  }, [hierarchyRetry, organizationId]);
+
+  useEffect(() => {
+    if (!entityId) return;
+    const controller = new AbortController();
+    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/entities/${encodeURIComponent(entityId)}/divisions`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; divisions?: Array<Record<string, unknown>> };
+        if (!response.ok || !Array.isArray(data.divisions)) throw new Error(data.error || "Unable to load active Divisions.");
+        return data.divisions
+          .filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.division_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.division_name as string, isActive: true }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setDivisions(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setHierarchyErrors((current) => ({
+          ...current,
+          divisions: cause instanceof Error ? cause.message : "Unable to load active Divisions.",
+        }));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHierarchyLoading((current) => ({ ...current, divisions: false }));
+      });
+    return () => controller.abort();
+  }, [entityId, hierarchyRetry, organizationId]);
+
+  useEffect(() => {
+    if (!entityId || !divisionId) return;
+    const controller = new AbortController();
+    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/entities/${encodeURIComponent(entityId)}/divisions/${encodeURIComponent(divisionId)}/locations`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; locations?: Array<Record<string, unknown>> };
+        if (!response.ok || !Array.isArray(data.locations)) throw new Error(data.error || "Unable to load active Locations.");
+        return data.locations
+          .filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.location_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.location_name as string, isActive: true }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setLocations(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setHierarchyErrors((current) => ({
+          ...current,
+          locations: cause instanceof Error ? cause.message : "Unable to load active Locations.",
+        }));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHierarchyLoading((current) => ({ ...current, locations: false }));
+      });
+    return () => controller.abort();
+  }, [divisionId, entityId, hierarchyRetry, organizationId]);
+
+  useEffect(() => {
+    if (!entityId || !divisionId || !locationId) return;
+    const controller = new AbortController();
+    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/entities/${encodeURIComponent(entityId)}/divisions/${encodeURIComponent(divisionId)}/locations/${encodeURIComponent(locationId)}/sub-locations`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; subLocations?: Array<Record<string, unknown>> };
+        if (!response.ok || !Array.isArray(data.subLocations)) throw new Error(data.error || "Unable to load active Sub-locations.");
+        return data.subLocations
+          .filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.node_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.node_name as string, isActive: true }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setSubLocations(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setHierarchyErrors((current) => ({
+          ...current,
+          subLocations: cause instanceof Error ? cause.message : "Unable to load active Sub-locations.",
+        }));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHierarchyLoading((current) => ({ ...current, subLocations: false }));
+      });
+    return () => controller.abort();
+  }, [divisionId, entityId, hierarchyRetry, locationId, organizationId]);
+
+  useEffect(() => {
+    if (!entityId || !divisionId || !locationId || !subLocationId) return;
+    const controller = new AbortController();
+    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/entities/${encodeURIComponent(entityId)}/divisions/${encodeURIComponent(divisionId)}/locations/${encodeURIComponent(locationId)}/sub-locations/${encodeURIComponent(subLocationId)}/sub-sub-locations`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json() as { error?: string; subSubLocations?: Array<Record<string, unknown>> };
+        if (!response.ok || !Array.isArray(data.subSubLocations)) throw new Error(data.error || "Unable to load active Sub-sub-locations.");
+        return data.subSubLocations
+          .filter((item) => item.is_active === true && typeof item.id === "string" && typeof item.node_name === "string")
+          .map((item) => ({ id: item.id as string, label: item.node_name as string, isActive: true }));
+      })
+      .then((options) => { if (!controller.signal.aborted) setSubSubLocations(options); })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setHierarchyErrors((current) => ({
+          ...current,
+          subSubLocations: cause instanceof Error ? cause.message : "Unable to load active Sub-sub-locations.",
+        }));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHierarchyLoading((current) => ({ ...current, subSubLocations: false }));
+      });
+    return () => controller.abort();
+  }, [divisionId, entityId, hierarchyRetry, locationId, organizationId, subLocationId]);
 
   useEffect(() => {
     if (!customerContactId) return;
@@ -356,7 +527,7 @@ export default function PosBarcodeBillingPage({
   }, [billLineKeys, entityId, invoiceDate, offerLookupKey, offerLookupRetry, organizationId]);
 
   useEffect(() => {
-    if (!entityId) return;
+    if (!stockHierarchyComplete) return;
     const search = stockSearch.trim();
     if (search.length === 1) return;
 
@@ -365,8 +536,16 @@ export default function PosBarcodeBillingPage({
       setStockSearchLoading(true);
       setStockSearchError("");
       try {
+        const query = new URLSearchParams({
+          entityId,
+          divisionId,
+          locationId,
+          subLocationId,
+          subSubLocationId,
+        });
+        if (search) query.set("search", search);
         const response = await fetch(
-          `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?entityId=${encodeURIComponent(entityId)}${search ? `&search=${encodeURIComponent(search)}` : ""}`,
+          `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?${query.toString()}`,
           { cache: "no-store", signal: controller.signal },
         );
         const data = (await response.json()) as {
@@ -394,11 +573,10 @@ export default function PosBarcodeBillingPage({
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [entityId, organizationId, stockSearch]);
+  }, [divisionId, entityId, locationId, organizationId, stockHierarchyComplete, stockSearch, subLocationId, subSubLocationId]);
 
   const lookupCustomerByMobile = async () => {
-    const digits = customerMobile.replace(/\D/g, "");
-    const mobile = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+    const mobile = customerMobile;
     if (!/^[6-9]\d{9}$/.test(mobile)) {
       customerLookupControllerRef.current?.abort();
       customerLookupKeyRef.current = "";
@@ -521,8 +699,8 @@ export default function PosBarcodeBillingPage({
     event.preventDefault();
     const barcode = scanValue.trim();
     if (!barcode || loading) return;
-    if (!entityId) {
-      setError("Select an Entity before scanning or finding stock.");
+    if (!stockHierarchyComplete) {
+      setError("Select the complete stock hierarchy through a Sub-sub-location before scanning or finding stock.");
       return;
     }
     const [referenceType, referenceId] = barcode.split(":", 2);
@@ -533,8 +711,17 @@ export default function PosBarcodeBillingPage({
     setLoading(true);
     setError("");
     try {
+      const query = new URLSearchParams({
+        entityId,
+        divisionId,
+        locationId,
+        subLocationId,
+        subSubLocationId,
+        stockId,
+      });
+      if (stockType) query.set("stockType", stockType);
       const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?entityId=${encodeURIComponent(entityId)}&stockId=${encodeURIComponent(stockId)}${stockType ? `&stockType=${stockType}` : ""}`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?${query.toString()}`,
         { cache: "no-store" },
       );
       const data = (await response.json()) as {
@@ -793,6 +980,10 @@ export default function PosBarcodeBillingPage({
   ]);
 
   const saveInvoice = async () => {
+    if (!stockHierarchyComplete) {
+      setError("Select the complete stock hierarchy through a Sub-sub-location before posting.");
+      return;
+    }
     setSavingInvoice(true);
     setError("");
     try {
@@ -805,6 +996,7 @@ export default function PosBarcodeBillingPage({
           taxMode,
           requestKey: saleRequestKey.current || (saleRequestKey.current = crypto.randomUUID()),
           entityId,
+          stockHierarchy: { entityId, divisionId, locationId, subLocationId, subSubLocationId },
           couponCode: couponCode.trim() || null,
           returnCreditApplications: selectedReturnCreditApplications,
           lines: billLines.map((line) => ({
@@ -880,10 +1072,130 @@ export default function PosBarcodeBillingPage({
   };
 
   return (
-    <Page as="div" className="min-w-0 max-w-[1600px]">
+    <Page as="div" className="min-w-0 max-w-[1600px] pt-4 lg:pt-0">
       <div className="print:hidden">
-        <Section className="flex min-h-[calc(100vh-2rem)] flex-col gap-4">
-          <div className="sticky top-0 z-20 flex flex-wrap items-center border-b border-[var(--erp-border)] bg-[var(--erp-surface)]/95 pb-4 backdrop-blur">
+        <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:h-8 xl:grid-cols-5">
+          <Select
+            aria-label="Entity"
+            className="h-8 px-2 py-1 text-xs"
+            value={entityId}
+            onChange={(event) => {
+              resetStockAndCart();
+              setEntityId(event.target.value);
+              setDivisionId("");
+              setLocationId("");
+              setSubLocationId("");
+              setSubSubLocationId("");
+              setDivisions([]);
+              setLocations([]);
+              setSubLocations([]);
+              setSubSubLocations([]);
+              setHierarchyLoading((current) => ({
+                ...current,
+                divisions: Boolean(event.target.value),
+                locations: false,
+                subLocations: false,
+                subSubLocations: false,
+              }));
+              setHierarchyErrors((current) => ({ ...current, divisions: "", locations: "", subLocations: "", subSubLocations: "" }));
+            }}
+            disabled={hierarchyLoading.entities || billLines.length > 0}
+            required
+            options={[
+              { value: "", label: hierarchyLoading.entities ? "Loading Entities…" : entities.length ? "Select Entity" : "No active Entities" },
+              ...entities.map((entity) => ({ value: entity.id, label: entity.label })),
+            ]}
+          />
+          <Select
+            aria-label="Division"
+            className="h-8 px-2 py-1 text-xs"
+            value={divisionId}
+            onChange={(event) => {
+              resetStockAndCart();
+              setDivisionId(event.target.value);
+              setLocationId("");
+              setSubLocationId("");
+              setSubSubLocationId("");
+              setLocations([]);
+              setSubLocations([]);
+              setSubSubLocations([]);
+              setHierarchyLoading((current) => ({
+                ...current,
+                locations: Boolean(event.target.value),
+                subLocations: false,
+                subSubLocations: false,
+              }));
+              setHierarchyErrors((current) => ({ ...current, locations: "", subLocations: "", subSubLocations: "" }));
+            }}
+            disabled={!entityId || hierarchyLoading.divisions || billLines.length > 0}
+            required
+            options={[
+              { value: "", label: hierarchyLoading.divisions ? "Loading Divisions…" : !entityId ? "Select Entity first" : divisions.length ? "Select Division" : "No active Divisions" },
+              ...divisions.map((option) => ({ value: option.id, label: option.label })),
+            ]}
+          />
+          <Select
+            aria-label="Location"
+            className="h-8 px-2 py-1 text-xs"
+            value={locationId}
+            onChange={(event) => {
+              resetStockAndCart();
+              setLocationId(event.target.value);
+              setSubLocationId("");
+              setSubSubLocationId("");
+              setSubLocations([]);
+              setSubSubLocations([]);
+              setHierarchyLoading((current) => ({
+                ...current,
+                subLocations: Boolean(event.target.value),
+                subSubLocations: false,
+              }));
+              setHierarchyErrors((current) => ({ ...current, subLocations: "", subSubLocations: "" }));
+            }}
+            disabled={!divisionId || hierarchyLoading.locations || billLines.length > 0}
+            required
+            options={[
+              { value: "", label: hierarchyLoading.locations ? "Loading Locations…" : !divisionId ? "Select Division first" : locations.length ? "Select Location" : "No active Locations" },
+              ...locations.map((option) => ({ value: option.id, label: option.label })),
+            ]}
+          />
+          <Select
+            aria-label="Sub-location"
+            className="h-8 px-2 py-1 text-xs"
+            value={subLocationId}
+            onChange={(event) => {
+              resetStockAndCart();
+              setSubLocationId(event.target.value);
+              setSubSubLocationId("");
+              setSubSubLocations([]);
+              setHierarchyLoading((current) => ({ ...current, subSubLocations: Boolean(event.target.value) }));
+              setHierarchyErrors((current) => ({ ...current, subSubLocations: "" }));
+            }}
+            disabled={!locationId || hierarchyLoading.subLocations || billLines.length > 0}
+            required
+            options={[
+              { value: "", label: hierarchyLoading.subLocations ? "Loading Sub-locations…" : !locationId ? "Select Location first" : subLocations.length ? "Select Sub-location" : "No active Sub-locations" },
+              ...subLocations.map((option) => ({ value: option.id, label: option.label })),
+            ]}
+          />
+          <Select
+            aria-label="Sub-sub-location (issue)"
+            className="h-8 px-2 py-1 text-xs"
+            value={subSubLocationId}
+            onChange={(event) => {
+              resetStockAndCart();
+              setSubSubLocationId(event.target.value);
+            }}
+            disabled={!subLocationId || hierarchyLoading.subSubLocations || billLines.length > 0}
+            required
+            options={[
+              { value: "", label: hierarchyLoading.subSubLocations ? "Loading Sub-sub-locations…" : !subLocationId ? "Select Sub-location first" : subSubLocations.length ? "Select issue location" : "No active Sub-sub-locations" },
+              ...subSubLocations.map((option) => ({ value: option.id, label: option.label })),
+            ]}
+          />
+        </div>
+        <Section className="grid min-w-0 items-start gap-x-4 gap-y-4 space-y-0 xl:gap-y-0 xl:grid-cols-[minmax(0,1.7fr)_minmax(20rem,0.8fr)]">
+          <div className="sticky top-0 z-20 flex flex-wrap items-center border-b border-[var(--erp-border)] bg-[var(--erp-surface)]/95 pb-0 backdrop-blur xl:col-span-2">
             <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 xl:flex-nowrap">
               <div className="grid min-w-0 flex-1 grid-cols-2 gap-1 sm:grid-cols-4 xl:grid-cols-8">
                 <SummaryAmount label="Taxable value" value={subtotal} compact />
@@ -892,38 +1204,17 @@ export default function PosBarcodeBillingPage({
                 <SummaryAmount label="IGST" value={taxBreakdown.igst} compact />
                 <SummaryAmount label="Other charges" value={charges} compact />
                 <SummaryAmount label="Store credit" value={storeCreditAvailableAmount} compact />
-                <SummaryAmount
-                  label="Grand total"
-                  value={grandTotal}
-                  strong
-                  compact
-                />
+                <SummaryAmount label="Grand total" value={grandTotal} strong compact />
                 <SummaryAmount label="Amount due" value={amountDue} compact />
               </div>
-              <Button
-                type="button"
-                onClick={() => void saveInvoice()}
-                disabled={
-                  billLines.length === 0
-                  || !customerContactId
-                  || billLines.some((line) => line.quantity < 1)
-                  || savingInvoice
-                  || visibleOfferLookupLoading
-                  || Boolean(visibleOfferLookupError)
-                  || returnCreditLoading
-                  || Boolean(returnCreditError)
-                }
-                className="shrink-0 rounded-lg px-4 py-2 text-sm font-semibold"
-              >
-                  {savingInvoice ? "Posting..." : "Post Invoice"}
-              </Button>
             </div>
           </div>
-          <Card className="space-y-4">
+          <div className="contents xl:col-start-2 xl:row-start-2 xl:flex xl:min-w-0 xl:flex-col xl:gap-4 xl:self-stretch">
+          <Card className="order-1 space-y-4 xl:order-none">
             <div>
               <h2 className="text-sm font-semibold text-[var(--erp-text)]">Invoice details</h2>
             </div>
-            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_minmax(9rem,0.7fr)_minmax(12rem,1fr)_minmax(12rem,1fr)]">
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_minmax(9rem,0.7fr)_minmax(12rem,1fr)]">
               <Input
                 id="customer-mobile"
                 label="Customer mobile number"
@@ -932,7 +1223,7 @@ export default function PosBarcodeBillingPage({
                 onChange={(event) => {
                   customerLookupControllerRef.current?.abort();
                   customerLookupKeyRef.current = "";
-                  setCustomerMobile(event.target.value);
+                  setCustomerMobile(event.target.value.replace(/\D/g, "").slice(0, 10));
                   selectCustomer("");
                   setCustomerDisplayName("");
                   setCustomerLookupStatus("idle");
@@ -947,35 +1238,12 @@ export default function PosBarcodeBillingPage({
                     void lookupCustomerByMobile();
                   }
                 }}
-                inputMode="tel"
-                autoComplete="tel"
-                maxLength={20}
+                inputMode="numeric"
+                autoComplete="tel-national"
+                maxLength={10}
                 placeholder="Enter mobile number"
-                hint="Existing customers are selected automatically; new numbers prompt for a name."
                 required
               />
-              <Select
-                id="entity-select"
-                label="Entity / Store"
-                value={entityId}
-                onChange={(event) => {
-                  setEntityId(event.target.value);
-                  setSelectedRecord(null);
-                  setRecords([]);
-                  setHasMoreStockResults(false);
-                  setStockSearchError("");
-                  setStockSearchLoading(false);
-                  setStockSearch("");
-                  setScanValue("");
-                }}
-                disabled={billLines.length > 0}
-                required
-              >
-                <option value="">Select Entity</option>
-                {entities.map((entity) => (
-                  <option key={entity.id} value={entity.id}>{entity.label}</option>
-                ))}
-              </Select>
               <Input
                 id="invoice-date"
                 label="Invoice date"
@@ -1006,10 +1274,6 @@ export default function PosBarcodeBillingPage({
                   Retry
                 </Button>
               </p>
-            ) : !customerContactId ? (
-              <p role="status" className="text-sm text-[var(--erp-muted)]">
-                Enter a customer mobile number to continue.
-              </p>
             ) : null}
             {billLines.length > 0 && (
               <p className="text-xs text-[var(--erp-muted)]">
@@ -1017,11 +1281,69 @@ export default function PosBarcodeBillingPage({
               </p>
             )}
           </Card>
-          <div className="grid gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(24rem,1fr)]">
-            <form
-              onSubmit={lookupRecord}
-              className="erp-surface-soft min-w-0 p-3"
-            >
+          <Card className="order-4 space-y-4 xl:order-none">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--erp-text)]">Checkout</h2>
+            </div>
+            <div className="space-y-3 rounded-xl border border-[var(--erp-border)] p-4">
+              <div>
+                <p className="erp-eyebrow">Payment mode</p>
+                <Badge role="status">Not collected</Badge>
+                <p className="mt-2 text-xs text-[var(--erp-muted)]">
+                  Payment collection is not available in Quick Invoice yet. Invoices are posted as pending.
+                </p>
+              </div>
+              <div className="border-t border-[var(--erp-border)] pt-3">
+                <p className="erp-eyebrow">Salesperson</p>
+                <p className="mt-1 text-sm font-semibold text-[var(--erp-text)]">{salespersonName}</p>
+                <p className="mt-1 text-xs text-[var(--erp-muted)]">Logged-in user</p>
+              </div>
+            </div>
+          </Card>
+          <Button
+            type="button"
+            onClick={() => void saveInvoice()}
+            disabled={
+              billLines.length === 0
+              || !stockHierarchyComplete
+              || !customerContactId
+              || billLines.some((line) => line.quantity < 1)
+              || savingInvoice
+              || visibleOfferLookupLoading
+              || Boolean(visibleOfferLookupError)
+              || returnCreditLoading
+              || Boolean(returnCreditError)
+            }
+            className="order-5 w-full rounded-lg px-4 py-2 text-sm font-semibold xl:order-none"
+          >
+            {savingInvoice ? "Posting..." : "Post Invoice"}
+          </Button>
+          </div>
+          <div className="contents xl:col-start-1 xl:row-start-2 xl:flex xl:min-w-0 xl:flex-col xl:gap-2 xl:self-stretch">
+          <div className="order-2 min-w-0 xl:order-none">
+            {(Object.keys(hierarchyErrors) as HierarchyLevel[]).map((level) => hierarchyErrors[level] ? (
+              <p key={level} role="alert" className="mb-2 text-xs font-medium text-[var(--erp-danger)]">
+                {hierarchyErrors[level]}{" "}
+                <Button type="button" variant="secondary" size="sm" onClick={() => {
+                  setHierarchyLoading({
+                    entities: true,
+                    divisions: Boolean(entityId),
+                    locations: Boolean(entityId && divisionId),
+                    subLocations: Boolean(entityId && divisionId && locationId),
+                    subSubLocations: Boolean(entityId && divisionId && locationId && subLocationId),
+                  });
+                  setHierarchyErrors({ entities: "", divisions: "", locations: "", subLocations: "", subSubLocations: "" });
+                  setHierarchyRetry((value) => value + 1);
+                }}>
+                  Retry
+                </Button>
+              </p>
+            ) : null)}
+            <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1.5fr)_minmax(24rem,1fr)]">
+              <form
+                onSubmit={lookupRecord}
+                className="erp-surface-soft min-w-0 p-2"
+              >
               <label
                 className="erp-eyebrow"
                 htmlFor="barcode-input"
@@ -1030,21 +1352,23 @@ export default function PosBarcodeBillingPage({
               </label>
               <div className="mt-2 flex gap-2">
                 <div className="relative min-w-0 flex-1">
-                  <ScanLine className="pointer-events-none absolute left-3 top-3 h-5 w-5 text-[var(--erp-brand)]" />
+                  <ScanLine className="pointer-events-none absolute left-2 top-2 h-4 w-4 text-[var(--erp-brand)]" />
                   <Input
                     ref={scannerRef}
                     id="barcode-input"
                     value={scanValue}
                     onChange={(event) => setScanValue(event.target.value)}
                     textCase="preserve"
-                    className="py-3 pl-10 pr-3 text-base"
+                    className="h-8 py-1 pl-8 pr-2 text-sm"
                     placeholder="Scan or enter a stock record ID"
                     autoComplete="off"
+                    disabled={!stockHierarchyComplete || loading}
                   />
                 </div>
                 <Button
                   type="submit"
-                  disabled={loading || !scanValue.trim() || !entityId}
+                  size="sm"
+                  disabled={loading || !scanValue.trim() || !stockHierarchyComplete}
                   className="shrink-0"
                 >
                   <Search className="h-4 w-4" />
@@ -1054,8 +1378,8 @@ export default function PosBarcodeBillingPage({
               {error && (
                 <p className="mt-2 text-sm font-medium text-red-700">{error}</p>
               )}
-            </form>
-            <div className="erp-surface min-w-0 p-3">
+              </form>
+              <div className="erp-surface min-w-0 p-2">
               <label
                 className="erp-eyebrow block"
                 htmlFor="stock-search-input"
@@ -1072,18 +1396,19 @@ export default function PosBarcodeBillingPage({
                   setStockSearchError("");
                   setStockSearchLoading(false);
                 }}
-                className="mt-2"
+                className="mt-1 h-8 py-1 text-xs"
                 placeholder="Search style, order, article, or brand"
                 autoComplete="off"
                 aria-label="Search General stock"
+                disabled={!stockHierarchyComplete}
               />
               <Select
                 id="stock-record-select"
                 aria-label="Select stock record manually"
                 value=""
                 onChange={(event) => chooseRecord(event.target.value)}
-                disabled={stockSearchLoading || !entityId}
-                className="mt-2 rounded-lg px-3 py-2 text-sm text-slate-800"
+                disabled={stockSearchLoading || !stockHierarchyComplete}
+                className="mt-1 h-8 rounded-lg px-2 py-1 text-xs text-slate-800"
               >
                 <option value="">
                   {!entityId
@@ -1103,23 +1428,18 @@ export default function PosBarcodeBillingPage({
                 {records.map((record) => (
                   <option key={stockRecordKey(record)} value={stockRecordKey(record)}>
                     [{record.stock_type === "SKU" ? "SKU" : "GRN"}] {record.style_name} | {record.order_no} | {record.size || "-"}{" "}
-                    | ID: {record.id}
+                    | Age: {stockAgeInDays(record.added_time) ?? "Unavailable"} days | ID: {record.id}
                   </option>
                 ))}
               </Select>
               {stockSearchError && <p className="mt-2 text-xs font-medium text-red-700" role="alert">{stockSearchError}</p>}
               {hasMoreStockResults && <p className="mt-2 text-xs text-slate-500">Showing the first 10 matches in alphabetical order. Refine your search to narrow the results.</p>}
+              </div>
             </div>
           </div>
-          <div className="min-w-0">
-            <Card className="flex h-full w-full min-w-0 flex-col">
+          <div className="order-3 min-w-0 xl:flex-1 xl:order-none">
+            <Card className="flex h-full w-full min-w-0 flex-col p-3">
               <div className="flex flex-wrap items-center gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-[var(--erp-text)]">Bill items</h2>
-                  <p className="mt-1 text-xs text-[var(--erp-muted)]">
-                    Review quantities, pricing and tax before posting.
-                  </p>
-                </div>
                 <span className="text-xs font-medium text-[var(--erp-muted)]">
                   {billLines.length} {billLines.length === 1 ? "item" : "items"}
                 </span>
@@ -1129,14 +1449,14 @@ export default function PosBarcodeBillingPage({
                   </p>
                 )}
               </div>
-              <div className="mt-3 min-h-0 overflow-x-hidden overflow-y-auto rounded-xl border border-[var(--erp-border)]">
+              <div className="mt-2 min-h-0 overflow-x-hidden overflow-y-auto rounded-xl border border-[var(--erp-border)]">
                 <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
                   <p className="erp-eyebrow">
                     Invoice lines
                   </p>
                 </div>
                 {billLines.length === 0 ? (
-                  <div className="p-10 text-center">
+                  <div className="p-4 text-center">
                     <p className="text-sm font-semibold text-[var(--erp-text)]">
                       Scan or search for stock to start billing
                     </p>
@@ -1158,6 +1478,9 @@ export default function PosBarcodeBillingPage({
                           <p className="mt-1 text-xs text-slate-500">
                             {line.record.order_no} | {line.record.article_no} |{" "}
                             {line.record.size || "-"}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--erp-muted)]">
+                            Age (days): {stockAgeInDays(line.record.added_time) ?? "Unavailable"}
                           </p>
                           {purchaseRewardStatus === "available" && (
                             <div className="mt-1">
@@ -1349,6 +1672,7 @@ export default function PosBarcodeBillingPage({
                 )}
               </div>
             </Card>
+          </div>
           </div>
         </Section>
       </div>
@@ -1618,6 +1942,7 @@ function StockDetailsDialog({
     ["Source", record.source.replaceAll("_", " ")],
     ["Added User", record.added_user],
     ["Added Time", new Date(record.added_time).toLocaleString()],
+    ["Age (days)", stockAgeInDays(record.added_time) ?? "Unavailable"],
     ["Qty In", record.qty_in],
     ["Qty Out", record.qty_out],
     ["Current Stock", record.current_stock],

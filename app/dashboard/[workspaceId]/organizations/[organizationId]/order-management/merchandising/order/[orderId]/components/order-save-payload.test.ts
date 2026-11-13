@@ -22,6 +22,7 @@ const form = {
   season: "SEASON-1",
   styleName: "STYLE-1",
   colors: "BLUE",
+  variantCode: "UNTRUSTED-VALUE",
   buyer: "BUYER-1",
   brand: "BRAND-1",
   sizeGroup: "SIZE-GROUP-1",
@@ -40,6 +41,7 @@ describe("buildOrderSavePayload", () => {
     expect(payload).not.toHaveProperty("rows");
     expect(payload).not.toHaveProperty("processRows");
     expect(payload).not.toHaveProperty("processTemplateId");
+    expect(payload).not.toHaveProperty("variantCode");
   });
 
   it("includes all child arrays for create requests, including intentionally empty sections", () => {
@@ -53,5 +55,6 @@ describe("buildOrderSavePayload", () => {
       processTemplateId: "template-1",
     });
     expect(payload).not.toHaveProperty("id");
+    expect(payload).not.toHaveProperty("variantCode");
   });
 });

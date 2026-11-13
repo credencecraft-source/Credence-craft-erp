@@ -94,6 +94,24 @@ describe("parseOrderQrTemplateInput", () => {
       });
   });
 
+  it("accepts finished-goods barcode templates with SKU and barcode fields", () => {
+    expect(parseOrderQrTemplateInput({
+      name: "FG LABEL",
+      type: "FG_BARCODE",
+      pageSetupTemplateId: "setup-1",
+      qrFieldKey: "fgBarcode",
+      displayFields: ["fgBarcode", "fgSkuCode", "fgSize", "fgOrderNo"],
+      qrSize: 192,
+    })).toMatchObject({
+      success: true,
+      data: {
+        type: "FG_BARCODE",
+        qrFieldKey: "fgBarcode",
+        displayFields: ["fgBarcode", "fgSkuCode", "fgSize", "fgOrderNo"],
+      },
+    });
+  });
+
   it("rejects order fields in POS templates and POS fields in order templates", () => {
       expect(parseOrderQrTemplateInput({
         name: "INVALID POS",
@@ -109,6 +127,14 @@ describe("parseOrderQrTemplateInput", () => {
         pageSetupTemplateId: "setup-1",
         qrFieldKey: "posItemCode",
         displayFields: ["posItemCode"],
+        qrSize: 192,
+      })).toMatchObject({ success: false });
+      expect(parseOrderQrTemplateInput({
+        name: "INVALID FG",
+        type: "FG_BARCODE",
+        pageSetupTemplateId: "setup-1",
+        qrFieldKey: "orderNo",
+        displayFields: ["orderNo"],
         qrSize: 192,
       })).toMatchObject({ success: false });
   });

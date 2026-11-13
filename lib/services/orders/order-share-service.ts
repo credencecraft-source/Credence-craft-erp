@@ -4,9 +4,10 @@ import { OrderShareStatus } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { requireActiveOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
-import { reserveNextOrderNumber } from "@/lib/services/orders/order-service";
+import { reserveNextOrderNumber, resolveOrderMasterSnapshots } from "@/lib/services/orders/order-service";
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import { validateMonthlyFormLimits } from "@/lib/services/platform/segment-form-restriction-service";
+import { buildPersistedOrderVariantCode } from "@/lib/utilities/finished-goods-variant-code";
 
 const PENDING_ORDER_SHARE_PAGE_SIZE = 25;
 
@@ -115,6 +116,11 @@ export async function acceptOrderShare(input: {
     const orderNo = await reserveNextOrderNumber(destinationMembership.organization_id, transaction);
     const source = share.sourceOrder;
     const entity = await requireActiveOrganizationEntity(destinationMembership.organization_id, source.entityName, transaction);
+    const [masterSnapshot] = await resolveOrderMasterSnapshots(
+      transaction,
+      destinationMembership.organization_id,
+      [{ article: source.article, colors: source.colors }],
+    );
     const order = await transaction.merchandisingOrder.create({
       data: {
         organization_id: destinationMembership.organization_id,
@@ -125,8 +131,12 @@ export async function acceptOrderShare(input: {
         subCategory: source.subCategory,
         season: source.season,
         article: source.article,
+        articleCode: masterSnapshot.articleCode,
+        master_article_id: masterSnapshot.master_article_id,
+        master_variant_id: masterSnapshot.master_variant_id,
         styleName: source.styleName,
         colors: source.colors,
+        variantCode: buildPersistedOrderVariantCode(source.styleName, source.colors),
         buyer: source.buyer,
         brand: source.brand,
         sizeGroup: source.sizeGroup,
