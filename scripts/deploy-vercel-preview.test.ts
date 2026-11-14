@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const {
   createPreviewDeployment,
   getDeploymentInput,
-  getPrismaErrorCodes,
+  getPrismaErrorSummary,
 } = require("./deploy-vercel-preview.cjs") as {
   createPreviewDeployment: (options?: {
     env: Record<string, string>;
@@ -20,7 +20,11 @@ const {
     sha: string;
     repositoryId: string;
   };
-  getPrismaErrorCodes: (events: unknown[]) => string[];
+  getPrismaErrorSummary: (events: unknown[]) => {
+    errorCodes: string[];
+    migrationNames: string[];
+    databaseCodes: string[];
+  };
 };
 const deploymentScriptPath = require.resolve("./deploy-vercel-preview.cjs");
 
@@ -108,7 +112,11 @@ describe("Vercel Preview deployment", () => {
       .mockResolvedValueOnce(response([
         {
           type: "stderr",
-          payload: { text: "Migration failed with P3018 at postgresql://secret.example/db" },
+          payload: {
+            text: "Migration name: 20261118110000_add_finance_phase_two\n"
+              + "Database error code: 42P07\n"
+              + "Migration failed with P3018 at postgresql://secret.example/db",
+          },
         },
       ]));
 
@@ -119,7 +127,7 @@ describe("Vercel Preview deployment", () => {
       maxAttempts: 1,
       sleep: vi.fn().mockResolvedValue(undefined),
     })).rejects.toThrow(
-      "finished in state ERROR (code BUILD_FAILED) (Prisma P3018)",
+      "finished in state ERROR (code BUILD_FAILED) (Prisma P3018; migration 20261118110000_add_finance_phase_two; database 42P07)",
     );
     expect(fetchImpl.mock.calls[3][0]).toContain("/v3/deployments/dpl_test/events");
   });
@@ -169,11 +177,18 @@ describe("Vercel Preview deployment", () => {
     );
   });
 
-  it("extracts only Prisma error codes from deployment event text", () => {
-    expect(getPrismaErrorCodes([
+  it("extracts only safe migration diagnostics from deployment event text", () => {
+    expect(getPrismaErrorSummary([
       { payload: { text: "P1001: failed at postgresql://secret.example/db" } },
-      { text: "repeat P1001 and P3005" },
+      {
+        text: "Migration name: 20261118110000_add_finance_phase_two\n"
+          + "Database error code: 42P07\nrepeat P1001 and P3005",
+      },
       { text: "No credentials or URLs are returned." },
-    ])).toEqual(["P1001", "P3005"]);
+    ])).toEqual({
+      errorCodes: ["P1001", "P3005"],
+      migrationNames: ["20261118110000_add_finance_phase_two"],
+      databaseCodes: ["42P07"],
+    });
   });
 });

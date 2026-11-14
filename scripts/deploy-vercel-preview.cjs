@@ -70,14 +70,26 @@ async function requestVercel({ allowArray = false, body, fetchImpl, method, path
   return payload;
 }
 
-function getPrismaErrorCodes(events) {
-  const codes = new Set();
+function getPrismaErrorSummary(events) {
+  const errorCodes = new Set();
+  const migrationNames = new Set();
+  const databaseCodes = new Set();
   for (const event of events) {
     const text = event?.payload?.text ?? event?.text;
     if (typeof text !== "string") continue;
-    for (const match of text.matchAll(/\bP\d{4}\b/g)) codes.add(match[0]);
+    for (const match of text.matchAll(/\bP\d{4}\b/g)) errorCodes.add(match[0]);
+    for (const match of text.matchAll(/\bMigration name:\s*([A-Za-z0-9_]{1,120})/gi)) {
+      migrationNames.add(match[1]);
+    }
+    for (const match of text.matchAll(/\bDatabase error code:\s*([A-Z0-9]{5})/gi)) {
+      databaseCodes.add(match[1]);
+    }
   }
-  return [...codes];
+  return {
+    errorCodes: [...errorCodes],
+    migrationNames: [...migrationNames],
+    databaseCodes: [...databaseCodes],
+  };
 }
 
 function getDeploymentInput(env = process.env) {
@@ -152,8 +164,13 @@ async function waitForDeployment(options = {}) {
           teamId,
           token,
         });
-        const prismaCodes = getPrismaErrorCodes(events);
-        diagnostics = prismaCodes.length ? ` (Prisma ${prismaCodes.join(", ")})` : "";
+        const summary = getPrismaErrorSummary(events);
+        const details = [
+          ...summary.errorCodes.map((code) => `Prisma ${code}`),
+          ...summary.migrationNames.map((name) => `migration ${name}`),
+          ...summary.databaseCodes.map((code) => `database ${code}`),
+        ];
+        diagnostics = details.length ? ` (${details.join("; ")})` : "";
       } catch {
         diagnostics = " (build diagnostics unavailable; inspect Vercel deployment logs)";
       }
@@ -245,7 +262,7 @@ if (require.main === module) {
 
 module.exports = {
   createPreviewDeployment,
-  getPrismaErrorCodes,
+  getPrismaErrorSummary,
   getDeploymentInput,
   waitForDeployment,
 };
