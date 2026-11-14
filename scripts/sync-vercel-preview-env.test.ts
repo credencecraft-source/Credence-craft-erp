@@ -131,6 +131,36 @@ describe("Vercel Preview environment synchronization", () => {
 
     expect(String(fetchImpl.mock.calls[2][0])).toContain("/v9/projects/prj_test/env/env-current");
     expect(fetchImpl.mock.calls[2][1]?.method).toBe("PATCH");
+    const updateBody = JSON.parse(String(fetchImpl.mock.calls[2][1]?.body));
+    expect(updateBody.key).toBe("DATABASE_URL");
+    expect(updateBody).not.toHaveProperty("visibility");
+  });
+
+  it("omits visibility from edit requests for an existing verification marker", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({
+        envs: [{
+          id: "verification-marker",
+          key: "NEON_SANDBOX_VERIFIED",
+          gitBranch: "test-branch",
+          target: ["preview"],
+        }],
+      }))
+      .mockImplementation(async (_input, init) => response({ method: init?.method }));
+
+    await upsertBranchVariables({
+      env,
+      fetchImpl,
+      projectId: env.VERCEL_PROJECT_ID,
+      teamId: env.VERCEL_ORG_ID,
+      token: env.VERCEL_TOKEN,
+    });
+
+    const patchCalls = fetchImpl.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(patchCalls).toHaveLength(2);
+    for (const [, init] of patchCalls) {
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty("visibility");
+    }
   });
 
   it("removes only sandbox variables for the exact closed Preview branch", async () => {

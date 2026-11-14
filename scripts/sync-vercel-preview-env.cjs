@@ -131,6 +131,12 @@ function getPreviewVariables(env = process.env) {
   }));
 }
 
+function getPatchPayload(variable) {
+  const payload = { ...variable };
+  delete payload.visibility;
+  return payload;
+}
+
 async function listBranchEnvironmentVariables({
   branchRef,
   fetchImpl,
@@ -183,7 +189,7 @@ async function upsertBranchVariables(options) {
   if (verifiedMatches.length === 1) {
     verifiedVariableId = verifiedMatches[0].id;
     await requestVercel({
-      body: disabledMarker,
+      body: getPatchPayload(disabledMarker),
       fetchImpl: options.fetchImpl,
       method: "PATCH",
       path: `/v9/projects/${encodeURIComponent(options.projectId)}/env/${encodeURIComponent(verifiedVariableId)}`,
@@ -215,7 +221,7 @@ async function upsertBranchVariables(options) {
 
     if (matches.length === 1) {
       await requestVercel({
-        body: variable,
+        body: getPatchPayload(variable),
         fetchImpl: options.fetchImpl,
         method: "PATCH",
         path: `/v9/projects/${encodeURIComponent(options.projectId)}/env/${encodeURIComponent(matches[0].id)}`,
@@ -235,7 +241,7 @@ async function upsertBranchVariables(options) {
   }
 
   await requestVercel({
-    body: verifiedVariable,
+    body: getPatchPayload(verifiedVariable),
     fetchImpl: options.fetchImpl,
     method: "PATCH",
     path: `/v9/projects/${encodeURIComponent(options.projectId)}/env/${encodeURIComponent(verifiedVariableId)}`,
