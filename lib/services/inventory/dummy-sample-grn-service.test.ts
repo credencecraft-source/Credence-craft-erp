@@ -124,7 +124,7 @@ describe("dummy sample GRN creation", () => {
         location_name: "Sample Receiving - Demo Entity - entity-1",
         is_active: true,
       },
-      select: { id: true },
+      select: { id: true, location_name: true },
     }));
     expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       module: "Master Data",

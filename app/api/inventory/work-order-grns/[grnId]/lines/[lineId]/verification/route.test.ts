@@ -44,6 +44,7 @@ describe("work-order GRN line verification route", () => {
       actualReceivedQuantity: "8",
       approvedQuantity: 6,
       locationId: " location-1 ",
+      storageNodeId: " storage-leaf ",
     }), context);
 
     expect(response.status).toBe(200);
@@ -58,7 +59,13 @@ describe("work-order GRN line verification route", () => {
       "verifier-1",
       "grn-1",
       "line-1",
-      { actualReceivedQuantity: 8, approvedQuantity: 6, locationId: "location-1", actorEmail: "verifier@example.test" },
+      {
+        actualReceivedQuantity: 8,
+        approvedQuantity: 6,
+        locationId: "location-1",
+        storageNodeId: "storage-leaf",
+        actorEmail: "verifier@example.test",
+      },
     );
   });
 

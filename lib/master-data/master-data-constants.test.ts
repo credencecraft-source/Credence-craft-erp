@@ -1336,7 +1336,12 @@ describe("article creation", () => {
     });
     models.masterArticle.findFirst.mockImplementation(async ({ where }) => (
       "id" in where
-        ? { id: "style-id", article_code: "AR1", size_group_id: "size-group-id" }
+        ? {
+            id: "style-id",
+            article: "ApplePrinter",
+            article_code: "AR1",
+            size_group_id: "size-group-id",
+          }
         : null
     ) as never);
     models.masterArticle.create.mockResolvedValue({
@@ -1390,6 +1395,7 @@ describe("article creation", () => {
       organization_id: "org-id",
       article_id: "style-id",
       color_id: "blue-id",
+      variant_code: "APPLEPRINTER-BLUE",
       sku: "APPLE-BLUE",
     });
     expect(String(variantData.price_override)).toBe("11.1234");
