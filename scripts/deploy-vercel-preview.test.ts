@@ -40,7 +40,7 @@ describe("Vercel Preview deployment", () => {
   it("reports missing workflow variables when invoked without an options object", () => {
     const result = spawnSync(process.execPath, [deploymentScriptPath], {
       encoding: "utf8",
-      env: {},
+      env: { NODE_ENV: "test" },
     });
 
     expect(result.status).toBe(1);
