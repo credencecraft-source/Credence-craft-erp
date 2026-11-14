@@ -99,7 +99,7 @@ describe("Vercel Preview deployment", () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response({ id: "prj_test", name: "credence-craft-erp" }))
       .mockResolvedValueOnce(response({ id: "dpl_test" }, 201))
-      .mockResolvedValueOnce(response({ readyState: "ERROR" }));
+      .mockResolvedValueOnce(response({ readyState: "ERROR", errorCode: "BUILD_FAILED" }));
 
     await expect(createPreviewDeployment({
       env,
@@ -107,7 +107,7 @@ describe("Vercel Preview deployment", () => {
       logger: { log: vi.fn() },
       maxAttempts: 1,
       sleep: vi.fn().mockResolvedValue(undefined),
-    })).rejects.toThrow("finished in state ERROR");
+    })).rejects.toThrow("finished in state ERROR (code BUILD_FAILED)");
   });
 
   it("rejects an empty project response instead of dereferencing it", async () => {

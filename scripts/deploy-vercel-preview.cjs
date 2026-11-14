@@ -124,7 +124,13 @@ async function waitForDeployment(options = {}) {
     }
 
     if (TERMINAL_FAILURE_STATES.has(deployment.readyState)) {
-      throw new Error(`Vercel Preview deployment finished in state ${deployment.readyState}.`);
+      const errorCode = typeof deployment.errorCode === "string"
+        && /^[A-Za-z0-9_-]{1,80}$/.test(deployment.errorCode)
+        ? ` (code ${deployment.errorCode})`
+        : "";
+      throw new Error(
+        `Vercel Preview deployment finished in state ${deployment.readyState}${errorCode}.`,
+      );
     }
 
     if (attempt < maxAttempts) await sleep(pollIntervalMs);
