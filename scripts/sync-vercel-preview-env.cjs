@@ -132,9 +132,7 @@ function getPreviewVariables(env = process.env) {
 }
 
 function getPatchPayload(variable) {
-  const payload = { ...variable };
-  delete payload.visibility;
-  return payload;
+  return { value: variable.value };
 }
 
 async function listBranchEnvironmentVariables({

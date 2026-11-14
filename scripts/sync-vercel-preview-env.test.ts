@@ -132,7 +132,8 @@ describe("Vercel Preview environment synchronization", () => {
     expect(String(fetchImpl.mock.calls[2][0])).toContain("/v9/projects/prj_test/env/env-current");
     expect(fetchImpl.mock.calls[2][1]?.method).toBe("PATCH");
     const updateBody = JSON.parse(String(fetchImpl.mock.calls[2][1]?.body));
-    expect(updateBody.key).toBe("DATABASE_URL");
+    expect(updateBody).toEqual({ value: env.SANDBOX_DATABASE_URL });
+    expect(updateBody).not.toHaveProperty("type");
     expect(updateBody).not.toHaveProperty("visibility");
   });
 
@@ -159,7 +160,7 @@ describe("Vercel Preview environment synchronization", () => {
     const patchCalls = fetchImpl.mock.calls.filter(([, init]) => init?.method === "PATCH");
     expect(patchCalls).toHaveLength(2);
     for (const [, init] of patchCalls) {
-      expect(JSON.parse(String(init?.body))).not.toHaveProperty("visibility");
+      expect(JSON.parse(String(init?.body))).toEqual({ value: expect.any(String) });
     }
   });
 
