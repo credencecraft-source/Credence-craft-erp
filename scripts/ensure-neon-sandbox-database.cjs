@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 
 const NEON_API = "https://console.neon.tech/api/v2";
-const DATABASE_NAME = "credencecraft_sandbox";
+const DATABASE_NAME = "credencecraft_sandbox_v2";
 const DATABASE_OWNER = "neondb_owner";
 const SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch|pr-\d+)$/;
 const NEON_BRANCH_ID = /^br-[a-z0-9-]+$/;
