@@ -1,0 +1,258 @@
+enum FinanceDocumentType {
+  SALES_INVOICE
+  PURCHASE_INVOICE
+  PURCHASE_BILL
+  CREDIT_NOTE
+  DEBIT_NOTE
+  DELIVERY_CHALLAN
+}
+
+enum FinanceDocumentStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  POSTED
+  LOCKED
+  CANCELLED
+  REVERSED
+}
+
+enum FinanceSourceModule {
+  POS
+  PROCUREMENT
+  INVENTORY
+  ORDER_MANAGEMENT
+  FINANCE_DIRECT
+}
+
+enum FinanceSourceType {
+  POS_SALES_INVOICE
+  POS_PURCHASE_BILL
+  POS_SALES_RETURN
+  PROCUREMENT_VENDOR_BILL
+  LOGISTICS_CHALLAN
+}
+
+enum FinanceSyncStatus {
+  PENDING
+  QUEUED
+  SYNCED
+  FAILED
+  SKIPPED
+}
+
+enum FinanceExternalProvider {
+  TALLY
+  ZOHO_BOOKS
+  NONE
+}
+
+model FinanceIntegrationConfig {
+  organization_id              String                  @id
+  active_provider              FinanceExternalProvider @default(NONE)
+  auto_sync                    Boolean                 @default(false)
+  tally_server_url             String?                 @db.VarChar(500)
+  tally_company_name           String?                 @db.VarChar(255)
+  zoho_api_region              String                  @default("IN") @db.VarChar(8)
+  zoho_organization_id         String?                 @db.VarChar(100)
+  zoho_client_id_encrypted     String?                 @db.Text
+  zoho_client_secret_encrypted String?                 @db.Text
+  zoho_refresh_token_encrypted String?                 @db.Text
+  ledger_mappings              Json?
+  updated_by_user_id           String?                 @db.VarChar(255)
+  created_at                   DateTime                @default(now())
+  updated_at                   DateTime                @updatedAt
+  organization                 Organization            @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@map("finance_integration_configs")
+}
+
+model CentralFinanceTransaction {
+  id                         String                          @id @default(cuid())
+  organization_id            String
+  document_type              FinanceDocumentType
+  document_number            String                          @db.VarChar(120)
+  document_date              DateTime                        @db.Date
+  status                     FinanceDocumentStatus           @default(DRAFT)
+  source_module              FinanceSourceModule
+  source_type                FinanceSourceType
+  sub_source                 String                          @db.VarChar(80)
+  source_id                  String                          @db.VarChar(255)
+  source_document_number     String                          @db.VarChar(120)
+  entity_id                  String?
+  entity_name_snapshot       String?                         @db.VarChar(255)
+  entity_gstin               String?                         @db.VarChar(15)
+  party_id                   String?                         @db.VarChar(255)
+  party_name                 String                          @db.VarChar(255)
+  party_gstin                String?                         @db.VarChar(15)
+  place_of_supply_state_code String?                         @db.VarChar(2)
+  currency_code              String                          @default("INR") @db.VarChar(3)
+  subtotal                   Decimal                         @default(0) @db.Decimal(18, 2)
+  taxable_amount             Decimal                         @default(0) @db.Decimal(18, 2)
+  cgst_amount                Decimal                         @default(0) @db.Decimal(18, 2)
+  sgst_amount                Decimal                         @default(0) @db.Decimal(18, 2)
+  igst_amount                Decimal                         @default(0) @db.Decimal(18, 2)
+  other_tax_amount           Decimal                         @default(0) @db.Decimal(18, 2)
+  total_tax_amount           Decimal                         @default(0) @db.Decimal(18, 2)
+  total_amount               Decimal                         @default(0) @db.Decimal(18, 2)
+  created_by_user_id         String?                         @db.VarChar(255)
+  created_by_email           String?                         @db.VarChar(255)
+  approved_by_user_id        String?                         @db.VarChar(255)
+  approved_by_email          String?                         @db.VarChar(255)
+  created_at                 DateTime                        @default(now())
+  posted_at                  DateTime?
+  locked_at                  DateTime?
+  reversed_at                DateTime?
+  reversal_of_id             String?
+  sync_status                FinanceSyncStatus               @default(PENDING)
+  external_provider          FinanceExternalProvider         @default(NONE)
+  external_system_id         String?                         @db.VarChar(255)
+  external_voucher_number    String?                         @db.VarChar(120)
+  last_synced_at             DateTime?
+  sync_attempt_count         Int                             @default(0)
+  sync_error_payload         Json?
+  organization               Organization                    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity                     MasterEntity?                   @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  reversal_of                CentralFinanceTransaction?      @relation("CentralFinanceReversals", fields: [organization_id, reversal_of_id], references: [organization_id, id], onDelete: Restrict)
+  reversals                  CentralFinanceTransaction[]     @relation("CentralFinanceReversals")
+  lines                      CentralFinanceTransactionLine[]
+  outbox_logs                FinanceSyncOutboxLog[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, source_type, source_id])
+  @@unique([organization_id, document_number])
+  @@index([organization_id, document_date])
+  @@index([organization_id, document_type, status])
+  @@index([organization_id, sync_status])
+  @@index([organization_id, party_id])
+  @@index([organization_id, source_module, document_date])
+  @@index([organization_id, reversal_of_id])
+  @@map("central_finance_transactions")
+}
+
+model CentralFinanceTransactionLine {
+  id               String                    @id @default(cuid())
+  organization_id  String
+  transaction_id   String
+  source_line_id   String?                   @db.VarChar(255)
+  line_number      Int
+  item_code        String?                   @db.VarChar(100)
+  description      String                    @db.VarChar(500)
+  quantity         Decimal                   @default(0) @db.Decimal(18, 4)
+  unit_of_measure  String?                   @db.VarChar(30)
+  unit_rate        Decimal                   @default(0) @db.Decimal(18, 4)
+  discount_amount  Decimal                   @default(0) @db.Decimal(18, 2)
+  taxable_amount   Decimal                   @default(0) @db.Decimal(18, 2)
+  hsn_code         String?                   @db.VarChar(100)
+  gst_rate         Decimal                   @default(0) @db.Decimal(8, 4)
+  cgst_amount      Decimal                   @default(0) @db.Decimal(18, 2)
+  sgst_amount      Decimal                   @default(0) @db.Decimal(18, 2)
+  igst_amount      Decimal                   @default(0) @db.Decimal(18, 2)
+  other_tax_amount Decimal                   @default(0) @db.Decimal(18, 2)
+  total_tax_amount Decimal                   @default(0) @db.Decimal(18, 2)
+  total_amount     Decimal                   @default(0) @db.Decimal(18, 2)
+  created_at       DateTime                  @default(now())
+  organization     Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  transaction      CentralFinanceTransaction @relation(fields: [organization_id, transaction_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, transaction_id, line_number])
+  @@index([organization_id, transaction_id])
+  @@index([organization_id, source_line_id])
+  @@map("central_finance_transaction_lines")
+}
+
+model FinanceSyncOutboxLog {
+  id              String                    @id @default(cuid())
+  organization_id String
+  transaction_id  String
+  provider        FinanceExternalProvider
+  status          FinanceSyncStatus         @default(PENDING)
+  event_type      String                    @db.VarChar(80)
+  payload         Json
+  attempt_count   Int                       @default(0)
+  error_payload   Json?
+  available_at    DateTime                  @default(now())
+  processed_at    DateTime?
+  created_at      DateTime                  @default(now())
+  organization    Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  transaction     CentralFinanceTransaction @relation(fields: [organization_id, transaction_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, transaction_id, provider, event_type])
+  @@index([organization_id, status, available_at])
+  @@index([organization_id, transaction_id, created_at])
+  @@map("finance_sync_outbox_logs")
+}
+
+model ProcurementVendorBill {
+  id                    String                @id @default(cuid())
+  organization_id       String
+  entity_id             String
+  vendor_id             String
+  purchase_order_id     String
+  document_number       String                @db.VarChar(120)
+  vendor_invoice_number String                @db.VarChar(120)
+  bill_date             DateTime              @db.Date
+  status                FinanceDocumentStatus @default(DRAFT)
+  entity_name_snapshot  String                @db.VarChar(255)
+  entity_gstin_snapshot String?               @db.VarChar(15)
+  vendor_name_snapshot  String                @db.VarChar(255)
+  vendor_gstin_snapshot String?               @db.VarChar(15)
+  place_of_supply_state_code String?          @db.VarChar(2)
+  subtotal              Decimal               @default(0) @db.Decimal(18, 2)
+  cgst_amount           Decimal               @default(0) @db.Decimal(18, 2)
+  sgst_amount           Decimal               @default(0) @db.Decimal(18, 2)
+  igst_amount           Decimal               @default(0) @db.Decimal(18, 2)
+  total_amount          Decimal               @default(0) @db.Decimal(18, 2)
+  created_by_user_id    String?               @db.VarChar(255)
+  created_by_email      String?               @db.VarChar(255)
+  approved_by_user_id   String?               @db.VarChar(255)
+  approved_by_email     String?               @db.VarChar(255)
+  created_at            DateTime              @default(now())
+  updated_at            DateTime              @updatedAt
+  posted_at             DateTime?
+  organization          Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity                MasterEntity          @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  vendor                MasterVendor           @relation(fields: [organization_id, vendor_id], references: [organization_id, id], onDelete: Restrict)
+  purchase_order        PurchaseOrder         @relation(fields: [organization_id, purchase_order_id], references: [organization_id, id], onDelete: Restrict)
+  lines                 ProcurementVendorBillLine[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, document_number])
+  @@unique([organization_id, vendor_id, vendor_invoice_number])
+  @@index([organization_id, bill_date])
+  @@index([organization_id, status, bill_date])
+  @@index([organization_id, purchase_order_id])
+  @@map("procurement_vendor_bills")
+}
+
+model ProcurementVendorBillLine {
+  id                         String                  @id @default(cuid())
+  organization_id            String
+  bill_id                    String
+  line_number                Int
+  purchase_order_id          String
+  purchase_order_line_id     String
+  inventory_receipt_id       String
+  inventory_receipt_line_id  String
+  description                String                  @db.VarChar(500)
+  unit_of_measure            String?                 @db.VarChar(30)
+  quantity                   Decimal                 @db.Decimal(18, 4)
+  unit_rate                  Decimal                 @db.Decimal(18, 4)
+  taxable_amount             Decimal                 @db.Decimal(18, 2)
+  hsn_code                   String?                 @db.VarChar(100)
+  gst_rate                   Decimal                 @db.Decimal(8, 4)
+  cgst_amount                Decimal                 @default(0) @db.Decimal(18, 2)
+  sgst_amount                Decimal                 @default(0) @db.Decimal(18, 2)
+  igst_amount                Decimal                 @default(0) @db.Decimal(18, 2)
+  total_amount               Decimal                 @db.Decimal(18, 2)
+  created_at                 DateTime                @default(now())
+  organization               Organization            @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  bill                       ProcurementVendorBill   @relation(fields: [organization_id, bill_id], references: [organization_id, id], onDelete: Restrict)
+  purchase_order_line        PurchaseOrderLine       @relation(fields: [purchase_order_id, purchase_order_line_id], references: [purchase_order_id, id], onDelete: Restrict)
+  inventory_receipt_line     InventoryReceiptLine    @relation(fields: [inventory_receipt_id, inventory_receipt_line_id], references: [receipt_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, bill_id, line_number])
+  @@index([organization_id, purchase_order_line_id])
+  @@index([organization_id, inventory_receipt_line_id])
+  @@map("procurement_vendor_bill_lines")
+}

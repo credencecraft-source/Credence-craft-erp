@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   returnFindMany: vi.fn(),
   returnCreate: vi.fn(),
   returnLineFindMany: vi.fn(),
-  returnLineCreateMany: vi.fn(),
+  returnLineCreateManyAndReturn: vi.fn(),
   invoiceLineUpdateMany: vi.fn(),
   stockIssueFindFirst: vi.fn(),
   stockIssueLineFindMany: vi.fn(),
@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   createFgMaterialIssue: vi.fn(),
   createAuditEvent: vi.fn(),
   reserveDocumentNumber: vi.fn(),
+  ingestPosReturn: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -46,6 +47,9 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({
 vi.mock("@/lib/services/orders/procurement-document-number-service", () => ({
   reserveProcurementDocumentNumber: mocks.reserveDocumentNumber,
 }));
+vi.mock("@/lib/services/finance/finance-ingestion-service", () => ({
+  ingestPosReturn: mocks.ingestPosReturn,
+}));
 
 import {
   createPosSalesReturn,
@@ -67,6 +71,7 @@ function createInvoiceLine(stockType: "SKU" | "GENERAL_GRN" = "SKU") {
     style_name: "CLASSIC SHIRT",
     order_no: "WO-001",
     article_no: "ART-001",
+    hsn_code: "6105",
     size: "M",
     colour: "BLUE",
     quantity: 2,
@@ -85,13 +90,15 @@ function createInvoiceLine(stockType: "SKU" | "GENERAL_GRN" = "SKU") {
 function createInvoice(stockType: "SKU" | "GENERAL_GRN" = "SKU") {
   return {
     id: "invoice-1",
+    entity_id: "entity-1",
     invoice_no: "POS-0001",
     invoice_date: new Date("2026-10-10T00:00:00.000Z"),
     customer: "CUSTOMER",
     customer_contact_id: "contact-1",
-    customer_contact: { phone: "9876543210" },
+    customer_contact: { phone: "9876543210", tax_registrations: [] },
     entity_name_snapshot: "FROZEN STORE",
-    entity: { entity_name: "MAIN STORE" },
+    entity: { entity_name: "MAIN STORE", gstin: null },
+    tax_mode: "LOCAL",
     status: "POSTED",
     subtotal: d(200),
     cgst_amount: d(5),
@@ -116,7 +123,7 @@ function setupTransaction(stockType: "SKU" | "GENERAL_GRN" = "SKU") {
     fGMaterialIssueLine: { findMany: mocks.stockIssueLineFindMany },
     posSalesReturnLine: {
       findMany: mocks.returnLineFindMany,
-      createMany: mocks.returnLineCreateMany,
+      createManyAndReturn: mocks.returnLineCreateManyAndReturn,
     },
     posSalesInvoiceLine: { updateMany: mocks.invoiceLineUpdateMany },
     finishedGoodsSkuStock: {
@@ -173,11 +180,16 @@ function setupTransaction(stockType: "SKU" | "GENERAL_GRN" = "SKU") {
   );
   mocks.receiptUpdateMany.mockResolvedValue({ count: 1 });
   mocks.finishedGoodsStockUpdateMany.mockResolvedValue({ count: 1 });
-  mocks.returnCreate.mockResolvedValue({ id: "return-1" });
+  mocks.returnCreate.mockResolvedValue({ id: "return-1", return_date: new Date("2026-10-10T00:00:00.000Z") });
   mocks.stockIssueLineFindMany.mockResolvedValue([
     { id: "reversal-line-1", reversal_of_line_id: "issue-line-1" },
   ]);
-  mocks.returnLineCreateMany.mockResolvedValue({ count: 1 });
+  mocks.returnLineCreateManyAndReturn.mockImplementation(
+    ({ data }: { data: Record<string, unknown>[] }) => Promise.resolve(
+      data.map((line, index) => ({ ...line, id: `return-line-${index + 1}` })),
+    ),
+  );
+  mocks.ingestPosReturn.mockResolvedValue({ id: "central-transaction-1", duplicate: false });
   mocks.createFgMaterialIssue.mockResolvedValue({ id: "reversal-issue-1", issue_no: "FG-ISS-2" });
   mocks.reserveDocumentNumber.mockResolvedValue("SR-1");
   return { invoice, transaction };
@@ -274,7 +286,7 @@ describe("POS sales return service", () => {
         idempotencyKey: "pos-sales-return:return-1:reversal",
       }),
     );
-    expect(mocks.returnLineCreateMany).toHaveBeenCalledWith({
+    expect(mocks.returnLineCreateManyAndReturn).toHaveBeenCalledWith({
       data: [expect.objectContaining({
         return_id: "return-1",
         invoice_id: "invoice-1",
@@ -286,6 +298,16 @@ describe("POS sales return service", () => {
         sgst_amount: d(2.5),
         total_amount: d(105),
       })],
+      select: {
+        id: true,
+        invoice_line_id: true,
+        quantity: true,
+        taxable_amount: true,
+        cgst_amount: true,
+        sgst_amount: true,
+        igst_amount: true,
+        total_amount: true,
+      },
     });
     expect(mocks.returnCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -300,6 +322,18 @@ describe("POS sales return service", () => {
       expect.objectContaining({ action: "POST_SALES_RETURN", entityId: "return-1" }),
       expect.anything(),
     );
+    expect(mocks.ingestPosReturn).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      organizationId: "internal-org-1",
+      documentNumber: "SR-1",
+      sourceId: "return-1",
+      sourceDocumentNumber: "SR-1",
+      totalAmount: d(105),
+      lines: [expect.objectContaining({
+        sourceLineId: "return-line-1",
+        hsnCode: "6105",
+        gstRate: d(5),
+      })],
+    }));
   });
 
   it("restores general receipt and aggregate balances in the same posting", async () => {

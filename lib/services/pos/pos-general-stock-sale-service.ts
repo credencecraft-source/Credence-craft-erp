@@ -18,6 +18,11 @@ import { createFgMaterialIssue } from "@/lib/services/inventory/fg-issued-servic
 import { GENERAL_FINISHED_GOODS_SKU_SOURCES } from "@/lib/services/inventory/finished-goods-stock-overview";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
+import {
+  assertCentralTaxMasters,
+  resolveCentralTaxMode,
+} from "@/lib/services/finance/central-tax-engine";
+import { ingestPosSale } from "@/lib/services/finance/finance-ingestion-service";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import {
   resolveActivePosStockLocation,
@@ -373,7 +378,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     }
     const entity = await transaction.masterEntity.findFirst({
       where: { id: entityId, organization_id: input.organizationId, is_active: true },
-      select: { id: true, entity_name: true },
+      select: { id: true, entity_name: true, gstin: true },
     });
     if (!entity) throw new Error("Select an active Entity belonging to this organization.");
     if (salesChannel === "COUNTER" && !input.stockHierarchy) {
@@ -406,7 +411,17 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
             is_active: true,
             roles: { some: { role_code: "CUSTOMER", is_active: true } },
           },
-          select: { id: true, legal_name: true, display_name: true },
+          select: {
+            id: true,
+            legal_name: true,
+            display_name: true,
+            tax_registrations: {
+              where: { status: "ACTIVE" },
+              select: { gstin: true },
+              orderBy: { created_at: "desc" },
+              take: 1,
+            },
+          },
         })
       : null;
     if (requestedCustomerContactId && !customerContact) {
@@ -994,7 +1009,24 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
 
     const createdInvoiceLines = await transaction.posSalesInvoiceLine.createManyAndReturn({
       data: invoiceLines.map((line) => ({ ...line, invoice_id: invoice.id })),
-      select: { id: true, general_stock_receipt_id: true, sku_stock_id: true },
+      select: {
+        id: true,
+        general_stock_receipt_id: true,
+        sku_stock_id: true,
+        style_name: true,
+        article_no: true,
+        size: true,
+        quantity: true,
+        unit_rate: true,
+        offer_discount_amount: true,
+        hsn_code: true,
+        gst_rate: true,
+        taxable_amount: true,
+        cgst_amount: true,
+        sgst_amount: true,
+        igst_amount: true,
+        total_amount: true,
+      },
     });
     const invoiceLineIdByStockId = new Map(
       createdInvoiceLines.map((line) => [
@@ -1035,6 +1067,55 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
           stockAfter: stockBefore.minus(quantity),
         };
       }),
+    });
+    const taxJurisdiction = resolveCentralTaxMode({
+      entityGstin: entity.gstin,
+      partyGstin: customerContact?.tax_registrations?.[0]?.gstin,
+      fallbackMode: invoiceTaxMode,
+    });
+    await assertCentralTaxMasters(transaction, input.organizationId, createdInvoiceLines.map((line) => ({
+      hsnCode: line.hsn_code,
+      gstRate: line.gst_rate,
+    })));
+    await ingestPosSale(transaction, {
+      organizationId: input.organizationId,
+      documentNumber: invoiceNo,
+      documentDate: invoiceDate,
+      sourceId: invoice.id,
+      sourceDocumentNumber: invoiceNo,
+      subSource: salesChannel === "ONLINE_STORE" ? "ONLINE_STORE_CHECKOUT" : "POS_BARCODE_COUNTER",
+      entityId: entity.id,
+      entityName: entity.entity_name,
+      entityGstin: entity.gstin,
+      partyId: customerContact?.id ?? null,
+      partyName: customer ?? shippingAddress?.recipientName ?? "WALK-IN CUSTOMER",
+      partyGstin: customerContact?.tax_registrations?.[0]?.gstin ?? null,
+      placeOfSupplyStateCode: taxJurisdiction.placeOfSupplyStateCode
+        ?? (invoiceTaxMode === "LOCAL" ? entity.gstin?.slice(0, 2) : null),
+      createdByUserId: input.actorId && input.actorId !== "PUBLIC_STORE" ? input.actorId : null,
+      subtotal: totals.subtotal,
+      taxableAmount: totals.subtotal,
+      cgstAmount: totals.cgst,
+      sgstAmount: totals.sgst,
+      igstAmount: totals.igst,
+      totalAmount: invoiceTotal,
+      lines: createdInvoiceLines.map((line) => ({
+        sourceLineId: line.id,
+        itemCode: line.article_no,
+        description: line.size ? `${line.style_name} - ${line.size}` : line.style_name,
+        quantity: String(line.quantity),
+        unitOfMeasure: "PCS",
+        unitRate: line.unit_rate,
+        discountAmount: new Prisma.Decimal(line.quantity).mul(line.unit_rate).minus(line.taxable_amount)
+          .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP),
+        taxableAmount: line.taxable_amount,
+        hsnCode: line.hsn_code,
+        gstRate: line.gst_rate,
+        cgstAmount: line.cgst_amount,
+        sgstAmount: line.sgst_amount,
+        igstAmount: line.igst_amount,
+        totalAmount: line.total_amount,
+      })),
     });
     await createAuditEvent({
       organizationId: input.organizationId,

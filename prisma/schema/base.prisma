@@ -237,6 +237,12 @@ model Organization {
   posSalesInvoices                        PosSalesInvoice[]
   posSalesReturns                         PosSalesReturn[]
   posSalesReturnCreditApplications        PosSalesReturnCreditApplication[]
+  centralFinanceTransactions              CentralFinanceTransaction[]
+  centralFinanceTransactionLines          CentralFinanceTransactionLine[]
+  financeSyncOutboxLogs                   FinanceSyncOutboxLog[]
+  financeIntegrationConfig                FinanceIntegrationConfig?
+  procurementVendorBills                  ProcurementVendorBill[]
+  procurementVendorBillLines              ProcurementVendorBillLine[]
   fgMaterialIssues                        FGMaterialIssue[]
   subscriptions                           Subscription[]
   segmentPrices                           OrganizationSegmentPrice[]
@@ -1136,6 +1142,8 @@ model MasterEntity {
   generalPurchaseOrderGroups   GeneralPurchaseOrderGroup[]
   posPurchaseBills             PosPurchaseBill[]
   posSalesInvoices             PosSalesInvoice[]
+  centralFinanceTransactions   CentralFinanceTransaction[]
+  procurementVendorBills       ProcurementVendorBill[]
 
   @@unique([organization_id, entity_name])
   @@unique([organization_id, id])
@@ -1726,6 +1734,7 @@ model MasterVendor {
   groupedPurchaseOrders        GroupedPurchaseOrder[]
   masterPurchaseOrders         MasterPurchaseOrder[]
   purchaseOrders               PurchaseOrder[]
+  procurementVendorBills      ProcurementVendorBill[]
   rawMaterialStockBookings     RawMaterialStockBooking[]
   generalPurchaseOrderRequests GeneralPurchaseOrderRequest[]
   generalPurchaseOrderGroups   GeneralPurchaseOrderGroup[]

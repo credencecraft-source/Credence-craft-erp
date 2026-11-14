@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/aggregate-usage",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/finance-sync",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

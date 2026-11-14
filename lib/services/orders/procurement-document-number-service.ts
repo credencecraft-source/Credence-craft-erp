@@ -19,7 +19,8 @@ export type ProcurementDocumentType =
   | "DISTRIBUTION_QUOTATION"
   | "DISTRIBUTION_MASTER_QUOTATION"
   | "POS_SALES_INVOICE"
-  | "POS_SALES_RETURN";
+  | "POS_SALES_RETURN"
+  | "PROCUREMENT_VENDOR_BILL";
 
 const documentPrefixes: Record<ProcurementDocumentType, string> = {
   GROUPED_PO: "GP",
@@ -39,6 +40,7 @@ const documentPrefixes: Record<ProcurementDocumentType, string> = {
   DISTRIBUTION_MASTER_QUOTATION: "MQT",
   POS_SALES_INVOICE: "POS",
   POS_SALES_RETURN: "SR",
+  PROCUREMENT_VENDOR_BILL: "VB",
 };
 
 export async function reserveProcurementDocumentNumber(

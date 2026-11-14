@@ -10,16 +10,30 @@ import { createFgMaterialIssue } from "@/lib/services/inventory/fg-issued-servic
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
+import { resolveCentralTaxMode } from "@/lib/services/finance/central-tax-engine";
+import { ingestPosReturn } from "@/lib/services/finance/finance-ingestion-service";
 
 const POS_RETURN_INVOICE_SELECT = {
   id: true,
+  entity_id: true,
   invoice_no: true,
   invoice_date: true,
   customer: true,
   customer_contact_id: true,
-  customer_contact: { select: { phone: true } },
   entity_name_snapshot: true,
-  entity: { select: { entity_name: true } },
+  entity: { select: { entity_name: true, gstin: true } },
+  tax_mode: true,
+  customer_contact: {
+    select: {
+      phone: true,
+      tax_registrations: {
+        where: { status: "ACTIVE" },
+        select: { gstin: true },
+        orderBy: { created_at: "desc" },
+        take: 1,
+      },
+    },
+  },
   status: true,
   subtotal: true,
   cgst_amount: true,
@@ -38,6 +52,7 @@ const POS_RETURN_INVOICE_SELECT = {
       article_no: true,
       size: true,
       colour: true,
+      hsn_code: true,
       quantity: true,
       returned_quantity: true,
       unit_rate: true,
@@ -861,7 +876,7 @@ export async function createPosSalesReturn(input: {
         store_credit_balance_amount: settlementType === "STORE_CREDIT" ? totalCreditAmount : new Prisma.Decimal(0),
         created_by: input.actorId,
       },
-      select: { id: true },
+      select: { id: true, return_date: true },
     });
 
     const stockBeforeByInvoiceLineId = new Map<string, Prisma.Decimal>();
@@ -967,7 +982,7 @@ export async function createPosSalesReturn(input: {
         line.reversal_of_line_id ? [[line.reversal_of_line_id, line.id] as const] : [],
       ),
     );
-    await transaction.posSalesReturnLine.createMany({
+    const createdReturnLines = await transaction.posSalesReturnLine.createManyAndReturn({
       data: selectedLines.map(({ invoiceLine, quantity }) => {
         const originalIssueLine = originalIssueLineByInvoiceLineId.get(invoiceLine.id);
         const stockIssueLineId = originalIssueLine
@@ -989,6 +1004,78 @@ export async function createPosSalesReturn(input: {
           sgst_amount: amounts.sgst,
           igst_amount: amounts.igst,
           total_amount: amounts.total,
+        };
+      }),
+      select: {
+        id: true,
+        invoice_line_id: true,
+        quantity: true,
+        taxable_amount: true,
+        cgst_amount: true,
+        sgst_amount: true,
+        igst_amount: true,
+        total_amount: true,
+      },
+    });
+    if (invoice.tax_mode !== "LOCAL" && invoice.tax_mode !== "INTERSTATE") {
+      throw new PosSalesReturnError("The source invoice has an invalid GST tax mode and cannot be returned.", 409);
+    }
+    const taxJurisdiction = resolveCentralTaxMode({
+      entityGstin: invoice.entity?.gstin,
+      partyGstin: invoice.customer_contact?.tax_registrations?.[0]?.gstin,
+      fallbackMode: invoice.tax_mode,
+    });
+    const selectedLineById = new Map(selectedLines.map((selected) => [
+      selected.invoiceLine.id,
+      selected.invoiceLine,
+    ]));
+    await ingestPosReturn(transaction, {
+      organizationId: input.organizationId,
+      documentNumber: returnNumber,
+      documentDate: salesReturn.return_date,
+      sourceId: salesReturn.id,
+      sourceDocumentNumber: returnNumber,
+      subSource: "POS_SALES_RETURN",
+      entityId: invoice.entity_id,
+      entityName: invoice.entity_name_snapshot ?? invoice.entity?.entity_name,
+      entityGstin: invoice.entity?.gstin,
+      partyId: invoice.customer_contact_id,
+      partyName: invoice.customer ?? "CUSTOMER",
+      partyGstin: invoice.customer_contact?.tax_registrations?.[0]?.gstin,
+      placeOfSupplyStateCode: taxJurisdiction.placeOfSupplyStateCode
+        ?? (invoice.tax_mode === "LOCAL" ? invoice.entity?.gstin?.slice(0, 2) : null),
+      createdByUserId: input.actorId,
+      subtotal: totals.subtotal,
+      taxableAmount: totals.subtotal,
+      cgstAmount: totals.cgst,
+      sgstAmount: totals.sgst,
+      igstAmount: totals.igst,
+      totalAmount: totalCreditAmount,
+      lines: createdReturnLines.map((line) => {
+        const sourceInvoiceLine = selectedLineById.get(line.invoice_line_id);
+        if (!sourceInvoiceLine) {
+          throw new PosSalesReturnError("A posted return line could not be matched to its source invoice line.", 409);
+        }
+        return {
+          sourceLineId: line.id,
+          itemCode: sourceInvoiceLine.article_no,
+          description: sourceInvoiceLine.size
+            ? `${sourceInvoiceLine.style_name} - ${sourceInvoiceLine.size}`
+            : sourceInvoiceLine.style_name,
+          quantity: String(line.quantity),
+          unitOfMeasure: "PCS",
+          unitRate: sourceInvoiceLine.unit_rate,
+          discountAmount: new Prisma.Decimal(line.quantity)
+            .mul(sourceInvoiceLine.unit_rate)
+            .minus(line.taxable_amount)
+            .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP),
+          taxableAmount: line.taxable_amount,
+          hsnCode: sourceInvoiceLine.hsn_code,
+          gstRate: sourceInvoiceLine.gst_rate,
+          cgstAmount: line.cgst_amount,
+          sgstAmount: line.sgst_amount,
+          igstAmount: line.igst_amount,
+          totalAmount: line.total_amount,
         };
       }),
     });

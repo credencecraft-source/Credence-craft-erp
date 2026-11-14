@@ -538,9 +538,11 @@ model PurchaseOrder {
   sources                      PurchaseOrderSource[]
   lines                        PurchaseOrderLine[]
   inventoryReceipts            InventoryReceipt[]
+  procurementVendorBills       ProcurementVendorBill[]
   gateEntries                  GateEntry[]
   generalPurchaseOrderRequests GeneralPurchaseOrderRequest[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, purchase_order_no])
   @@unique([organization_id, display_no])
   @@index([organization_id, status, created_at])
@@ -588,7 +590,9 @@ model PurchaseOrderLine {
   masterPurchaseOrder             MasterPurchaseOrder?       @relation(fields: [master_purchase_order_id], references: [id], onDelete: Cascade)
   generalPurchaseOrderGroup       GeneralPurchaseOrderGroup? @relation(fields: [general_purchase_order_group_id], references: [id], onDelete: Restrict)
   inventoryReceiptLines           InventoryReceiptLine[]
+  procurementVendorBillLines      ProcurementVendorBillLine[]
 
+  @@unique([purchase_order_id, id])
   @@unique([purchase_order_id, source_master_line_id])
   @@index([purchase_order_id])
   @@index([master_purchase_order_id])
@@ -1137,7 +1141,9 @@ model InventoryReceiptLine {
   purchaseOrderLine      PurchaseOrderLine  @relation(fields: [purchase_order_line_id], references: [id], onDelete: Restrict)
   rmGrnVerification      RmGrnVerification?
   rawMaterialStock       RawMaterialStock?
+  procurementVendorBillLines ProcurementVendorBillLine[]
 
+  @@unique([receipt_id, id])
   @@unique([receipt_id, purchase_order_line_id])
   @@index([purchase_order_line_id])
   @@map("inventory_receipt_lines")

@@ -144,21 +144,6 @@ type ReturnCreditOption = {
 type EntityOption = { id: string; label: string };
 type HierarchyOption = { id: string; label: string; isActive: boolean };
 type HierarchyLevel = "entities" | "divisions" | "locations" | "subLocations" | "subSubLocations";
-type StoredFinanceDocument = {
-  id: string;
-  documentType: string;
-  documentNumber: string;
-  sourceModule: string;
-  sourceRecordId: string;
-  date: string;
-  party: string;
-  amount: number;
-  tax: number;
-  net: number;
-  status: string;
-  paymentStatus: string;
-  archivedYear: number;
-};
 export default function PosBarcodeBillingPage({
   workspaceId,
   organizationId,
@@ -844,7 +829,7 @@ export default function PosBarcodeBillingPage({
     );
   };
 
-  const { subtotal, taxBreakdown, taxAmount, charges, grandTotal } = useMemo(() => {
+  const { subtotal, taxBreakdown, charges, grandTotal } = useMemo(() => {
     const totals = billLines.reduce(
       (summary, line) => {
         const master = gstOptions.find(
@@ -1029,35 +1014,6 @@ export default function PosBarcodeBillingPage({
         throw new Error(data.error || "Unable to post POS invoice.");
       }
       saleRequestKey.current = "";
-      try {
-        const financeRecords = JSON.parse(
-          window.localStorage.getItem(`finance-documents-${organizationId}`) ?? "[]",
-        ) as StoredFinanceDocument[];
-        const financeRecord: StoredFinanceDocument = {
-          id: `pos-${data.invoice.id}`,
-          documentType: "Sales Invoice",
-          documentNumber: data.invoice.invoiceNo,
-          sourceModule: "POS",
-          sourceRecordId: data.invoice.id ?? "",
-          date: invoiceDate,
-          party: customerName || "Customer not linked",
-          amount: Number(data.invoice.subtotal ?? subtotal),
-          tax: Number(data.invoice.taxAmount ?? taxAmount),
-          net: Number(data.invoice.totalAmount ?? grandTotal),
-          status: "Posted",
-          paymentStatus: "Pending",
-          archivedYear: new Date(invoiceDate).getFullYear(),
-        };
-        const withoutExistingFinanceRecord = financeRecords.filter(
-          (item) => item.documentNumber !== data.invoice?.invoiceNo || item.sourceModule !== "POS",
-        );
-        window.localStorage.setItem(
-          `finance-documents-${organizationId}`,
-          JSON.stringify([financeRecord, ...withoutExistingFinanceRecord]),
-        );
-      } catch {
-        setError("Invoice posted and stock deducted, but the local finance cache could not be updated.");
-      }
       setInvoiceNumber(data.invoice.invoiceNo);
       router.push(
         data.invoice.appliedCouponCode || data.invoice.issuedCouponCode

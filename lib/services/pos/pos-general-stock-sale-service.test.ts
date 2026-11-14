@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     contact: { findFirst: vi.fn() },
     organization: { findFirst: vi.fn() },
     masterEntity: { findFirst: vi.fn() },
+    masterHsn: { findMany: vi.fn() },
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), updateMany: vi.fn() },
     finishedGoodsSkuStock: { findMany: vi.fn(), updateMany: vi.fn() },
     finishedGoodsStock: { updateMany: vi.fn() },
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   createAuditEvent: vi.fn(),
   createFgMaterialIssue: vi.fn(),
   resolveActivePosStockLocation: vi.fn(),
+  ingestPosSale: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -46,6 +48,9 @@ vi.mock("@/lib/services/inventory/fg-issued-service", () => ({
 }));
 vi.mock("@/lib/services/pos/pos-stock-location-service", () => ({
   resolveActivePosStockLocation: mocks.resolveActivePosStockLocation,
+}));
+vi.mock("@/lib/services/finance/finance-ingestion-service", () => ({
+  ingestPosSale: mocks.ingestPosSale,
 }));
 
 import {
@@ -107,6 +112,7 @@ describe("createPosGeneralStockSale", () => {
       sgst_rate: new Prisma.Decimal("2.5"),
       igst_rate: new Prisma.Decimal("5"),
     }]);
+    mocks.transaction.masterHsn.findMany.mockResolvedValue([{ hsn_code: "6105" }]);
     mocks.transaction.posOffer.findMany.mockResolvedValue([]);
     mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.finishedGoodsSkuStock.updateMany.mockResolvedValue({ count: 1 });
@@ -133,13 +139,15 @@ describe("createPosGeneralStockSale", () => {
       id: "customer-1",
       legal_name: "Customer One",
       display_name: "Customer One",
+      tax_registrations: [],
     });
     mocks.transaction.posSalesInvoice.create.mockResolvedValue({ id: "invoice-1" });
-    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
-      id: "invoice-line-1",
-      general_stock_receipt_id: "general-stock-1",
-      sku_stock_id: null,
-    }]);
+    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockImplementation(
+      ({ data }: { data: Record<string, unknown>[] }) => Promise.resolve(
+        data.map((line, index) => ({ ...line, id: `invoice-line-${index + 1}` })),
+      ),
+    );
+    mocks.ingestPosSale.mockResolvedValue({ id: "central-transaction-1", duplicate: false });
     mocks.reserveNumber.mockResolvedValue("POS-1");
   });
 
@@ -288,7 +296,24 @@ describe("createPosGeneralStockSale", () => {
         quantity: 2,
         taxable_amount: new Prisma.Decimal("180.00"),
       })],
-      select: { id: true, general_stock_receipt_id: true, sku_stock_id: true },
+      select: {
+        id: true,
+        general_stock_receipt_id: true,
+        sku_stock_id: true,
+        style_name: true,
+        article_no: true,
+        size: true,
+        quantity: true,
+        unit_rate: true,
+        offer_discount_amount: true,
+        hsn_code: true,
+        gst_rate: true,
+        taxable_amount: true,
+        cgst_amount: true,
+        sgst_amount: true,
+        igst_amount: true,
+        total_amount: true,
+      },
     });
 
     expect(mocks.createFgMaterialIssue).toHaveBeenCalledWith(mocks.transaction, expect.objectContaining({
@@ -311,6 +336,17 @@ describe("createPosGeneralStockSale", () => {
       action: "POST_GENERAL_FG_SALE",
       entityId: "invoice-1",
     }), mocks.transaction);
+    expect(mocks.ingestPosSale).toHaveBeenCalledWith(mocks.transaction, expect.objectContaining({
+      organizationId: "organization-1",
+      sourceId: "invoice-1",
+      sourceDocumentNumber: "POS-1",
+      totalAmount: new Prisma.Decimal("189.00"),
+      lines: [expect.objectContaining({
+        sourceLineId: "invoice-line-1",
+        hsnCode: "6105",
+        gstRate: new Prisma.Decimal("5"),
+      })],
+    }));
   });
 
   it("does not post stock whose verified leaf differs from the selected issue location", async () => {
@@ -340,6 +376,7 @@ describe("createPosGeneralStockSale", () => {
       id: "customer-contact-1",
       legal_name: "Acme Retail",
       display_name: "ACME RETAIL",
+      tax_registrations: [],
     });
 
     const result = await createPosGeneralStockSale({
@@ -355,7 +392,17 @@ describe("createPosGeneralStockSale", () => {
         is_active: true,
         roles: { some: { role_code: "CUSTOMER", is_active: true } },
       },
-      select: { id: true, legal_name: true, display_name: true },
+      select: {
+        id: true,
+        legal_name: true,
+        display_name: true,
+        tax_registrations: {
+          where: { status: "ACTIVE" },
+          select: { gstin: true },
+          orderBy: { created_at: "desc" },
+          take: 1,
+        },
+      },
     });
     expect(mocks.transaction.posSalesInvoice.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -500,6 +547,7 @@ describe("createPosGeneralStockSale", () => {
       id: "customer-contact-1",
       legal_name: "Acme Retail",
       display_name: "ACME RETAIL",
+      tax_registrations: [],
     });
     mocks.transaction.posCoupon.findFirst.mockResolvedValueOnce({
       id: "reward-campaign-1",
@@ -586,12 +634,6 @@ describe("createPosGeneralStockSale", () => {
     };
     mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
     mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([skuStock]);
-    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
-      id: "invoice-line-1",
-      general_stock_receipt_id: null,
-      sku_stock_id: "sku-stock-1",
-    }]);
-
     await createPosGeneralStockSale({
       ...saleInput,
       lines: [{ ...saleInput.lines[0], stockId: "sku-stock-1", stockType: "SKU" }],
@@ -653,12 +695,6 @@ describe("createPosGeneralStockSale", () => {
     };
     mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
     mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([skuStock]);
-    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
-      id: "invoice-line-1",
-      general_stock_receipt_id: null,
-      sku_stock_id: "sku-store-stock-1",
-    }]);
-
     await createPosGeneralStockSale({
       ...saleInput,
       salesChannel: "ONLINE_STORE",
@@ -717,12 +753,6 @@ describe("createPosGeneralStockSale", () => {
       gst_rate: new Prisma.Decimal("5.00"),
       hsn_code: "6105",
     }]);
-    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
-      id: "invoice-line-1",
-      general_stock_receipt_id: null,
-      sku_stock_id: "sku-store-stock-1",
-    }]);
-
     await createPosGeneralStockSale({
       ...saleInput,
       salesChannel: "ONLINE_STORE",
@@ -774,12 +804,6 @@ describe("createPosGeneralStockSale", () => {
       gst_rate: new Prisma.Decimal("5.00"),
       hsn_code: "6105",
     }]);
-    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
-      id: "invoice-line-1",
-      general_stock_receipt_id: null,
-      sku_stock_id: "sku-store-stock-1",
-    }]);
-
     await expect(createPosGeneralStockSale({
       ...saleInput,
       salesChannel: "ONLINE_STORE",

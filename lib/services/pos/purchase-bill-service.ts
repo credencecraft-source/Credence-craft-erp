@@ -8,6 +8,11 @@ import {
 import { resolveActivePosStockLocationByLeaf } from "@/lib/services/pos/pos-stock-location-service";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
+import {
+  assertCentralTaxMasters,
+  calculateCentralTax,
+} from "@/lib/services/finance/central-tax-engine";
+import { ingestPosPurchaseBill } from "@/lib/services/finance/finance-ingestion-service";
 
 const SAVED_STATUS = "SAVED";
 const POSTED_STATUS = "POSTED";
@@ -93,6 +98,10 @@ function decimal(value: unknown, field: string, options: { required?: boolean; p
     throw new Error(`${field} must be ${options.positive ? "greater than zero" : "zero or greater"}.`);
   }
   return parsed;
+}
+
+function money(value: Prisma.Decimal) {
+  return value.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
 }
 
 function cleanText(value: unknown, maxLength: number, fallback: string | null = null) {
@@ -321,15 +330,17 @@ export async function createPurchaseBill(organizationId: string, actorId: string
   const billDate = new Date(input.billDate);
   if (Number.isNaN(billDate.getTime())) throw new Error("Bill date is invalid.");
 
-  const vendor = await prisma.masterVendor.findFirst({ where: { id: input.vendorId, organization_id: organizationId, is_active: true }, select: { id: true } });
-  if (!vendor) throw new Error("Select a valid active vendor from this organization.");
-
   const result = await prisma.$transaction(async (transaction) => {
     const entity = await transaction.masterEntity.findFirst({
       where: { id: entityId, organization_id: organizationId, is_active: true },
-      select: { id: true, entity_name: true },
+      select: { id: true, entity_name: true, gstin: true },
     });
     if (!entity) throw new Error("Select an active Entity belonging to this organization.");
+    const vendor = await transaction.masterVendor.findFirst({
+      where: { id: input.vendorId, organization_id: organizationId, is_active: true },
+      select: { id: true, vendor: true, gst_number: true },
+    });
+    if (!vendor) throw new Error("Select a valid active vendor from this organization.");
     const documentNumber = await reservePosDocumentNumber(
       organizationId,
       "PURCHASE_BILL",
@@ -349,17 +360,12 @@ export async function createPurchaseBill(organizationId: string, actorId: string
     if (gstById.size !== gstIds.length) throw new Error("One or more GST values are unavailable.");
 
     let totalQuantity = new Prisma.Decimal(0);
-    let subtotal = new Prisma.Decimal(0);
-    let tax = new Prisma.Decimal(0);
-    const lineData = records.flatMap((record) => record.lines.map((line) => {
+    const billLines = records.flatMap((record) => record.lines.map((line) => {
       const quantity = line.quantity;
       const price = line.purchase_price ?? new Prisma.Decimal(0);
-      const lineSubtotal = quantity.mul(price);
+      const lineSubtotal = money(quantity.mul(price));
       const gstRate = line.gst_id ? gstById.get(line.gst_id) ?? new Prisma.Decimal(0) : new Prisma.Decimal(0);
-      const lineTax = lineSubtotal.mul(gstRate).div(100);
       totalQuantity = totalQuantity.add(quantity);
-      subtotal = subtotal.add(lineSubtotal);
-      tax = tax.add(lineTax);
       return {
         source_record_id: record.id,
         item_name: line.item_name,
@@ -370,10 +376,33 @@ export async function createPurchaseBill(organizationId: string, actorId: string
         gst_id: line.gst_id,
         gst_rate: gstRate,
         hsn_code: line.hsn_code,
-        tax_amount: lineTax,
-        total: lineSubtotal.add(lineTax),
+        taxable_amount: lineSubtotal,
       };
     }));
+    const taxCalculation = calculateCentralTax({
+      lines: billLines.map((line) => ({
+        taxableAmount: line.taxable_amount,
+        gstRate: line.gst_rate,
+      })),
+      entityGstin: entity.gstin,
+      partyGstin: vendor.gst_number,
+      fallbackMode: input.taxMode,
+    });
+    const lineData = billLines.map((line, index) => ({
+      source_record_id: line.source_record_id,
+      item_name: line.item_name,
+      size: line.size,
+      quantity: line.quantity,
+      purchase_price: line.purchase_price,
+      sales_price: line.sales_price,
+      gst_id: line.gst_id,
+      gst_rate: line.gst_rate,
+      hsn_code: line.hsn_code,
+      tax_amount: taxCalculation.lines[index].totalTaxAmount,
+      total: taxCalculation.lines[index].totalAmount,
+    }));
+    const subtotal = taxCalculation.taxableAmount;
+    const tax = taxCalculation.totalTaxAmount;
 
     const bill = await transaction.posPurchaseBill.create({
       data: {
@@ -395,6 +424,47 @@ export async function createPurchaseBill(organizationId: string, actorId: string
         lines: { create: lineData },
       },
       include: { lines: true },
+    });
+    await assertCentralTaxMasters(transaction, organizationId, bill.lines.map((line) => ({
+      hsnCode: line.hsn_code,
+      gstRate: line.gst_rate ?? "0",
+    })));
+    await ingestPosPurchaseBill(transaction, {
+      organizationId,
+      documentNumber: bill.document_number,
+      documentDate: bill.bill_date,
+      sourceId: bill.id,
+      sourceDocumentNumber: bill.document_number,
+      subSource: "DIRECT_STOCK_PURCHASE",
+      entityId: entity.id,
+      entityName: entity.entity_name,
+      entityGstin: entity.gstin,
+      partyId: vendor.id,
+      partyName: vendor.vendor,
+      partyGstin: vendor.gst_number,
+      placeOfSupplyStateCode: entity.gstin?.slice(0, 2) ?? taxCalculation.placeOfSupplyStateCode,
+      createdByUserId: actorId,
+      subtotal,
+      taxableAmount: subtotal,
+      cgstAmount: taxCalculation.cgstAmount,
+      sgstAmount: taxCalculation.sgstAmount,
+      igstAmount: taxCalculation.igstAmount,
+      totalAmount: taxCalculation.totalAmount,
+      lines: bill.lines.map((line, index) => ({
+        sourceLineId: line.id,
+        itemCode: line.item_name,
+        description: line.size ? `${line.item_name ?? "ITEM"} - ${line.size}` : line.item_name ?? "ITEM",
+        quantity: line.quantity,
+        unitOfMeasure: "PCS",
+        unitRate: line.purchase_price ?? "0",
+        taxableAmount: billLines[index].taxable_amount,
+        hsnCode: line.hsn_code,
+        gstRate: line.gst_rate ?? "0",
+        cgstAmount: taxCalculation.lines[index].cgstAmount,
+        sgstAmount: taxCalculation.lines[index].sgstAmount,
+        igstAmount: taxCalculation.lines[index].igstAmount,
+        totalAmount: line.total,
+      })),
     });
     await transaction.posPurchaseRecord.updateMany({ where: { id: { in: records.map((record) => record.id) }, organization_id: organizationId }, data: { status: POSTED_STATUS, purchase_bill_id: bill.id } });
     await transaction.auditEvent.create({
