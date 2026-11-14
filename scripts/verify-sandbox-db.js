@@ -33,9 +33,10 @@ function verifySandboxDatabase(env = process.env) {
     || verified !== "true"
     || !deploymentBranch
     || configuredBranch !== deploymentBranch
+    || !env.DATABASE_URL?.trim()
   ) {
     throw new Error(
-      "Sandbox Neon branch identity is missing, unverified, or does not match this Preview branch; refusing to run migrations.",
+      "Sandbox Neon branch identity is missing, unverified, or does not match this Preview branch, or DATABASE_URL is missing; refusing to run migrations.",
     );
   }
 

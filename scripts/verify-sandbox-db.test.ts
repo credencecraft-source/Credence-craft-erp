@@ -20,6 +20,7 @@ const validPreview = {
   NEON_PROJECT_ID: "silent-tree-123",
   NEON_SANDBOX_VERIFIED: "true",
   NEON_VERCEL_BRANCH_REF: "test-branch",
+  DATABASE_URL: "postgresql://sandbox.example/db",
 };
 
 describe("sandbox database migration guard", () => {
@@ -54,6 +55,7 @@ describe("sandbox database migration guard", () => {
     ["unverified metadata", { ...validPreview, NEON_SANDBOX_VERIFIED: "false" }],
     ["branch mismatch", { ...validPreview, NEON_VERCEL_BRANCH_REF: "other-branch" }],
     ["unapproved name", { ...validPreview, NEON_BRANCH_NAME: "production" }],
+    ["missing database URL", { ...validPreview, DATABASE_URL: "" }],
   ])("blocks a Preview migration for %s", (_case, env) => {
     expect(() => verifySandboxDatabase(env)).toThrow("refusing to run migrations");
   });
