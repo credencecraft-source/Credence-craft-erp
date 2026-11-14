@@ -10,6 +10,7 @@ type MigrationRetryModule = {
     run: () => Promise<MigrationResult>,
     sleep: (milliseconds: number) => Promise<void>,
     logger: { warn: (message: string) => void; error: (message: string) => void },
+    verify: () => void,
   ) => Promise<number>;
 };
 
@@ -18,6 +19,20 @@ const { getPrismaCliPath, isAdvisoryLockTimeout, runMigrationsWithRetry } = requ
 const lockTimeout = "Error: P1002. Context: Timed out trying to acquire a postgres advisory lock.";
 
 describe("Prisma migration lock retry", () => {
+  it("verifies the deployment database before attempting a migration", async () => {
+    const run = vi.fn<() => Promise<MigrationResult>>();
+    const verify = vi.fn(() => {
+      throw new Error("Unverified sandbox database.");
+    });
+
+    await expect(
+      runMigrationsWithRetry(run, vi.fn().mockResolvedValue(undefined), { warn: vi.fn(), error: vi.fn() }, verify),
+    ).rejects.toThrow("Unverified sandbox database.");
+
+    expect(verify).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("resolves Prisma's declared CLI executable", () => {
     expect(existsSync(getPrismaCliPath())).toBe(true);
   });

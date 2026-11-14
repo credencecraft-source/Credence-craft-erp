@@ -72,6 +72,7 @@ These rules govern every feature, bug fix, refactor, migration, route, API, serv
 - For schema changes, add a Prisma migration, regenerate the client, test the migration against a disposable database, and run the read-only integrity audit where relevant before handoff when the environment permits. Never validate against production; report any unavailable check.
 - Stop development servers before Windows production builds when Prisma engine replacement requires it. Report any unavailable test, warning, vulnerability, migration risk, or unverified workflow honestly.
 - Use the configured test branch and remote only when explicitly asked to push. Never push directly to production, force-push, rewrite history, or include unrelated work; ask for the target when branch or remote is unclear.
+- For this repository, AI agents may commit and push only to `test-branch`. Never push to `main` or merge directly into `main`; route changes through the reviewed pull-request workflow. This instruction does not replace GitHub branch protection or required status checks.
 - Run relevant regression tests with the configured Vitest runner (`npm test`); distinguish automated test coverage from lint, typecheck, build, and manual smoke checks.
 
 ## Pre-Push Build Gate

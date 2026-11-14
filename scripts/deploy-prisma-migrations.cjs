@@ -1,6 +1,7 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
+const { verifySandboxDatabase } = require("./verify-sandbox-db.js");
 
 const MAX_ATTEMPTS = 5;
 
@@ -43,7 +44,10 @@ async function runMigrationsWithRetry(
   run = runPrismaMigrateDeploy,
   sleep = delay,
   logger = console,
+  verify = verifySandboxDatabase,
 ) {
+  verify();
+
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const result = await run();
     if (result.code === 0) return 0;
@@ -70,4 +74,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = { getPrismaCliPath, isAdvisoryLockTimeout, runMigrationsWithRetry };
+module.exports = {
+  getPrismaCliPath,
+  isAdvisoryLockTimeout,
+  runMigrationsWithRetry,
+};
