@@ -63,7 +63,10 @@ function baselinePreviewMigrationHistory({
   const status = run(["migrate", "status"]);
   if (status.code === 0) return 0;
   if (!status.output.includes("P3005")) {
-    logger.error("[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history.");
+    const prismaCode = status.output.match(/\bP\d{4}\b/)?.[0];
+    const databaseCode = status.output.match(/\bDatabase error code:\s*([A-Z0-9]{5})\b/i)?.[1];
+    const safeCode = prismaCode ? `Prisma ${prismaCode}` : databaseCode ? `database ${databaseCode}` : "unknown";
+    logger.error(`[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history (${safeCode}).`);
     return status.code || 1;
   }
 

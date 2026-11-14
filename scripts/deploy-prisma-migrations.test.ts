@@ -93,11 +93,15 @@ describe("Prisma Preview schema baseline", () => {
 
   it("does not baseline failed migration states or non-Preview environments", () => {
     const run = vi.fn<(args: string[]) => MigrationResult>()
-      .mockReturnValueOnce({ code: 1, output: "Error: P3009" });
+      .mockReturnValueOnce({
+        code: 1,
+        output: "Error: P1001 at postgresql://private.example/database",
+      });
+    const logger = { log: vi.fn(), error: vi.fn() };
 
     expect(baselinePreviewMigrationHistory({
       env: { VERCEL_ENV: "preview", DATABASE_URL: "postgresql://sandbox/db" },
-      logger: { log: vi.fn(), error: vi.fn() },
+      logger,
       run,
     })).toBe(1);
     expect(baselinePreviewMigrationHistory({
@@ -105,6 +109,9 @@ describe("Prisma Preview schema baseline", () => {
       run,
     })).toBe(0);
     expect(run).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      "[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history (Prisma P1001).",
+    );
   });
 });
 
