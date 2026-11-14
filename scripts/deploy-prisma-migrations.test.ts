@@ -10,7 +10,7 @@ type MigrationRetryModule = {
     run: () => Promise<MigrationResult>,
     sleep: (milliseconds: number) => Promise<void>,
     logger: { warn: (message: string) => void; error: (message: string) => void },
-    verify: () => void,
+    verify?: () => void,
   ) => Promise<number>;
 };
 
