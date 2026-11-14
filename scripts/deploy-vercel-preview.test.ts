@@ -3,7 +3,11 @@ import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createPreviewDeployment, getDeploymentInput } = require("./deploy-vercel-preview.cjs") as {
+const {
+  createPreviewDeployment,
+  getDeploymentInput,
+  getPrismaErrorCodes,
+} = require("./deploy-vercel-preview.cjs") as {
   createPreviewDeployment: (options?: {
     env: Record<string, string>;
     fetchImpl: typeof fetch;
@@ -16,6 +20,7 @@ const { createPreviewDeployment, getDeploymentInput } = require("./deploy-vercel
     sha: string;
     repositoryId: string;
   };
+  getPrismaErrorCodes: (events: unknown[]) => string[];
 };
 const deploymentScriptPath = require.resolve("./deploy-vercel-preview.cjs");
 
@@ -99,7 +104,13 @@ describe("Vercel Preview deployment", () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response({ id: "prj_test", name: "credence-craft-erp" }))
       .mockResolvedValueOnce(response({ id: "dpl_test" }, 201))
-      .mockResolvedValueOnce(response({ readyState: "ERROR", errorCode: "BUILD_FAILED" }));
+      .mockResolvedValueOnce(response({ readyState: "ERROR", errorCode: "BUILD_FAILED" }))
+      .mockResolvedValueOnce(response([
+        {
+          type: "stderr",
+          payload: { text: "Migration failed with P3018 at postgresql://secret.example/db" },
+        },
+      ]));
 
     await expect(createPreviewDeployment({
       env,
@@ -107,7 +118,10 @@ describe("Vercel Preview deployment", () => {
       logger: { log: vi.fn() },
       maxAttempts: 1,
       sleep: vi.fn().mockResolvedValue(undefined),
-    })).rejects.toThrow("finished in state ERROR (code BUILD_FAILED)");
+    })).rejects.toThrow(
+      "finished in state ERROR (code BUILD_FAILED) (Prisma P3018)",
+    );
+    expect(fetchImpl.mock.calls[3][0]).toContain("/v3/deployments/dpl_test/events");
   });
 
   it("rejects an empty project response instead of dereferencing it", async () => {
@@ -153,5 +167,13 @@ describe("Vercel Preview deployment", () => {
     })).rejects.toThrow(
       "POST /v13/deployments?forceNew=1 failed (HTTP 400, code invalid_target)",
     );
+  });
+
+  it("extracts only Prisma error codes from deployment event text", () => {
+    expect(getPrismaErrorCodes([
+      { payload: { text: "P1001: failed at postgresql://secret.example/db" } },
+      { text: "repeat P1001 and P3005" },
+      { text: "No credentials or URLs are returned." },
+    ])).toEqual(["P1001", "P3005"]);
   });
 });

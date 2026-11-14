@@ -10,7 +10,7 @@ function getRequired(name, env = process.env) {
   return value;
 }
 
-async function requestVercel({ body, fetchImpl, method, path, teamId, token }) {
+async function requestVercel({ allowArray = false, body, fetchImpl, method, path, teamId, token }) {
   const separator = path.includes("?") ? "&" : "?";
   let response;
   try {
@@ -59,11 +59,25 @@ async function requestVercel({ body, fetchImpl, method, path, teamId, token }) {
     throw new Error("Vercel returned an invalid deployment response.");
   }
 
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+  if (
+    !payload
+    || typeof payload !== "object"
+    || (allowArray ? !Array.isArray(payload) : Array.isArray(payload))
+  ) {
     throw new Error("Vercel returned an empty or malformed deployment response.");
   }
 
   return payload;
+}
+
+function getPrismaErrorCodes(events) {
+  const codes = new Set();
+  for (const event of events) {
+    const text = event?.payload?.text ?? event?.text;
+    if (typeof text !== "string") continue;
+    for (const match of text.matchAll(/\bP\d{4}\b/g)) codes.add(match[0]);
+  }
+  return [...codes];
 }
 
 function getDeploymentInput(env = process.env) {
@@ -128,8 +142,23 @@ async function waitForDeployment(options = {}) {
         && /^[A-Za-z0-9_-]{1,80}$/.test(deployment.errorCode)
         ? ` (code ${deployment.errorCode})`
         : "";
+      let diagnostics = "";
+      try {
+        const events = await requestVercel({
+          allowArray: true,
+          fetchImpl,
+          method: "GET",
+          path: `/v3/deployments/${encodeURIComponent(deploymentId)}/events?direction=backward&limit=100`,
+          teamId,
+          token,
+        });
+        const prismaCodes = getPrismaErrorCodes(events);
+        diagnostics = prismaCodes.length ? ` (Prisma ${prismaCodes.join(", ")})` : "";
+      } catch {
+        diagnostics = " (build diagnostics unavailable; inspect Vercel deployment logs)";
+      }
       throw new Error(
-        `Vercel Preview deployment finished in state ${deployment.readyState}${errorCode}.`,
+        `Vercel Preview deployment finished in state ${deployment.readyState}${errorCode}${diagnostics}.`,
       );
     }
 
@@ -216,6 +245,7 @@ if (require.main === module) {
 
 module.exports = {
   createPreviewDeployment,
+  getPrismaErrorCodes,
   getDeploymentInput,
   waitForDeployment,
 };
