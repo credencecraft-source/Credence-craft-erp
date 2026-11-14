@@ -63,7 +63,7 @@ function baselinePreviewMigrationHistory({
   const status = run(["migrate", "status"]);
   if (status.code === 0) return 0;
   if (!status.output.includes("P3005")) {
-    logger.error("Prisma migration status failed; refusing to baseline sandbox history.");
+    logger.error("[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history.");
     return status.code || 1;
   }
 
@@ -71,7 +71,7 @@ function baselinePreviewMigrationHistory({
     || env.DATABASE_URL_UNPOOLED?.trim()
     || env.DATABASE_URL?.trim();
   if (!migrationUrl) {
-    logger.error("DATABASE_URL is missing; refusing to baseline sandbox migration history.");
+    logger.error("[SANDBOX_BASELINE_DATABASE_URL_MISSING] Refusing to baseline sandbox history.");
     return 1;
   }
 
@@ -86,21 +86,21 @@ function baselinePreviewMigrationHistory({
   ]);
   if (diff.code !== 0 || !isSafeSchemaBaselineDiff(diff.output)) {
     logger.error(
-      "Prisma schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history.",
+      "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history.",
     );
     return diff.code || 1;
   }
 
   const migrations = getMigrationNames(migrationsPath);
   if (migrations.length === 0) {
-    logger.error("No Prisma migrations were found; refusing to baseline sandbox history.");
+    logger.error("[SANDBOX_BASELINE_NO_MIGRATIONS] Refusing to baseline empty Prisma history.");
     return 1;
   }
 
   for (const migrationName of migrations) {
     const result = run(["migrate", "resolve", "--applied", migrationName]);
     if (result.code !== 0) {
-      logger.error(`Failed to baseline Prisma migration "${migrationName}".`);
+      logger.error("[SANDBOX_BASELINE_RESOLVE_FAILED] Failed to record Prisma migration history.");
       return result.code || 1;
     }
   }

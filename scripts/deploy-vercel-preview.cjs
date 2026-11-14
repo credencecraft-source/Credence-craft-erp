@@ -2,6 +2,13 @@ const VERCEL_API = "https://api.vercel.com";
 const POLL_INTERVAL_MS = 10000;
 const MAX_POLL_ATTEMPTS = 90;
 const TERMINAL_FAILURE_STATES = new Set(["ERROR", "CANCELED"]);
+const SAFE_BASELINE_DIAGNOSTICS = new Set([
+  "SANDBOX_BASELINE_STATUS_FAILED",
+  "SANDBOX_BASELINE_DATABASE_URL_MISSING",
+  "SANDBOX_BASELINE_SCHEMA_DRIFT",
+  "SANDBOX_BASELINE_NO_MIGRATIONS",
+  "SANDBOX_BASELINE_RESOLVE_FAILED",
+]);
 
 function getRequired(name, env = process.env) {
   const rawValue = env?.[name];
@@ -74,6 +81,7 @@ function getPrismaErrorSummary(events) {
   const errorCodes = new Set();
   const migrationNames = new Set();
   const databaseCodes = new Set();
+  const baselineCodes = new Set();
   for (const event of events) {
     const text = event?.payload?.text ?? event?.text;
     if (typeof text !== "string") continue;
@@ -84,11 +92,15 @@ function getPrismaErrorSummary(events) {
     for (const match of text.matchAll(/\bDatabase error code:\s*([A-Z0-9]{5})/gi)) {
       databaseCodes.add(match[1]);
     }
+    for (const match of text.matchAll(/\[(SANDBOX_BASELINE_[A-Z_]+)\]/g)) {
+      if (SAFE_BASELINE_DIAGNOSTICS.has(match[1])) baselineCodes.add(match[1]);
+    }
   }
   return {
     errorCodes: [...errorCodes],
     migrationNames: [...migrationNames],
     databaseCodes: [...databaseCodes],
+    baselineCodes: [...baselineCodes],
   };
 }
 
@@ -169,6 +181,7 @@ async function waitForDeployment(options = {}) {
           ...summary.errorCodes.map((code) => `Prisma ${code}`),
           ...summary.migrationNames.map((name) => `migration ${name}`),
           ...summary.databaseCodes.map((code) => `database ${code}`),
+          ...summary.baselineCodes.map((code) => `baseline ${code.slice("SANDBOX_BASELINE_".length).toLowerCase()}`),
         ];
         diagnostics = details.length ? ` (${details.join("; ")})` : "";
       } catch {

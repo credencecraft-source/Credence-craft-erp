@@ -189,6 +189,14 @@ describe("Vercel Preview deployment", () => {
       errorCodes: ["P1001", "P3005"],
       migrationNames: ["20261118110000_add_finance_phase_two"],
       databaseCodes: ["42P07"],
+      baselineCodes: [],
+    });
+
+    expect(getPrismaErrorSummary([
+      { text: "[SANDBOX_BASELINE_SCHEMA_DRIFT] private SQL is not included." },
+      { text: "[SANDBOX_BASELINE_UNTRUSTED] ignored." },
+    ])).toMatchObject({
+      baselineCodes: ["SANDBOX_BASELINE_SCHEMA_DRIFT"],
     });
   });
 });
