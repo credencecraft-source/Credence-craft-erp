@@ -11,6 +11,7 @@ const {
     key: string;
     value: string;
     type: string;
+    visibility: string;
     target: string[];
     gitBranch: string;
   }>;
@@ -57,12 +58,14 @@ describe("Vercel Preview environment synchronization", () => {
     expect(pooled).toMatchObject({
       value: env.SANDBOX_DATABASE_URL,
       type: "sensitive",
+      visibility: "secret",
       target: ["preview"],
       gitBranch: "test-branch",
     });
     expect(direct).toMatchObject({
       value: env.SANDBOX_DATABASE_URL_UNPOOLED,
       type: "sensitive",
+      visibility: "secret",
     });
     expect(metadata).toMatchObject({ value: "false", type: "plain" });
   });
@@ -90,10 +93,12 @@ describe("Vercel Preview environment synchronization", () => {
       key: "DATABASE_URL",
       value: env.SANDBOX_DATABASE_URL,
       type: "sensitive",
+      visibility: "secret",
       target: ["preview"],
       gitBranch: "test-branch",
     });
     expect(String(fetchImpl.mock.calls[2][0])).toContain("/v10/projects/prj_test/env");
+    expect(String(fetchImpl.mock.calls[2][0])).toContain("upsert=true");
     expect(String(fetchImpl.mock.calls[10][0])).toContain("/v9/projects/prj_test/env/verification-marker");
     expect(JSON.parse(String(fetchImpl.mock.calls[10][1]?.body)).value).toBe("true");
   });
@@ -154,7 +159,9 @@ describe("Vercel Preview environment synchronization", () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response({ envs: [] }))
       .mockResolvedValueOnce(response({ created: [{ id: "verification-marker" }], failed: [] }))
-      .mockResolvedValueOnce(response({ value: "secret-url" }, 500));
+      .mockResolvedValueOnce(response({
+        error: { code: "invalid_value", message: "Invalid value secret-url" },
+      }, 500));
 
     await expect(upsertBranchVariables({
       env,
@@ -162,6 +169,38 @@ describe("Vercel Preview environment synchronization", () => {
       projectId: env.VERCEL_PROJECT_ID,
       teamId: env.VERCEL_ORG_ID,
       token: env.VERCEL_TOKEN,
-    })).rejects.toThrow("HTTP 500");
+    })).rejects.toThrow("POST /v10/projects/prj_test/env?upsert=true failed (HTTP 500, code invalid_value)");
+  });
+
+  it("reports partial API failures by safe variable key and code only", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ envs: [] }))
+      .mockResolvedValueOnce(response({ created: [{ id: "verification-marker" }], failed: [] }, 201))
+      .mockResolvedValueOnce(response({
+        failed: [{
+          error: {
+            key: "DATABASE_URL",
+            code: "invalid_value",
+            message: "postgresql://secret-value",
+            value: "postgresql://secret-value",
+          },
+        }],
+      }));
+
+    let errorMessage = "";
+    try {
+      await upsertBranchVariables({
+        env,
+        fetchImpl,
+        projectId: env.VERCEL_PROJECT_ID,
+        teamId: env.VERCEL_ORG_ID,
+        token: env.VERCEL_TOKEN,
+      });
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : "";
+    }
+
+    expect(errorMessage).toContain("DATABASE_URL (invalid_value)");
+    expect(errorMessage).not.toContain("postgresql://secret-value");
   });
 });

@@ -42,7 +42,21 @@ async function requestVercel({ body, fetchImpl, method, path, teamId, token }) {
   }
 
   if (!response.ok) {
-    throw new Error(`Vercel environment-variable request failed (HTTP ${response.status}).`);
+    let errorCode;
+    try {
+      const payload = await response.json();
+      const candidate = payload?.error?.code ?? payload?.errorCode;
+      if (typeof candidate === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(candidate)) {
+        errorCode = candidate;
+      }
+    } catch {
+      errorCode = undefined;
+    }
+
+    const codeMessage = errorCode ? `, code ${errorCode}` : "";
+    throw new Error(
+      `Vercel environment-variable request ${method} ${path} failed (HTTP ${response.status ?? "unknown"}${codeMessage}).`,
+    );
   }
 
   if (response.status === 204) return null;
@@ -55,7 +69,17 @@ async function requestVercel({ body, fetchImpl, method, path, teamId, token }) {
   }
 
   if (Array.isArray(result?.failed) && result.failed.length > 0) {
-    throw new Error("Vercel rejected one or more environment-variable changes.");
+    const details = result.failed.map((item) => {
+      const error = item?.error;
+      const key = typeof error?.key === "string" && /^[A-Z][A-Z0-9_]*$/.test(error.key)
+        ? error.key
+        : "unknown key";
+      const code = typeof error?.code === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(error.code)
+        ? ` (${error.code})`
+        : "";
+      return `${key}${code}`;
+    });
+    throw new Error(`Vercel rejected environment-variable changes: ${details.join(", ")}.`);
   }
   return result;
 }
@@ -75,23 +99,30 @@ function getPreviewVariables(env = process.env) {
   }
 
   return [
-    { key: "DATABASE_URL", value: getRequired("SANDBOX_DATABASE_URL", env), type: "sensitive" },
+    {
+      key: "DATABASE_URL",
+      value: getRequired("SANDBOX_DATABASE_URL", env),
+      type: "sensitive",
+      visibility: "secret",
+    },
     {
       key: "DATABASE_URL_UNPOOLED",
       value: getRequired("SANDBOX_DATABASE_URL_UNPOOLED", env),
       type: "sensitive",
+      visibility: "secret",
     },
     {
       key: "DIRECT_URL",
       value: getRequired("SANDBOX_DATABASE_URL_UNPOOLED", env),
       type: "sensitive",
+      visibility: "secret",
     },
-    { key: "NEON_BRANCH_ID", value: branchId, type: "plain" },
-    { key: "NEON_BRANCH_NAME", value: branchName, type: "plain" },
-    { key: "NEON_BRANCH_PRIMARY", value: "false", type: "plain" },
-    { key: "NEON_PROJECT_ID", value: projectId, type: "plain" },
-    { key: "NEON_SANDBOX_VERIFIED", value: "true", type: "plain" },
-    { key: "NEON_VERCEL_BRANCH_REF", value: branchRef, type: "plain" },
+    { key: "NEON_BRANCH_ID", value: branchId, type: "plain", visibility: "config" },
+    { key: "NEON_BRANCH_NAME", value: branchName, type: "plain", visibility: "config" },
+    { key: "NEON_BRANCH_PRIMARY", value: "false", type: "plain", visibility: "config" },
+    { key: "NEON_PROJECT_ID", value: projectId, type: "plain", visibility: "config" },
+    { key: "NEON_SANDBOX_VERIFIED", value: "true", type: "plain", visibility: "config" },
+    { key: "NEON_VERCEL_BRANCH_REF", value: branchRef, type: "plain", visibility: "config" },
   ].map((variable) => ({
     ...variable,
     comment: "Managed by the Neon sandbox GitHub Actions workflow.",
@@ -164,7 +195,7 @@ async function upsertBranchVariables(options) {
       body: disabledMarker,
       fetchImpl: options.fetchImpl,
       method: "POST",
-      path: `/v10/projects/${encodeURIComponent(options.projectId)}/env`,
+      path: `/v10/projects/${encodeURIComponent(options.projectId)}/env?upsert=true`,
       teamId: options.teamId,
       token: options.token,
     });
@@ -196,7 +227,7 @@ async function upsertBranchVariables(options) {
         body: variable,
         fetchImpl: options.fetchImpl,
         method: "POST",
-        path: `/v10/projects/${encodeURIComponent(options.projectId)}/env`,
+        path: `/v10/projects/${encodeURIComponent(options.projectId)}/env?upsert=true`,
         teamId: options.teamId,
         token: options.token,
       });
