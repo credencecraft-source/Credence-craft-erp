@@ -4,7 +4,8 @@ const MAX_POLL_ATTEMPTS = 90;
 const TERMINAL_FAILURE_STATES = new Set(["ERROR", "CANCELED"]);
 
 function getRequired(name, env = process.env) {
-  const value = env[name]?.trim();
+  const rawValue = env?.[name];
+  const value = typeof rawValue === "string" ? rawValue.trim() : "";
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
@@ -25,15 +26,30 @@ async function requestVercel({ body, fetchImpl, method, path, teamId, token }) {
     throw new Error("Unable to contact the Vercel deployment API.");
   }
 
-  if (!response.ok) {
-    throw new Error(`Vercel Preview deployment request failed (HTTP ${response.status}).`);
+  if (!response || typeof response !== "object") {
+    throw new Error("Vercel Preview deployment API returned no response.");
   }
 
+  if (!response.ok) {
+    throw new Error(`Vercel Preview deployment request failed (HTTP ${response.status ?? "unknown"}).`);
+  }
+
+  if (typeof response.json !== "function") {
+    throw new Error("Vercel Preview deployment API response did not contain JSON.");
+  }
+
+  let payload;
   try {
-    return await response.json();
+    payload = await response.json();
   } catch {
     throw new Error("Vercel returned an invalid deployment response.");
   }
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Vercel returned an empty or malformed deployment response.");
+  }
+
+  return payload;
 }
 
 function getDeploymentInput(env = process.env) {
@@ -51,15 +67,28 @@ function getDeploymentInput(env = process.env) {
   return { ref, sha, repositoryId };
 }
 
-async function waitForDeployment({
-  deploymentId,
-  fetchImpl,
-  maxAttempts = MAX_POLL_ATTEMPTS,
-  pollIntervalMs = POLL_INTERVAL_MS,
-  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  teamId,
-  token,
-}) {
+async function waitForDeployment(options = {}) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error("Vercel deployment polling options must be an object.");
+  }
+
+  const {
+    deploymentId,
+    fetchImpl = fetch,
+    maxAttempts = MAX_POLL_ATTEMPTS,
+    pollIntervalMs = POLL_INTERVAL_MS,
+    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    teamId,
+    token,
+  } = options;
+
+  if (typeof deploymentId !== "string" || !deploymentId.trim()) {
+    throw new Error("Vercel deployment polling requires a deployment ID.");
+  }
+  if (typeof teamId !== "string" || !teamId.trim() || typeof token !== "string" || !token.trim()) {
+    throw new Error("Vercel deployment polling requires the team ID and API token.");
+  }
+
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const deployment = await requestVercel({
       fetchImpl,
@@ -69,7 +98,14 @@ async function waitForDeployment({
       token,
     });
 
-    if (deployment.readyState === "READY" && deployment.url) {
+    if (typeof deployment.readyState !== "string") {
+      throw new Error("Vercel deployment status response is missing readyState.");
+    }
+
+    if (deployment.readyState === "READY") {
+      if (typeof deployment.url !== "string" || !deployment.url.trim()) {
+        throw new Error("Vercel marked the Preview deployment ready but did not return its URL.");
+      }
       return deployment.url;
     }
 
@@ -83,14 +119,20 @@ async function waitForDeployment({
   throw new Error("Vercel Preview deployment did not become ready before the timeout.");
 }
 
-async function createPreviewDeployment({
-  env = process.env,
-  fetchImpl = fetch,
-  logger = console,
-  maxAttempts = MAX_POLL_ATTEMPTS,
-  pollIntervalMs = POLL_INTERVAL_MS,
-  sleep,
-}) {
+async function createPreviewDeployment(options = {}) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error("Vercel Preview deployment options must be an object.");
+  }
+
+  const {
+    env = process.env,
+    fetchImpl = fetch,
+    logger = console,
+    maxAttempts = MAX_POLL_ATTEMPTS,
+    pollIntervalMs = POLL_INTERVAL_MS,
+    sleep,
+  } = options;
+
   const token = getRequired("VERCEL_TOKEN", env);
   const teamId = getRequired("VERCEL_ORG_ID", env);
   const projectId = getRequired("VERCEL_PROJECT_ID", env);
@@ -103,8 +145,8 @@ async function createPreviewDeployment({
     teamId,
     token,
   });
-  if (project.id !== projectId || !project.name) {
-    throw new Error("Vercel returned a mismatched project identity.");
+  if (project.id !== projectId || typeof project.name !== "string" || !project.name.trim()) {
+    throw new Error("Vercel project response is missing the expected project ID or project name.");
   }
 
   const deployment = await requestVercel({
@@ -126,8 +168,11 @@ async function createPreviewDeployment({
     token,
   });
 
-  if (!deployment.id) {
-    throw new Error("Vercel did not return a deployment identity.");
+  if (typeof deployment.id !== "string" || !deployment.id.trim()) {
+    throw new Error("Vercel deployment creation response is missing a deployment ID.");
+  }
+  if (!logger || typeof logger.log !== "function") {
+    throw new Error("Vercel Preview deployment logger must provide a log function.");
   }
 
   const url = await waitForDeployment({

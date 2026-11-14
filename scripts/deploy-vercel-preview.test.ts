@@ -1,21 +1,23 @@
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { createPreviewDeployment, getDeploymentInput } = require("./deploy-vercel-preview.cjs") as {
-  createPreviewDeployment: (options: {
+  createPreviewDeployment: (options?: {
     env: Record<string, string>;
     fetchImpl: typeof fetch;
     logger: { log: (message: string) => void };
     maxAttempts: number;
     sleep: () => Promise<void>;
-  }) => Promise<string>;
+  } | null) => Promise<string>;
   getDeploymentInput: (env: Record<string, string>) => {
     ref: string;
     sha: string;
     repositoryId: string;
   };
 };
+const deploymentScriptPath = require.resolve("./deploy-vercel-preview.cjs");
 
 const env = {
   SANDBOX_VERCEL_BRANCH_REF: "test-branch",
@@ -35,6 +37,23 @@ function response(payload: unknown, status = 200) {
 }
 
 describe("Vercel Preview deployment", () => {
+  it("reports missing workflow variables when invoked without an options object", () => {
+    const result = spawnSync(process.execPath, [deploymentScriptPath], {
+      encoding: "utf8",
+      env: {},
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Missing required environment variable: VERCEL_TOKEN");
+    expect(result.stderr).not.toContain("TypeError");
+  });
+
+  it("rejects null deployment options with a descriptive error", async () => {
+    await expect(createPreviewDeployment(null)).rejects.toThrow(
+      "Vercel Preview deployment options must be an object",
+    );
+  });
+
   it("creates and waits for a Preview deployment from the requested Git ref and SHA", async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response({ id: "prj_test", name: "credence-craft-erp" }))
@@ -89,5 +108,32 @@ describe("Vercel Preview deployment", () => {
       maxAttempts: 1,
       sleep: vi.fn().mockResolvedValue(undefined),
     })).rejects.toThrow("finished in state ERROR");
+  });
+
+  it("rejects an empty project response instead of dereferencing it", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(response(null));
+
+    await expect(createPreviewDeployment({
+      env,
+      fetchImpl,
+      logger: { log: vi.fn() },
+      maxAttempts: 1,
+      sleep: vi.fn().mockResolvedValue(undefined),
+    })).rejects.toThrow("empty or malformed deployment response");
+  });
+
+  it("rejects a deployment status response without readyState", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ id: "prj_test", name: "credence-craft-erp" }))
+      .mockResolvedValueOnce(response({ id: "dpl_test" }, 201))
+      .mockResolvedValueOnce(response({}));
+
+    await expect(createPreviewDeployment({
+      env,
+      fetchImpl,
+      logger: { log: vi.fn() },
+      maxAttempts: 1,
+      sleep: vi.fn().mockResolvedValue(undefined),
+    })).rejects.toThrow("status response is missing readyState");
   });
 });
