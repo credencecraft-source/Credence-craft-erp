@@ -31,7 +31,21 @@ async function requestVercel({ body, fetchImpl, method, path, teamId, token }) {
   }
 
   if (!response.ok) {
-    throw new Error(`Vercel Preview deployment request failed (HTTP ${response.status ?? "unknown"}).`);
+    let errorCode;
+    try {
+      const errorPayload = await response.json();
+      const candidate = errorPayload?.error?.code ?? errorPayload?.errorCode;
+      if (typeof candidate === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(candidate)) {
+        errorCode = candidate;
+      }
+    } catch {
+      errorCode = undefined;
+    }
+
+    const codeMessage = errorCode ? `, code ${errorCode}` : "";
+    throw new Error(
+      `Vercel Preview deployment request ${method} ${path} failed (HTTP ${response.status ?? "unknown"}${codeMessage}).`,
+    );
   }
 
   if (typeof response.json !== "function") {
@@ -153,7 +167,6 @@ async function createPreviewDeployment(options = {}) {
     body: {
       name: project.name,
       project: projectId,
-      target: "preview",
       gitSource: {
         type: "github",
         repoId: repositoryId,

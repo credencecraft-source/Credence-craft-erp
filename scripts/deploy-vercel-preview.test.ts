@@ -73,7 +73,6 @@ describe("Vercel Preview deployment", () => {
     const createBody = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
     expect(createBody).toMatchObject({
       project: "prj_test",
-      target: "preview",
       gitSource: {
         type: "github",
         repoId: "123456789",
@@ -81,6 +80,7 @@ describe("Vercel Preview deployment", () => {
         sha: env.SANDBOX_GIT_SHA,
       },
     });
+    expect(createBody).not.toHaveProperty("target");
     expect(logger.log).toHaveBeenCalledWith(
       "Vercel Preview deployment is ready: https://preview.example.vercel.app",
     );
@@ -135,5 +135,23 @@ describe("Vercel Preview deployment", () => {
       maxAttempts: 1,
       sleep: vi.fn().mockResolvedValue(undefined),
     })).rejects.toThrow("status response is missing readyState");
+  });
+
+  it("reports Vercel's safe error code when Preview creation is rejected", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ id: "prj_test", name: "credence-craft-erp" }))
+      .mockResolvedValueOnce(response({
+        error: { code: "invalid_target", message: "Invalid target preview" },
+      }, 400));
+
+    await expect(createPreviewDeployment({
+      env,
+      fetchImpl,
+      logger: { log: vi.fn() },
+      maxAttempts: 1,
+      sleep: vi.fn().mockResolvedValue(undefined),
+    })).rejects.toThrow(
+      "POST /v13/deployments?forceNew=1 failed (HTTP 400, code invalid_target)",
+    );
   });
 });
