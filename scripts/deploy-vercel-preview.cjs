@@ -9,6 +9,18 @@ const SAFE_BASELINE_DIAGNOSTICS = new Set([
   "SANDBOX_BASELINE_NO_MIGRATIONS",
   "SANDBOX_BASELINE_RESOLVE_FAILED",
 ]);
+const SAFE_SYSTEM_ERROR_CODES = new Set([
+  "EACCES",
+  "EADDRINUSE",
+  "EAGAIN",
+  "ENOBUFS",
+  "EMFILE",
+  "ENFILE",
+  "ENOENT",
+  "ENOSPC",
+  "EPERM",
+  "ETIMEDOUT",
+]);
 
 function getRequired(name, env = process.env) {
   const rawValue = env?.[name];
@@ -82,6 +94,7 @@ function getPrismaErrorSummary(events) {
   const migrationNames = new Set();
   const databaseCodes = new Set();
   const baselineCodes = new Set();
+  const systemCodes = new Set();
   for (const event of events) {
     const text = event?.payload?.text ?? event?.text;
     if (typeof text !== "string") continue;
@@ -89,11 +102,17 @@ function getPrismaErrorSummary(events) {
     for (const match of text.matchAll(/\bMigration name:\s*([A-Za-z0-9_]{1,120})/gi)) {
       migrationNames.add(match[1]);
     }
-    for (const match of text.matchAll(/\bDatabase error code:\s*([A-Z0-9]{5})/gi)) {
+    for (const match of text.matchAll(/\bmigration\s+(\d{14}_[A-Za-z0-9_]{1,106})\b/gi)) {
+      migrationNames.add(match[1]);
+    }
+    for (const match of text.matchAll(/\b(?:Database error code:\s*|database\s+)([A-Z0-9]{5})/gi)) {
       databaseCodes.add(match[1]);
     }
     for (const match of text.matchAll(/\[(SANDBOX_BASELINE_[A-Z_]+)\]/g)) {
       if (SAFE_BASELINE_DIAGNOSTICS.has(match[1])) baselineCodes.add(match[1]);
+    }
+    for (const match of text.matchAll(/\bsystem ([A-Z0-9_]{2,20})\b/g)) {
+      if (SAFE_SYSTEM_ERROR_CODES.has(match[1])) systemCodes.add(match[1]);
     }
   }
   return {
@@ -101,6 +120,7 @@ function getPrismaErrorSummary(events) {
     migrationNames: [...migrationNames],
     databaseCodes: [...databaseCodes],
     baselineCodes: [...baselineCodes],
+    systemCodes: [...systemCodes],
   };
 }
 
@@ -182,6 +202,7 @@ async function waitForDeployment(options = {}) {
           ...summary.migrationNames.map((name) => `migration ${name}`),
           ...summary.databaseCodes.map((code) => `database ${code}`),
           ...summary.baselineCodes.map((code) => `baseline ${code.slice("SANDBOX_BASELINE_".length).toLowerCase()}`),
+          ...summary.systemCodes.map((code) => `system ${code}`),
         ];
         diagnostics = details.length ? ` (${details.join("; ")})` : "";
       } catch {

@@ -2,14 +2,25 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
-type MigrationResult = { code: number; output: string };
+type MigrationResult = {
+  code: number;
+  output: string;
+  systemErrorCode?: string;
+  exitStatus?: number | null;
+  signal?: string | null;
+};
 type MigrationRetryModule = {
   baselinePreviewMigrationHistory: (options?: {
     env?: Record<string, string | undefined>;
     logger?: { log: (message: string) => void; error: (message: string) => void };
     migrationsPath?: string;
     run?: (args: string[]) => MigrationResult;
-  }) => number;
+    readFailureDetails?: () => Promise<Array<{
+      migrationName: string;
+      prismaCode?: string;
+      databaseCode?: string;
+    }>>;
+  }) => Promise<number>;
   getPrismaCliPath: () => string;
   getMigrationNames: (migrationsPath?: string) => string[];
   isSafeSchemaBaselineDiff: (sql: string) => boolean;
@@ -42,7 +53,7 @@ describe("Prisma Preview schema baseline", () => {
     expect(isSafeSchemaBaselineDiff('CREATE TABLE "missing_table" ("id" TEXT);')).toBe(false);
   });
 
-  it("marks the known migration history only after an empty schema diff", () => {
+  it("marks the known migration history only after an empty schema diff", async () => {
     const migrationsPath = "prisma/migrations";
     const migrationNames = getMigrationNames(migrationsPath);
     const run = vi.fn<(args: string[]) => MigrationResult>()
@@ -51,7 +62,7 @@ describe("Prisma Preview schema baseline", () => {
       .mockReturnValue({ code: 0, output: "" });
     const logger = { log: vi.fn(), error: vi.fn() };
 
-    expect(baselinePreviewMigrationHistory({
+    await expect(baselinePreviewMigrationHistory({
       env: {
         VERCEL_ENV: "preview",
         DATABASE_URL: "postgresql://pooled/sandbox",
@@ -60,7 +71,7 @@ describe("Prisma Preview schema baseline", () => {
       logger,
       migrationsPath,
       run,
-    })).toBe(0);
+    })).resolves.toBe(0);
 
     expect(run).toHaveBeenCalledTimes(migrationNames.length + 2);
     expect(run).toHaveBeenNthCalledWith(1, ["migrate", "status"]);
@@ -76,22 +87,22 @@ describe("Prisma Preview schema baseline", () => {
     expect(run).toHaveBeenNthCalledWith(3, ["migrate", "resolve", "--applied", migrationNames[0]]);
   });
 
-  it("refuses to baseline when the schema diff contains a required change", () => {
+  it("refuses to baseline when the schema diff contains a required change", async () => {
     const run = vi.fn<(args: string[]) => MigrationResult>()
       .mockReturnValueOnce({ code: 1, output: "Error: P3005" })
       .mockReturnValueOnce({ code: 0, output: 'CREATE TABLE "missing_table" ("id" TEXT);' });
     const logger = { log: vi.fn(), error: vi.fn() };
 
-    expect(baselinePreviewMigrationHistory({
+    await expect(baselinePreviewMigrationHistory({
       env: { VERCEL_ENV: "preview", DATABASE_URL: "postgresql://sandbox/db" },
       logger,
       run,
-    })).toBe(1);
+    })).resolves.toBe(1);
     expect(run).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledOnce();
   });
 
-  it("does not baseline failed migration states or non-Preview environments", () => {
+  it("does not baseline failed migration states or non-Preview environments", async () => {
     const run = vi.fn<(args: string[]) => MigrationResult>()
       .mockReturnValueOnce({
         code: 1,
@@ -99,19 +110,57 @@ describe("Prisma Preview schema baseline", () => {
       });
     const logger = { log: vi.fn(), error: vi.fn() };
 
-    expect(baselinePreviewMigrationHistory({
+    await expect(baselinePreviewMigrationHistory({
       env: { VERCEL_ENV: "preview", DATABASE_URL: "postgresql://sandbox/db" },
       logger,
       run,
-    })).toBe(1);
-    expect(baselinePreviewMigrationHistory({
+      readFailureDetails: vi.fn().mockResolvedValue([]),
+    })).resolves.toBe(1);
+    await expect(baselinePreviewMigrationHistory({
       env: { VERCEL_ENV: "production", DATABASE_URL: "postgresql://production/db" },
       run,
-    })).toBe(0);
+    })).resolves.toBe(0);
     expect(run).toHaveBeenCalledOnce();
     expect(logger.error).toHaveBeenCalledWith(
       "[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history (Prisma P1001).",
     );
+  });
+
+  it("recognizes a non-empty schema even when Prisma omits P3005", async () => {
+    const migrationsPath = "prisma/migrations";
+    const migrationNames = getMigrationNames(migrationsPath);
+    const run = vi.fn<(args: string[]) => MigrationResult>()
+      .mockReturnValueOnce({ code: 1, output: "The database schema is not empty." })
+      .mockReturnValueOnce({ code: 0, output: "" })
+      .mockReturnValue({ code: 0, output: "" });
+
+    await expect(baselinePreviewMigrationHistory({
+      env: { VERCEL_ENV: "preview", DATABASE_URL: "postgresql://sandbox/db" },
+      logger: { log: vi.fn(), error: vi.fn() },
+      migrationsPath,
+      run,
+    })).resolves.toBe(0);
+    expect(run).toHaveBeenCalledTimes(migrationNames.length + 2);
+  });
+
+  it("reports only safe failed-migration identifiers and database codes", async () => {
+    const logger = { log: vi.fn(), error: vi.fn() };
+    const readFailureDetails = vi.fn().mockResolvedValue([{
+      migrationName: "20260910000200_add_business_type_module_key",
+      databaseCode: "23502",
+    }]);
+
+    await expect(baselinePreviewMigrationHistory({
+      env: { VERCEL_ENV: "preview", DATABASE_URL: "postgresql://sandbox/db" },
+      logger,
+      run: vi.fn().mockReturnValue({ code: 1, output: "Migration failed." }),
+      readFailureDetails,
+    })).resolves.toBe(1);
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history (database 23502; migration 20260910000200_add_business_type_module_key).",
+    );
+    expect(logger.error).not.toHaveBeenCalledWith(expect.stringContaining("postgresql://"));
   });
 });
 

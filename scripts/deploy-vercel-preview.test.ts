@@ -190,13 +190,20 @@ describe("Vercel Preview deployment", () => {
       migrationNames: ["20261118110000_add_finance_phase_two"],
       databaseCodes: ["42P07"],
       baselineCodes: [],
+      systemCodes: [],
     });
 
     expect(getPrismaErrorSummary([
       { text: "[SANDBOX_BASELINE_SCHEMA_DRIFT] private SQL is not included." },
       { text: "[SANDBOX_BASELINE_UNTRUSTED] ignored." },
+      {
+        text: "[SANDBOX_BASELINE_STATUS_FAILED] database 23502; "
+          + "migration 20260910000200_add_business_type_module_key.",
+      },
     ])).toMatchObject({
-      baselineCodes: ["SANDBOX_BASELINE_SCHEMA_DRIFT"],
+      baselineCodes: ["SANDBOX_BASELINE_SCHEMA_DRIFT", "SANDBOX_BASELINE_STATUS_FAILED"],
+      databaseCodes: ["23502"],
+      migrationNames: ["20260910000200_add_business_type_module_key"],
     });
   });
 });
