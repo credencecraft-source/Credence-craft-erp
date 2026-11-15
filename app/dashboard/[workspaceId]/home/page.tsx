@@ -1,30 +1,38 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import {
+  ArrowUpRight,
+  Building2,
+  Check,
+  LogOut,
+  Mail,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
-import { listOrganizationsForUser, deleteOrganization } from "@/lib/services/organizations/organization-service";
-import { prisma } from "@/lib/database/prisma-client";
+import { archiveOrganization, listWorkspaceOrganizationPage, restoreOrganization } from "@/lib/services/organizations/organization-service";
 import { OrganizationsGrid } from "./_components/organizations-grid";
 import { WorkspaceInvitationBell } from "./_components/workspace-invitation-bell";
-
-const isDevBypass =
-  process.env.NODE_ENV !== "production" && (process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL);
 
 export default async function WorkspaceHomePage({
   params,
   searchParams,
 }: {
   params: Promise<{ workspaceId: string }>;
-  searchParams?: Promise<{ success?: string }>;
+  searchParams?: Promise<{ success?: string; error?: string }>;
 }) {
   const { workspaceId } = await params;
   const user = await requireSessionUser();
-  const successMessage =
-    (await searchParams)?.success === "organization-created";
+  const search = await searchParams;
+  const successMessage = search?.success;
+  const errorMessage = search?.error;
 
   async function logoutAction() {
     "use server";
@@ -32,165 +40,135 @@ export default async function WorkspaceHomePage({
     redirect("/");
   }
 
-  async function deleteOrgAction(formData: FormData) {
+  async function archiveOrgAction(formData: FormData) {
     "use server";
     const orgId = String(formData.get("orgId") || "");
-    const verificationText = String(formData.get("verificationText") || "");
-    
-    if (verificationText !== "DELETE") {
-      return;
-    }
+    const confirmationName = String(formData.get("confirmationName") || "");
 
-    if (orgId) {
-      try {
-        await deleteOrganization(orgId, user.id);
-      } catch (error) {
-        // Handle deletion error if needed
-      }
+    try {
+      await archiveOrganization(orgId, user.id, confirmationName);
+    } catch {
+      redirect(`/dashboard/${workspaceId}/home?error=organization-archive-failed`);
     }
-    redirect(`/dashboard/${workspaceId}/home`);
+    redirect(`/dashboard/${workspaceId}/home?success=organization-archived`);
+  }
+
+  async function restoreOrgAction(formData: FormData) {
+    "use server";
+    const orgId = String(formData.get("orgId") || "");
+
+    try {
+      await restoreOrganization(orgId, user.id);
+    } catch {
+      redirect(`/dashboard/${workspaceId}/home?error=organization-restore-failed`);
+    }
+    redirect(`/dashboard/${workspaceId}/home?success=organization-restored`);
   }
 
   if (!user.workspace_id) {
     redirect("/");
   }
 
-  let workspaceOwner: { id: string; workspace_id?: string } | null = null;
-
-  if (isDevBypass) {
-    workspaceOwner = user.workspace_id === workspaceId ? user : null;
-  } else {
-    try {
-      workspaceOwner = await prisma.workspaceUser.findFirst({
-        where: { workspace_id: workspaceId },
-      });
-    } catch {
-      workspaceOwner = null;
-    }
-  }
-
-  if (!workspaceOwner || workspaceOwner.id !== user.id) {
+  if (user.workspace_id !== workspaceId) {
     notFound();
   }
 
-  const organizations = await listOrganizationsForUser(user.id);
+  const { organizations, nextCursor, totalCount, activeCount } = await listWorkspaceOrganizationPage(user.id);
+  const organizationSnapshotKey = organizations
+    .map((organization) => `${organization.id}:${organization.approval_status}:${organization.is_active}`)
+    .join("|");
 
   return (
-    <Page className="max-w-7xl px-4 py-8">
-      <Section className="space-y-8">
+    <Page className="max-w-[1500px]">
+      <Section className="space-y-6 lg:space-y-8">
+        <div className="flex justify-end sm:hidden">
+          <form action={logoutAction}>
+            <Button type="submit" variant="ghost" className="border border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+              <LogOut className="h-4 w-4" /> Log out
+            </Button>
+          </form>
+        </div>
         {successMessage && (
           <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-950 shadow-sm" role="status">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white">✓</div>
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white"><Check className="h-4 w-4" /></div>
             <div>
-              <p className="text-sm font-bold">Organization created successfully</p>
-              <p className="mt-1 text-xs text-emerald-800">Your organization is ready and awaiting approval.</p>
+              <p className="text-sm font-bold">{successMessage === "organization-archived" ? "Organization archived" : successMessage === "organization-restored" ? "Organization restored" : "Organization created successfully"}</p>
+              <p className="mt-1 text-xs text-emerald-800">{successMessage === "organization-archived" ? "ERP records were retained and audited." : successMessage === "organization-restored" ? "The organization is active and awaiting approval." : successMessage === "organization-created-background" ? "Sample data is being prepared in the background. Your organization is awaiting platform approval." : "Your organization is ready and awaiting approval."}</p>
             </div>
           </div>
         )}
+        {errorMessage && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900" role="alert">
+            {errorMessage === "organization-archive-failed" ? "The organization could not be archived. Confirm the exact name and make sure you are its owner." : "The organization could not be restored. Refresh and try again."}
+          </div>
+        )}
 
-        {/* Clean Modern Header */}
-        <div className="flex flex-col gap-6 border-b border-slate-200/80 pb-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-600"></span>
-              <span className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Workspace Home</span>
+        <div className="relative hidden overflow-hidden rounded-[2rem] bg-[#102a24] px-6 py-7 text-white shadow-[0_24px_70px_rgba(15,64,48,0.18)] sm:block sm:px-9 sm:py-9 lg:px-12 lg:py-11">
+          <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full border-[36px] border-emerald-300/10" />
+          <div className="pointer-events-none absolute -bottom-32 right-24 h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl" />
+          <div className="relative flex flex-col gap-9 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-300">
+                <Sparkles className="h-3.5 w-3.5" /> Command center
+              </div>
+              <h1 className="mt-4 max-w-xl text-3xl font-semibold tracking-[-0.03em] text-white sm:text-4xl lg:text-5xl">
+                Good to see you, {user.full_name.split(" ")[0]}.
+              </h1>
             </div>
-            <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">
-              Welcome back, {user.full_name}
-            </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Manage your legal entities and business operations from a single dashboard.
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <WorkspaceInvitationBell />
+              <Link href={`/dashboard/${workspaceId}/configuration`}>
+                <Button variant="ghost" className="border border-white/15 bg-white/10 text-white hover:bg-white/20">
+                  <Settings2 className="h-4 w-4" /> Settings
+                </Button>
+              </Link>
+              <Link href="/dashboard/organizations/create">
+                <Button className="border-amber-300 bg-amber-300 text-[#102a24] shadow-none hover:border-amber-200 hover:bg-amber-200">
+                  <Building2 className="h-4 w-4" /> New organization
+                </Button>
+              </Link>
+              <form action={logoutAction}>
+                <Button type="submit" variant="ghost" className="border border-white/10 bg-transparent text-emerald-50/70 hover:bg-white/10 hover:text-white" aria-label="Log out">
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </form>
+            </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <WorkspaceInvitationBell />
-            <Link href="/dashboard/organizations/create">
-              <Button className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm">
-                + Create Organization
-              </Button>
-            </Link>
-
-            <Link href={`/dashboard/${workspaceId}/configuration`}>
-              <Button
-                variant="ghost"
-                className="border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-              >
-                Settings
-              </Button>
-            </Link>
-
-            <form action={logoutAction}>
-              <Button 
-                type="submit" 
-                variant="ghost" 
-                className="border border-red-200 bg-red-50/50 text-red-600 hover:bg-red-100 hover:text-red-700 shadow-2xs transition-all flex items-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                Logout
-              </Button>
-            </form>
-          </div>
-        </div>
-
-        {/* Compact User Info Cards */}
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-4 shadow-xs">
+          <div className="relative mt-10 grid gap-4 border-t border-white/10 pt-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Profile</p>
-              <p className="mt-1 text-sm font-semibold text-slate-800">{user.profile_name}</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Workspace pulse</p>
+              <p className="mt-1 text-sm font-medium text-white">{activeCount} active · {totalCount} total</p>
             </div>
-            <div className="rounded-lg bg-slate-50 p-2 text-slate-500">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+            <div className="min-w-0">
+              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50"><UserRound className="h-3.5 w-3.5" /> Profile</p>
+              <p className="mt-1 truncate text-sm font-medium text-white">{user.profile_name}</p>
             </div>
-          </div>
-
-          <div className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-4 shadow-xs">
-            <div className="overflow-hidden">
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Email Address</p>
-              <p className="mt-1 truncate text-sm font-semibold text-slate-800" title={user.email}>{user.email}</p>
-            </div>
-            <div className="rounded-lg bg-slate-50 p-2 text-slate-500 shrink-0">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-4 shadow-xs">
+            {user.email && !user.email.endsWith("@mobile.credencecraft.invalid") && (
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50"><Mail className="h-3.5 w-3.5" /> Email</p>
+                <p className="mt-1 truncate text-sm font-medium text-white" title={user.email}>{user.email}</p>
+              </div>
+            )}
             <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Account Status</p>
-              <p className="mt-1 text-sm font-semibold text-slate-800">
-                {user.email_verified ? "Verified User" : "Pending Verification"}
-              </p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Access level</p>
+              <p className="mt-1 text-sm font-medium text-white">Workspace owner</p>
             </div>
-            <div className="rounded-lg bg-emerald-50 p-2 text-emerald-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Security</p>
+              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-white">{user.mobile_verified_at ? "Verified mobile" : user.email ? user.email_verified ? "Verified account" : "Pending verification" : "No email provided"} <ShieldCheck className="h-4 w-4 text-amber-300" /></p>
             </div>
           </div>
         </div>
 
-        {/* Organizations Section */}
-        <Section className="space-y-4 pt-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold tracking-tight text-slate-900">
-                Organizations Directory
-              </h2>
-              <p className="text-xs text-slate-500">Select an organization to open its module workspace.</p>
-            </div>
-
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-600"></span>
-              {organizations.length} Active
-            </span>
+        <Section className="space-y-5 pt-2">
+          <div className="flex justify-end">
+            <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeCount} active</span>
           </div>
-
           {organizations.length === 0 ? (
-            <Card className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/50 p-12 text-center">
+            <Card className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-none">
               <div className="mx-auto max-w-sm space-y-3">
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                  <Building2 className="h-6 w-6" />
                 </div>
                 <h3 className="text-base font-semibold text-slate-900">
                   No organizations found
@@ -200,19 +178,24 @@ export default async function WorkspaceHomePage({
                 </p>
                 <div className="pt-2">
                   <Link href="/dashboard/organizations/create">
-                    <Button className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">Create Organization</Button>
+                    <Button className="bg-emerald-600 text-xs text-white hover:bg-emerald-700">Create organization</Button>
                   </Link>
                 </div>
               </div>
             </Card>
           ) : (
-            <OrganizationsGrid 
-              organizations={organizations} 
-              workspaceId={workspaceId} 
-              deleteOrgAction={deleteOrgAction} 
+            <OrganizationsGrid
+              key={organizationSnapshotKey}
+              organizations={organizations}
+              workspaceId={workspaceId}
+              userMobileNumber={user.mobile_number ?? ""}
+              initialCursor={nextCursor}
+              archiveOrgAction={archiveOrgAction}
+              restoreOrgAction={restoreOrgAction}
             />
           )}
         </Section>
+        <div className="flex items-center justify-between border-t border-slate-200/70 pt-4 text-[11px] text-slate-400"><span>Credence Craft workspace</span><span className="flex items-center gap-1">Built for deliberate operations <ArrowUpRight className="h-3 w-3" /></span></div>
       </Section>
     </Page>
   );

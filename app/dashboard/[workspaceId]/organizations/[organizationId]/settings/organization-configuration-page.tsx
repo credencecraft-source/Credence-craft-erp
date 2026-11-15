@@ -1,8 +1,9 @@
 import React from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
+import Button from "@/components/ui/Button";
+
 
 interface PageProps {
   params: Promise<{
@@ -16,7 +17,7 @@ export default async function PricingPlanPage({ params }: PageProps) {
   const workspaceId = resolvedParams?.workspaceId;
   const organizationId = resolvedParams?.organizationId;
 
-  const [plans, businessTypes] = await Promise.all([
+  await Promise.all([
     listPlans(),
     listBusinessTypes(),
   ]);
@@ -58,18 +59,15 @@ export default async function PricingPlanPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
         {["Retail Store", "Designer Boutique", "Wholesale Distributor", "Buying House", "Garment Factory / Manufacturer"].map((tab, idx) => (
-          <button
+          <Button
             key={tab}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors ${
-              idx === 0
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-            }`}
-          >
+            variant={idx === 0 ? "primary" : "secondary"}
+            className="px-4 py-2 rounded-xl text-xs font-semibold transition-colors"
+          type="submit" >
             {tab}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -79,9 +77,9 @@ export default async function PricingPlanPage({ params }: PageProps) {
             <h2 className="text-sm font-bold text-slate-900">Retail Store Module</h2>
             <p className="text-xs text-slate-500 mt-0.5">Configure subscription plan tiers for Retail Store.</p>
           </div>
-          <button className="px-4 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors">
+          <Button className="px-4 py-2 rounded-xl text-xs font-semibold transition-colors"type="submit" >
             Add Module to Plan
-          </button>
+          </Button>
         </div>
 
         <div className="py-12 text-center space-y-2">

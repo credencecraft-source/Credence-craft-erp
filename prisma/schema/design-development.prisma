@@ -1,0 +1,22 @@
+model DesignDevelopmentPageSetupTemplate {
+  id                String       @id @default(cuid())
+  organization_id   String
+  name              String       @db.VarChar(100)
+  paper_size        String       @default("A4") @db.VarChar(20)
+  orientation       String       @default("PORTRAIT") @db.VarChar(20)
+  sticker_width_mm  Decimal      @default(50) @db.Decimal(7, 2)
+  sticker_length_mm Decimal      @default(30) @db.Decimal(7, 2)
+  margin_top_mm     Decimal      @default(5) @db.Decimal(7, 2)
+  margin_bottom_mm  Decimal      @default(5) @db.Decimal(7, 2)
+  margin_left_mm    Decimal      @default(5) @db.Decimal(7, 2)
+  margin_right_mm   Decimal      @default(5) @db.Decimal(7, 2)
+  horizontal_gap_mm Decimal      @default(2) @db.Decimal(7, 2)
+  vertical_gap_mm   Decimal      @default(2) @db.Decimal(7, 2)
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, name])
+  @@index([organization_id, updated_at])
+  @@map("design_development_page_setup_templates")
+}

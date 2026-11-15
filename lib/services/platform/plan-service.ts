@@ -1,10 +1,9 @@
 // @/lib/services/platform/plan-service.ts
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/database/prisma-client";
-import { ensureStandardPlansForBusinessTypes } from "@/lib/services/platform/subscription-service";
+import { resolveOrganizationSegmentPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 
 export async function listPlans() {
-  await ensureStandardPlansForBusinessTypes();
   const plans = await prisma.plan.findMany({
     where: { business_type_id: { not: null } },
     orderBy: { sort_order: "asc" },
@@ -39,63 +38,105 @@ export function segmentNamesForPlan(plan: { tier_key?: string | null; plan_name:
   return new Set([mappedTier, normalizeSegmentName(planTier)].filter(Boolean));
 }
 
-export async function listVersionSegmentPlansForOrganization(organizationId: string) {
-  const [organization, latestVersion] = await Promise.all([
-    prisma.organization.findUnique({
-      where: { id: organizationId },
-      select: { platform_version_id: true },
-    }),
-    prisma.platformVersion.findFirst({
-      where: { is_active: true },
-      orderBy: [{ created_at: "desc" }, { version_name: "desc" }],
-      select: { id: true },
-    }),
-  ]);
+type BusinessTypePlan = {
+  business_type_id: string | null;
+  tier_key?: string | null;
+  plan_name: string;
+};
 
-  const versionId = organization?.platform_version_id ?? latestVersion?.id;
-  if (!versionId) return { plans: [], businessTypes: [], versionName: null };
+export function findPlanForVersionSegment<T extends BusinessTypePlan>(
+  plans: T[],
+  businessTypeId: string,
+  segmentName: string,
+) {
+  const normalizedSegmentName = normalizeSegmentName(segmentName);
+  return plans.find((candidate) =>
+    candidate.business_type_id === businessTypeId && segmentNamesForPlan(candidate).has(normalizedSegmentName),
+  );
+}
+
+export async function listVersionSegmentPlansForOrganization(organizationId: string) {
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { platform_version_id: true },
+  });
+
+  const versionId = organization?.platform_version_id;
+  if (!versionId) return { plans: [], businessTypes: [], versionId: null, versionName: null };
 
   const version = await prisma.platformVersion.findUnique({
     where: { id: versionId },
     select: {
+      id: true,
       version_name: true,
       businessTypes: {
         include: {
           businessType: true,
-          segments: { where: { is_active: true }, include: { segment: true } },
+          tags: {
+            orderBy: { platformTag: { label: "asc" } },
+            include: { platformTag: true },
+          },
+          segments: { where: { is_active: true }, include: { segment: true, locationLimit: true } },
         },
       },
     },
   });
 
-  if (!version) return { plans: [], businessTypes: [], versionName: null };
+  if (!version) return { plans: [], businessTypes: [], versionId: null, versionName: null };
 
-  const businessTypeIds = version.businessTypes.map(({ business_type_id }) => business_type_id);
+  const versionSegmentIds = version.businessTypes.flatMap(({ segments }) => segments.map(({ id }) => id));
+  const organizationPrices = await prisma.organizationSegmentPrice.findMany({
+    where: {
+      organization_id: organizationId,
+      version_business_type_segment_id: { in: versionSegmentIds },
+    },
+    select: {
+      version_business_type_segment_id: true,
+      snapshot_price: true,
+      custom_price: true,
+    },
+  });
+  const organizationPriceBySegment = new Map(
+    organizationPrices.map((price) => [price.version_business_type_segment_id, price]),
+  );
+
+  const billableBusinessTypes = version.businessTypes.filter(({ is_free }) => !is_free);
+  const businessTypeIds = billableBusinessTypes.map(({ business_type_id }) => business_type_id);
   const plans = await prisma.plan.findMany({
     where: { is_active: true, business_type_id: { in: businessTypeIds } },
     orderBy: { sort_order: "asc" },
     include: { businessType: true },
   });
 
-  const segmentPlans = version.businessTypes.flatMap((assignment) =>
-    assignment.segments.flatMap(({ id: segmentId, segment }) => {
-      const segmentName = normalizeSegmentName(segment.name);
-      const plan = plans.find((candidate) => segmentNamesForPlan(candidate).has(segmentName));
+  const segmentPlans = billableBusinessTypes.flatMap((assignment) =>
+    assignment.segments.flatMap((segmentAssignment) => {
+      const { id: segmentId, segment } = segmentAssignment;
+      const plan = findPlanForVersionSegment(plans, assignment.business_type_id, segment.name);
+      const organizationPrice = organizationPriceBySegment.get(segmentId) ?? null;
+      const snapshotPrice = organizationPrice ? organizationPrice.snapshot_price : segmentAssignment.price;
+      const effectivePrice = resolveOrganizationSegmentPrice(organizationPrice, segmentAssignment.price);
       return [{
         id: plan?.id ?? `segment-${segmentId}`,
         plan_id: plan?.plan_id ?? null,
         business_type_id: assignment.business_type_id,
         plan_name: plan?.plan_name ?? `${assignment.businessType.name} - ${segment.name}`,
         description: plan?.description ?? segment.description,
-        price: plan?.price ? plan.price.toNumber() : null,
+        price: effectivePrice?.toNumber() ?? null,
+        segment_price: effectivePrice?.toNumber() ?? null,
+        version_price: segmentAssignment.price?.toNumber() ?? null,
+        organization_snapshot_price: snapshotPrice?.toNumber() ?? null,
+        is_custom_price: organizationPrice?.custom_price != null,
         billing_cycle: plan?.billing_cycle ?? null,
         is_active: plan?.is_active ?? true,
-        max_order_qty: plan?.max_order_qty ?? null,
         tier_key: plan?.tier_key ?? null,
         billing_plan_id: plan?.id ?? null,
-        is_pricing_configured: Boolean(plan),
+        is_pricing_configured: segmentAssignment.price != null,
         segment_id: segmentId,
+        location_limit: segmentAssignment.locationLimit?.max_locations ?? null,
+        platform_segment_id: segment.id,
         segment_name: segment.name,
+        segment_sort_order: segment.sort_order,
+        segment_label: segmentAssignment.label,
         version_name: version.version_name,
       }];
     }),
@@ -103,7 +144,11 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
 
   return {
     plans: segmentPlans,
-    businessTypes: version.businessTypes.map(({ businessType }) => businessType),
+    versionId: version.id,
+    businessTypes: billableBusinessTypes.map(({ businessType, tags }) => ({
+      ...businessType,
+      tags: tags.map(({ id, platformTag }) => ({ id, label: platformTag.label })),
+    })),
     versionName: version.version_name,
   };
 }
@@ -197,7 +242,6 @@ export async function updatePlan(input: {
   description?: string;
   price?: number | null;
   billingCycle?: string | null;
-  maxOrderQty?: number | null;
 }) {
   const plan = await prisma.plan.findUnique({ where: { plan_id: input.planId } });
   if (!plan) throw new Error("Plan not found.");
@@ -205,17 +249,12 @@ export async function updatePlan(input: {
   if (input.price !== null && input.price !== undefined && input.price < 0) {
     throw new Error("Plan price cannot be negative.");
   }
-  if (input.maxOrderQty !== null && input.maxOrderQty !== undefined && input.maxOrderQty < 0) {
-    throw new Error("Order quantity limit cannot be negative.");
-  }
-
   const updatedPlan = await prisma.plan.update({
     where: { id: plan.id },
     data: {
       description: input.description?.trim() || null,
       price: input.price ?? null,
       billing_cycle: input.billingCycle?.trim() || null,
-      max_order_qty: input.maxOrderQty ?? null,
     },
     include: { businessType: true },
   });

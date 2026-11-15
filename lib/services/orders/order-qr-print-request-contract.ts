@@ -1,0 +1,366 @@
+import {
+  buildOrderQrPayload,
+  type QrTemplateFieldKey,
+} from "./order-qr-template-contract";
+
+export const ORDER_QR_PRINT_REQUEST_TYPES = ["PRINT", "DOWNLOAD"] as const;
+export const ORDER_QR_PRINT_REQUEST_STATUSES = [
+  "PENDING",
+  "IN_PROGRESS",
+  "COMPLETED",
+] as const;
+
+export type OrderQrPrintRequestType = (typeof ORDER_QR_PRINT_REQUEST_TYPES)[number];
+export type OrderQrPrintRequestStatus = (typeof ORDER_QR_PRINT_REQUEST_STATUSES)[number];
+export const ORDER_QR_QUANTITY_MODES = ["PCS", "BULK_QTY"] as const;
+export type OrderQrQuantityMode = (typeof ORDER_QR_QUANTITY_MODES)[number];
+export type OrderQrPrintPreviewMode =
+  | "page-setup-sheet"
+  | "page-setup-required"
+  | "single-sticker";
+export const MAX_ORDER_QR_PRINT_REQUEST_ORDERS = 100;
+export const MAX_ORDER_QR_PRINT_REQUEST_LABELS = 10_000;
+export const MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS = 1_000;
+
+export function getOrderQrPrintPreviewMode(
+  printerType: string,
+  hasPageSetup: boolean,
+): OrderQrPrintPreviewMode {
+  if (hasPageSetup) return "page-setup-sheet";
+  return printerType === "LASER" ? "page-setup-required" : "single-sticker";
+}
+
+export type CreateOrderQrPrintRequestInput = {
+  orderId?: string;
+  bulkOrders?: Array<{ orderId: string; quantity: number }>;
+  finishedGoodsItems?: Array<{ orderId: string; finishedGoodsId: string; quantity: number }>;
+  finishedGoodsRows?: Array<{ finishedGoodsId: string; quantity: number }>;
+  purchaseBillId?: string;
+  billLines?: Array<{ billLineId: string; quantity: number }>;
+  templateId: string;
+  requestType: OrderQrPrintRequestType;
+  quantityMode?: OrderQrQuantityMode;
+  bulkQuantity?: number;
+};
+
+export function parseCreateOrderQrPrintRequestInput(
+  value: unknown,
+):
+  | { success: true; data: CreateOrderQrPrintRequestInput }
+  | { success: false; error: string } {
+  if (!isRecord(value)) {
+    return { success: false, error: "Request details are required." };
+  }
+  const orderId = typeof value.orderId === "string" ? value.orderId.trim() : "";
+  let bulkOrders: Array<{ orderId: string; quantity: number }> | undefined;
+  let finishedGoodsItems: Array<{ orderId: string; finishedGoodsId: string; quantity: number }> | undefined;
+  let finishedGoodsRows: Array<{ finishedGoodsId: string; quantity: number }> | undefined;
+  const purchaseBillId = typeof value.purchaseBillId === "string"
+    ? value.purchaseBillId.trim()
+    : "";
+  let billLines: Array<{ billLineId: string; quantity: number }> | undefined;
+  if (value.bulkOrders !== undefined) {
+    if (
+      !Array.isArray(value.bulkOrders)
+      || value.bulkOrders.length === 0
+      || value.bulkOrders.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS
+    ) {
+      return {
+        success: false,
+        error: `Select between 1 and ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} orders for a bulk QR request.`,
+      };
+    }
+    const parsedBulkOrders: Array<{ orderId: string; quantity: number }> = [];
+    const seenOrderIds = new Set<string>();
+    for (const entry of value.bulkOrders) {
+      if (!isRecord(entry) || typeof entry.orderId !== "string" || !entry.orderId.trim()) {
+        return { success: false, error: "Every bulk QR order must have a valid order ID." };
+      }
+      const bulkOrderId = entry.orderId.trim();
+      if (seenOrderIds.has(bulkOrderId)) {
+        return { success: false, error: "Bulk QR requests cannot contain duplicate orders." };
+      }
+      if (
+        typeof entry.quantity !== "number"
+        || !Number.isSafeInteger(entry.quantity)
+        || entry.quantity < 1
+      ) {
+        return { success: false, error: "Every bulk order quantity must be a positive whole number." };
+      }
+      seenOrderIds.add(bulkOrderId);
+      parsedBulkOrders.push({ orderId: bulkOrderId, quantity: entry.quantity });
+    }
+    if (
+      parsedBulkOrders.reduce((total, item) => total + item.quantity, 0)
+      > MAX_ORDER_QR_PRINT_REQUEST_LABELS
+    ) {
+      return {
+        success: false,
+        error: `A QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+      };
+    }
+    bulkOrders = parsedBulkOrders;
+  }
+  if (value.finishedGoodsItems !== undefined) {
+    if (
+      !Array.isArray(value.finishedGoodsItems)
+      || value.finishedGoodsItems.length === 0
+      || value.finishedGoodsItems.length > MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS
+    ) {
+      return {
+        success: false,
+        error: `Select between 1 and ${MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS.toLocaleString()} finished-goods sizes for a barcode request.`,
+      };
+    }
+    const parsedItems: Array<{ orderId: string; finishedGoodsId: string; quantity: number }> = [];
+    const seenFinishedGoodsIds = new Set<string>();
+    const selectedOrderIds = new Set<string>();
+    for (const entry of value.finishedGoodsItems) {
+      if (
+        !isRecord(entry)
+        || typeof entry.orderId !== "string"
+        || !entry.orderId.trim()
+        || entry.orderId.length > 100
+        || typeof entry.finishedGoodsId !== "string"
+        || !entry.finishedGoodsId.trim()
+        || entry.finishedGoodsId.length > 100
+      ) {
+        return {
+          success: false,
+          error: "Every finished-goods label must identify its order and size.",
+        };
+      }
+      const selectedOrderId = entry.orderId.trim();
+      const finishedGoodsId = entry.finishedGoodsId.trim();
+      if (seenFinishedGoodsIds.has(finishedGoodsId)) {
+        return { success: false, error: "A finished-goods size cannot be selected more than once." };
+      }
+      if (
+        typeof entry.quantity !== "number"
+        || !Number.isSafeInteger(entry.quantity)
+        || entry.quantity < 1
+        || entry.quantity > MAX_ORDER_QR_PRINT_REQUEST_LABELS
+      ) {
+        return { success: false, error: "Each finished-goods label quantity must be a positive whole number." };
+      }
+      seenFinishedGoodsIds.add(finishedGoodsId);
+      selectedOrderIds.add(selectedOrderId);
+      parsedItems.push({ orderId: selectedOrderId, finishedGoodsId, quantity: entry.quantity });
+    }
+    if (selectedOrderIds.size > MAX_ORDER_QR_PRINT_REQUEST_ORDERS) {
+      return {
+        success: false,
+        error: `A finished-goods barcode request can contain up to ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} orders.`,
+      };
+    }
+    if (parsedItems.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
+      return {
+        success: false,
+        error: `A QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+      };
+    }
+    finishedGoodsItems = parsedItems;
+  }
+  if (value.finishedGoodsRows !== undefined) {
+    if (
+      !Array.isArray(value.finishedGoodsRows)
+      || value.finishedGoodsRows.length === 0
+      || value.finishedGoodsRows.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS
+    ) {
+      return {
+        success: false,
+        error: `Select between 1 and ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} finished-goods sizes.`,
+      };
+    }
+    const parsedRows: Array<{ finishedGoodsId: string; quantity: number }> = [];
+    const seenIds = new Set<string>();
+    for (const entry of value.finishedGoodsRows) {
+      if (
+        !isRecord(entry)
+        || typeof entry.finishedGoodsId !== "string"
+        || !entry.finishedGoodsId.trim()
+      ) {
+        return { success: false, error: "Every finished-goods size must have a valid ID." };
+      }
+      const finishedGoodsId = entry.finishedGoodsId.trim();
+      if (seenIds.has(finishedGoodsId)) {
+        return { success: false, error: "A finished-goods size cannot be selected more than once." };
+      }
+      if (
+        typeof entry.quantity !== "number"
+        || !Number.isSafeInteger(entry.quantity)
+        || entry.quantity < 1
+        || entry.quantity > MAX_ORDER_QR_PRINT_REQUEST_LABELS
+      ) {
+        return { success: false, error: "Each finished-goods label quantity must be a positive whole number." };
+      }
+      seenIds.add(finishedGoodsId);
+      parsedRows.push({ finishedGoodsId, quantity: entry.quantity });
+    }
+    if (parsedRows.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
+      return {
+        success: false,
+        error: `A QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+      };
+    }
+    finishedGoodsRows = parsedRows;
+  }
+  if (value.billLines !== undefined) {
+    if (
+      !Array.isArray(value.billLines)
+      || value.billLines.length === 0
+      || value.billLines.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS
+    ) {
+      return {
+        success: false,
+        error: `Select between 1 and ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} purchase bill lines for a QR request.`,
+      };
+    }
+    const parsedBillLines: Array<{ billLineId: string; quantity: number }> = [];
+    const seenBillLineIds = new Set<string>();
+    for (const entry of value.billLines) {
+      if (
+        !isRecord(entry)
+        || typeof entry.billLineId !== "string"
+        || !entry.billLineId.trim()
+      ) {
+        return { success: false, error: "Every purchase bill line must have a valid ID." };
+      }
+      const billLineId = entry.billLineId.trim();
+      if (seenBillLineIds.has(billLineId)) {
+        return { success: false, error: "QR requests cannot contain duplicate purchase bill lines." };
+      }
+      if (
+        typeof entry.quantity !== "number"
+        || !Number.isSafeInteger(entry.quantity)
+        || entry.quantity < 1
+      ) {
+        return { success: false, error: "Every purchase bill line quantity must be a positive whole number." };
+      }
+      seenBillLineIds.add(billLineId);
+      parsedBillLines.push({ billLineId, quantity: entry.quantity });
+    }
+    if (
+      parsedBillLines.reduce((total, item) => total + item.quantity, 0)
+      > MAX_ORDER_QR_PRINT_REQUEST_LABELS
+    ) {
+      return {
+        success: false,
+        error: `A QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+      };
+    }
+    billLines = parsedBillLines;
+  }
+  const hasOrderSource = Boolean(orderId || bulkOrders || finishedGoodsItems);
+  const hasPurchaseBillSource = Boolean(purchaseBillId || billLines);
+  if (hasPurchaseBillSource && (!purchaseBillId || !billLines)) {
+    return { success: false, error: "A purchase bill and at least one of its lines are required." };
+  }
+  if (!hasOrderSource && !hasPurchaseBillSource) {
+    return { success: false, error: "A valid order is required." };
+  }
+  if (
+    (orderId && bulkOrders)
+    || (hasOrderSource && hasPurchaseBillSource)
+    || (finishedGoodsItems && (orderId || bulkOrders || finishedGoodsRows))
+  ) {
+    return { success: false, error: "Submit either an order request or a purchase bill request, not both." };
+  }
+  if (
+    (finishedGoodsRows && (!orderId || bulkOrders || finishedGoodsItems || hasPurchaseBillSource))
+    || (!finishedGoodsRows && value.finishedGoodsRows !== undefined)
+  ) {
+    return {
+      success: false,
+      error: "Finished-goods labels require one order and cannot be combined with bulk orders or purchase bills.",
+    };
+  }
+  if (
+    typeof value.requestType !== "string"
+    || !ORDER_QR_PRINT_REQUEST_TYPES.includes(value.requestType as OrderQrPrintRequestType)
+  ) {
+    return { success: false, error: "Select Print or Download." };
+  }
+  if (typeof value.templateId !== "string" || value.templateId.trim().length === 0) {
+    return { success: false, error: "Select a QR template before requesting print or download." };
+  }
+  if (
+    value.quantityMode !== undefined
+    && (typeof value.quantityMode !== "string"
+      || !ORDER_QR_QUANTITY_MODES.includes(value.quantityMode as OrderQrQuantityMode))
+  ) {
+    return { success: false, error: "Select PCS or Bulk Qty." };
+  }
+  if (
+    bulkOrders
+    && value.quantityMode === "PCS"
+    && bulkOrders.some((item) => item.quantity !== 1)
+  ) {
+    return { success: false, error: "PCS requests must use quantity 1 for every selected order." };
+  }
+  if (
+    finishedGoodsItems
+    && value.quantityMode === "PCS"
+    && finishedGoodsItems.some((item) => item.quantity !== 1)
+  ) {
+    return { success: false, error: "PCS requests must use quantity 1 for every selected finished-goods size." };
+  }
+  if (
+    billLines
+    && value.quantityMode === "PCS"
+    && billLines.some((item) => item.quantity !== 1)
+  ) {
+    return { success: false, error: "PCS requests must use quantity 1 for every selected purchase bill line." };
+  }
+  if (
+    value.bulkQuantity !== undefined
+    && (typeof value.bulkQuantity !== "number"
+      || !Number.isSafeInteger(value.bulkQuantity)
+      || value.bulkQuantity < 1
+      || value.bulkQuantity > MAX_ORDER_QR_PRINT_REQUEST_LABELS)
+  ) {
+    return {
+      success: false,
+      error: `Bulk quantity must be a positive whole number up to ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()}.`,
+    };
+  }
+
+  return {
+    success: true,
+    data: {
+      ...(orderId ? { orderId } : {}),
+      ...(bulkOrders ? { bulkOrders } : {}),
+      ...(finishedGoodsItems ? { finishedGoodsItems } : {}),
+      ...(finishedGoodsRows ? { finishedGoodsRows } : {}),
+      ...(purchaseBillId ? { purchaseBillId } : {}),
+      ...(billLines ? { billLines } : {}),
+      templateId: value.templateId.trim(),
+      requestType: value.requestType as OrderQrPrintRequestType,
+      quantityMode: value.quantityMode === "PCS" ? "PCS" : "BULK_QTY",
+      ...(value.bulkQuantity !== undefined ? { bulkQuantity: value.bulkQuantity as number } : {}),
+    },
+  };
+}
+
+export function isOrderQrPrintRequestStatus(value: unknown): value is OrderQrPrintRequestStatus {
+  return typeof value === "string"
+    && ORDER_QR_PRINT_REQUEST_STATUSES.includes(value as OrderQrPrintRequestStatus);
+}
+
+export function getNextOrderQrPrintRequestStatus(
+  current: OrderQrPrintRequestStatus,
+): OrderQrPrintRequestStatus | null {
+  if (current === "PENDING" || current === "IN_PROGRESS") return "COMPLETED";
+  return null;
+}
+
+export function buildRequestQrPayload(
+  fieldKeys: readonly QrTemplateFieldKey[],
+  orderFields: Partial<Record<QrTemplateFieldKey, string | number | null>>,
+) {
+  return buildOrderQrPayload(fieldKeys, orderFields);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

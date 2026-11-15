@@ -1,0 +1,1 @@
+ALTER TABLE "version_business_type_segments" ADD COLUMN "price" DECIMAL(12,2);

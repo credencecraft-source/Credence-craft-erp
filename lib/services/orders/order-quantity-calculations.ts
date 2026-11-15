@@ -1,6 +1,8 @@
 export type FinishedGoodsQuantityInput = {
   buyerSize?: string | null;
   size?: string | null;
+  skuCode?: string | null;
+  barcode?: string | null;
   beforeExcessQty?: number | string | null;
   excess?: number | string | null;
   excessQty?: number | string | null;
@@ -39,6 +41,10 @@ export type CalculatedBomQuantity = BomQuantityInput & {
   valuePerGarmentRm: number;
 };
 
+export function splitBomSizes(value: string | null | undefined) {
+  return [...new Set(String(value ?? "").split(",").map((size) => size.trim()).filter(Boolean))];
+}
+
 function numericValue(value: number | string | null | undefined) {
   const parsed = typeof value === "number" ? value : Number(value ?? 0);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -69,10 +75,10 @@ export function calculateBomRow(
   finishedGoodsRows: CalculatedFinishedGoodsQuantity[],
   orderQty: number,
 ): CalculatedBomQuantity {
-  const normalizedSize = String(row.size ?? "").trim();
-  const sizeOrderQty = normalizedSize
+  const selectedSizes = splitBomSizes(row.size);
+  const sizeOrderQty = selectedSizes.length > 0
     ? finishedGoodsRows
-      .filter((finishedGoodsRow) => String(finishedGoodsRow.size ?? "").trim() === normalizedSize)
+      .filter((finishedGoodsRow) => selectedSizes.includes(String(finishedGoodsRow.size ?? "").trim()))
       .reduce((total, finishedGoodsRow) => total + finishedGoodsRow.totalQty, 0)
     : orderQty;
   const buyerConsumption = numericValue(row.buyerConsumption);

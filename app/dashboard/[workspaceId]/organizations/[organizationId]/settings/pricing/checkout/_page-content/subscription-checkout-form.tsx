@@ -2,32 +2,33 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import FormSubmitButton from "@/components/ui/FormSubmitButton";
+import Input from "@/components/ui/Input";
 
 interface CheckoutPlan {
   id: string;
   plan_name: string;
   price: number | null;
+  projectedStartDate: string;
 }
 
 interface SubscriptionCheckoutFormProps {
   plans: CheckoutPlan[];
   organizationName: string;
-  organizationId: string;
-  workspaceId: string;
-  monthlySubtotal: number;
   defaultBillingMonths: 6 | 12;
+  userBasedLicenseCount?: number;
+  userBasedMonthlyRate?: number;
+  minimumBilledUserCount?: number;
   pricingPlanUrl: string;
   handleCheckoutAction: (formData: FormData) => Promise<void>;
 }
 
+const MAX_STANDARD_USER_LICENSES = 10;
+
 function money(value: number) {
   return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-}
-
-function addMonths(date: Date, months: number) {
-  const result = new Date(date);
-  result.setMonth(result.getMonth() + months);
-  return result;
 }
 
 function formatDate(date: Date) {
@@ -38,31 +39,68 @@ function formatDate(date: Date) {
   });
 }
 
+function addBillingMonths(date: Date, months: number) {
+  const result = new Date(date);
+  const targetMonth = result.getUTCMonth() + months;
+  const targetYear = result.getUTCFullYear() + Math.floor(targetMonth / 12);
+  const normalizedMonth = targetMonth % 12;
+  const lastDay = new Date(Date.UTC(targetYear, normalizedMonth + 1, 0)).getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCFullYear(targetYear, normalizedMonth, Math.min(date.getUTCDate(), lastDay));
+  return result;
+}
+
 export default function SubscriptionCheckoutForm({
   plans,
   organizationName,
-  monthlySubtotal,
   defaultBillingMonths,
+  userBasedLicenseCount,
+  userBasedMonthlyRate = 0,
+  minimumBilledUserCount = 0,
   pricingPlanUrl,
   handleCheckoutAction,
 }: SubscriptionCheckoutFormProps) {
   const [billingMonths, setBillingMonths] = useState<6 | 12>(defaultBillingMonths);
-  const termSubtotal = Number((monthlySubtotal * billingMonths).toFixed(2));
-  const gstAmount = Number((termSubtotal * 0.18).toFixed(2));
-  const totalAmount = Number((termSubtotal + gstAmount).toFixed(2));
-  const projectedExpiry = addMonths(new Date(), billingMonths);
+  const [requestedUserLicenseCount, setRequestedUserLicenseCount] = useState(
+    userBasedLicenseCount === undefined ? "" : String(userBasedLicenseCount),
+  );
+  const parsedUserLicenseCount = Number(requestedUserLicenseCount);
+  const isUserLicenseCountValid = userBasedLicenseCount === undefined
+    || (/^\d+$/.test(requestedUserLicenseCount)
+      && Number.isSafeInteger(parsedUserLicenseCount)
+      && parsedUserLicenseCount >= Math.max(minimumBilledUserCount, 1)
+      && parsedUserLicenseCount <= MAX_STANDARD_USER_LICENSES);
+  const billedUserCount = isUserLicenseCountValid ? parsedUserLicenseCount : 0;
+  const monthlySubtotalCents = userBasedLicenseCount !== undefined
+    ? Math.round(userBasedMonthlyRate * 100) * billedUserCount
+    : plans.reduce((sum, plan) => sum + Math.round(Number(plan.price || 0) * 100), 0);
+  const termSubtotalCents = plans.reduce(
+    (sum, plan) => sum + Math.round(Number(plan.price || 0) * 100) * billingMonths, 0,
+  );
+  const userBasedTermSubtotalCents = monthlySubtotalCents * billingMonths;
+  const moduleGstCents = plans.reduce((sum, plan) => {
+    const lineSubtotalCents = Math.round(Number(plan.price || 0) * 100) * billingMonths;
+    return sum + Math.round(lineSubtotalCents * 0.18);
+  }, 0);
+  const billedTermSubtotalCents = userBasedLicenseCount === undefined
+    ? termSubtotalCents
+    : userBasedTermSubtotalCents;
+  const gstCents = userBasedLicenseCount === undefined
+    ? moduleGstCents
+    : Math.round(userBasedTermSubtotalCents * 0.18);
+  const totalDueCents = billedTermSubtotalCents + gstCents;
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-200/50">
-      <div className="bg-slate-950 px-6 py-7 text-white sm:px-8">
+    <Card className="overflow-hidden p-0">
+      <div className="bg-[var(--erp-brand)] px-6 py-7 text-white sm:px-8">
         <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-start">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Subscription checkout</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/80">Subscription checkout</p>
             <h2 className="mt-2 text-2xl font-bold tracking-tight">Review and submit</h2>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">Your request will remain pending until a platform administrator approves it.</p>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-white/80">Your request remains pending until approval. Renewals begin after the current paid term ends.</p>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 sm:min-w-48">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Billing for</p>
+          <div className="rounded-xl border border-white/20 bg-white/10 px-4 py-3 sm:min-w-48">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-white/75">Billing for</p>
             <p className="mt-1 text-sm font-bold text-white">{organizationName}</p>
           </div>
         </div>
@@ -72,69 +110,123 @@ export default function SubscriptionCheckoutForm({
         <section>
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Selected modules</p>
-              <p className="mt-1 text-sm text-slate-600">Monthly pricing before the selected term is applied.</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-[var(--erp-muted)]">
+                {userBasedLicenseCount === undefined ? "Selected modules" : "User licenses"}
+              </p>
+              <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                {userBasedLicenseCount === undefined
+                  ? "Monthly pricing before the selected term is applied."
+                  : "Set the number of licenses to purchase; the billing estimate updates automatically."}
+              </p>
             </div>
-            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">{plans.length} module{plans.length === 1 ? "" : "s"}</span>
+            <span className="rounded-full bg-[var(--erp-brand-soft)] px-3 py-1 text-xs font-bold text-[var(--erp-brand)]">
+              {userBasedLicenseCount === undefined
+                ? `${plans.length} module${plans.length === 1 ? "" : "s"}`
+                : `${billedUserCount} license${billedUserCount === 1 ? "" : "s"}`}
+            </span>
           </div>
-          <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200">
-            {plans.map((plan) => (
-              <div key={plan.id} className="flex items-center justify-between gap-4 px-4 py-3.5">
-                <span className="text-sm font-semibold text-slate-800">{plan.plan_name}</span>
-                <span className="text-sm font-bold text-slate-900">{money(Number(plan.price || 0))}<span className="ml-1 text-xs font-normal text-slate-500">/ month</span></span>
+          {userBasedLicenseCount !== undefined ? (
+            <div className="space-y-4 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+              <Input
+                label="Number of user licenses"
+                type="number"
+                min={Math.max(minimumBilledUserCount, 1)}
+                max={MAX_STANDARD_USER_LICENSES}
+                step={1}
+                value={requestedUserLicenseCount}
+                onChange={(event) => setRequestedUserLicenseCount(event.target.value)}
+                hint={`${minimumBilledUserCount} active organization member${minimumBilledUserCount === 1 ? "" : "s"} currently require licenses.`}
+                error={!isUserLicenseCountValid
+                  ? minimumBilledUserCount > MAX_STANDARD_USER_LICENSES
+                    ? "Your organization has more than 10 active users. Contact support for better pricing."
+                    : parsedUserLicenseCount > MAX_STANDARD_USER_LICENSES
+                      ? "For more than 10 users, contact support for better pricing."
+                      : `Enter a whole number from ${Math.max(minimumBilledUserCount, 1)} to ${MAX_STANDARD_USER_LICENSES}.`
+                  : undefined}
+              />
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-[var(--erp-muted)]">
+                  {billedUserCount} licenses × {money(userBasedMonthlyRate)} / license / month
+                </span>
+                <span className="shrink-0 font-semibold text-[var(--erp-text)]">{money(monthlySubtotalCents / 100)} / month</span>
               </div>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--erp-border)] rounded-xl border border-[var(--erp-border)]">
+              {plans.map((plan) => (
+                <div key={plan.id} className="flex items-center justify-between gap-4 px-4 py-3.5">
+                  <span className="text-sm font-semibold text-[var(--erp-text)]">{plan.plan_name}</span>
+                  <div className="text-right">
+                    <span className="text-sm font-bold text-[var(--erp-text)]">{money(Number(plan.price || 0))}<span className="ml-1 text-xs font-normal text-[var(--erp-muted)]">/ month</span></span>
+                    <span className="mt-1 block text-[11px] text-[var(--erp-muted)]">
+                      {formatDate(new Date(plan.projectedStartDate))} to {formatDate(addBillingMonths(new Date(plan.projectedStartDate), billingMonths))} (estimated)
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section>
           <div className="mb-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Choose billing term</p>
-            <p className="mt-1 text-sm text-slate-600">The subscription period starts on approval.</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--erp-muted)]">Choose billing term</p>
+            <p className="mt-1 text-sm text-[var(--erp-muted)]">Each term starts on approval or after its current paid term ends.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             {[6, 12].map((months) => {
               const selected = billingMonths === months;
               return (
-                <button
+                <Button
                   key={months}
                   type="button"
+                  variant={selected ? "outline" : "secondary"}
+                  size="lg"
                   onClick={() => setBillingMonths(months as 6 | 12)}
-                  className={`rounded-2xl border px-4 py-4 text-left transition ${selected ? "border-emerald-600 bg-emerald-50 ring-2 ring-emerald-500/20" : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-slate-50"}`}
+                  aria-pressed={selected}
+                  className={`h-auto flex-col items-start justify-center rounded-xl px-4 py-4 text-left ${selected ? "bg-[var(--erp-brand-soft)]" : ""}`}
                 >
-                  <span className={`block text-sm font-bold ${selected ? "text-emerald-800" : "text-slate-800"}`}>{months} months</span>
-                  <span className="mt-1 block text-xs text-slate-500">{months === 6 ? "Shorter commitment" : "Best annual value"}</span>
-                </button>
+                  <span className="block text-sm font-bold">{months} months</span>
+                  <span className="mt-1 block text-xs font-normal text-[var(--erp-muted)]">{months === 6 ? "Shorter commitment" : "Best annual value"}</span>
+                </Button>
               );
             })}
           </div>
-          <p className="mt-3 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600">
-            Projected term: today through <span className="font-bold text-slate-900">{formatDate(projectedExpiry)}</span>. Final dates are set when approved.
+          <p className="mt-3 rounded-xl bg-[var(--erp-surface-soft)] px-4 py-3 text-xs text-[var(--erp-muted)]">
+            Final dates are recalculated when an administrator approves the request.
           </p>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+        <section className="rounded-2xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Amount summary</p>
-              <p className="mt-1 text-sm text-slate-600">Tax is calculated at 18% on the selected term subtotal.</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-[var(--erp-muted)]">Amount summary</p>
+              <p className="mt-1 text-sm text-[var(--erp-muted)]">Tax is calculated at 18% on the selected term subtotal.</p>
             </div>
-            <span className="text-xl font-black text-slate-950">{money(totalAmount)}</span>
+            <span className="text-xl font-bold text-[var(--erp-text)]">{money(totalDueCents / 100)}</span>
           </div>
-          <div className="mt-5 space-y-3 border-t border-slate-200 pt-4 text-sm">
-            <div className="flex justify-between text-slate-600"><span>Monthly subtotal</span><span>{money(monthlySubtotal)}</span></div>
-            <div className="flex justify-between text-slate-600"><span>{billingMonths}-month subtotal</span><span>{money(termSubtotal)}</span></div>
-            <div className="flex justify-between text-slate-600"><span>GST (18%)</span><span>{money(gstAmount)}</span></div>
-            <div className="flex justify-between border-t border-slate-200 pt-3 font-bold text-slate-950"><span>Total amount due</span><span className="text-emerald-700">{money(totalAmount)}</span></div>
+          <div className="mt-5 space-y-3 border-t border-[var(--erp-border)] pt-4 text-sm">
+            <div className="flex justify-between text-[var(--erp-muted)]"><span>Monthly subtotal</span><span>{money(monthlySubtotalCents / 100)}</span></div>
+            <div className="flex justify-between text-[var(--erp-muted)]"><span>{billingMonths}-month subtotal</span><span>{money(billedTermSubtotalCents / 100)}</span></div>
+            <div className="flex justify-between text-[var(--erp-muted)]"><span>GST (18%)</span><span>{money(gstCents / 100)}</span></div>
+            <div className="flex justify-between border-t border-[var(--erp-border)] pt-3 font-bold text-[var(--erp-text)]"><span>Total amount due</span><span className="text-[var(--erp-brand)]">{money(totalDueCents / 100)}</span></div>
           </div>
         </section>
 
-        <form action={handleCheckoutAction} className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">
+        <form action={handleCheckoutAction} className="flex flex-col-reverse gap-3 border-t border-[var(--erp-border)] pt-5 sm:flex-row sm:justify-end">
           <input type="hidden" name="billingMonths" value={billingMonths} />
-          <Link href={pricingPlanUrl} className="rounded-xl border border-slate-200 px-5 py-3 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50">Back to plans</Link>
-          <button type="submit" className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-700">Submit for approval</button>
+          {userBasedLicenseCount !== undefined && (
+            <input type="hidden" name="billedUserCount" value={requestedUserLicenseCount} />
+          )}
+          <Link href={pricingPlanUrl} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--erp-border)] px-4 py-2 text-sm font-semibold text-[var(--erp-text)] hover:bg-[var(--erp-surface-soft)]">Back to plans</Link>
+          <FormSubmitButton
+            pendingLabel="Submitting request..."
+            disabled={!isUserLicenseCountValid}
+          >
+            Submit for approval
+          </FormSubmitButton>
         </form>
       </div>
-    </div>
+    </Card>
   );
 }

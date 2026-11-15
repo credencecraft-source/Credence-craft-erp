@@ -1,0 +1,738 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
+import { useFormStatus } from "react-dom";
+
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import Checkbox from "@/components/ui/Checkbox";
+import Input from "@/components/ui/Input";
+import Page from "@/components/ui/Page";
+import Section from "@/components/ui/Section";
+import Select from "@/components/ui/Select";
+import Tabs from "@/components/ui/Tabs";
+import type { QuickCreateLookupOption } from "@/lib/master-data/quick-create-lookup-options";
+
+const ArticleQuickCreateDialog = dynamic(() => import("./article-quick-create-dialog"), { ssr: false });
+
+type ArticleOption = {
+  id: string;
+  value_id: string;
+  label: string;
+  parent_id: string | null;
+  fields: Record<string, unknown>;
+};
+type ArticleVariant = {
+  id?: string;
+  color: string;
+  variant_code: string;
+  sku: string;
+  price_override: string;
+};
+type ArticleSizePrice = { size: string; price: string | null };
+type ArticleRecord = {
+  value_id: string;
+  code: string;
+  label: string;
+  fields: Record<string, unknown>;
+};
+type ArticleFormAction = (formData: FormData) => void | Promise<void>;
+type ArticleTab = "general" | "colour" | "size";
+type QuickCreateTarget = { masterKey: string; fieldKey: string; variantIndex?: number };
+
+const TABS: Array<{ id: string; panelId: string; value: ArticleTab; label: string }> = [
+  { id: "article-general-tab", panelId: "article-general-panel", value: "general", label: "General" },
+  { id: "article-colour-tab", panelId: "article-colour-panel", value: "colour", label: "Colour" },
+  { id: "article-size-tab", panelId: "article-size-panel", value: "size", label: "Size" },
+];
+
+function normalizePrice(value: string) {
+  const [integer, fraction = ""] = value.split(".");
+  const whole = integer.replace(/^0+(?=\d)/, "");
+  const decimal = fraction.replace(/0+$/, "");
+  return decimal ? `${whole}.${decimal}` : whole;
+}
+
+function SubmitButton({ editing }: { editing: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="primary" disabled={pending}>
+      {pending ? "Saving..." : editing ? "Save changes" : "Create Article"}
+    </Button>
+  );
+}
+
+function asText(value: unknown) {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+export default function ArticleRecordEditor({
+  workspaceId,
+  organizationId,
+  record,
+  readOnly = false,
+  lookupOptions,
+  sizeGroupSizes,
+  createAction,
+  updateAction,
+  error,
+  saved,
+  returnToUniformManagement = false,
+}: {
+  workspaceId: string;
+  organizationId: string;
+  record: ArticleRecord | null;
+  readOnly?: boolean;
+  lookupOptions: Record<string, ArticleOption[]>;
+  sizeGroupSizes: Record<string, string[]>;
+  createAction: ArticleFormAction;
+  updateAction: ArticleFormAction;
+  error?: string;
+  saved?: string;
+  returnToUniformManagement?: boolean;
+}) {
+  const editing = record !== null;
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<ArticleTab>("general");
+  const [articleLookupOptions, setArticleLookupOptions] = useState(lookupOptions);
+  const [articleSizeGroupSizes, setArticleSizeGroupSizes] = useState(sizeGroupSizes);
+  const [isLoadingLookups, setIsLoadingLookups] = useState(!readOnly);
+  const [lookupError, setLookupError] = useState("");
+  const [lookupRetry, setLookupRetry] = useState(0);
+  const [quickCreateTarget, setQuickCreateTarget] = useState<QuickCreateTarget | null>(null);
+  const [fields, setFields] = useState(() => ({
+    article: asText(record?.fields.article ?? record?.label),
+    article_code: asText(record?.fields.article_code ?? record?.code),
+    Brand: asText(record?.fields.Brand),
+    Product_Master: asText(record?.fields.Product_Master),
+    Category: asText(record?.fields.Category),
+    Subcategory: asText(record?.fields.Subcategory),
+    default_price: asText(record?.fields.default_price),
+    Size_Group: asText(record?.fields.Size_Group),
+    Sizes: Array.isArray(record?.fields.Sizes) ? record.fields.Sizes.map(String) : [],
+    design_by: asText(record?.fields.design_by),
+    designed_date: asText(record?.fields.designed_date).slice(0, 10),
+  }));
+  const [variants, setVariants] = useState<ArticleVariant[]>(() => (
+    Array.isArray(record?.fields.variants)
+      ? record.fields.variants.map((entry) => {
+          const variant = entry as Record<string, unknown>;
+          return {
+            ...(typeof variant.id === "string" ? { id: variant.id } : {}),
+            color: asText(variant.color),
+            variant_code: asText(variant.variant_code),
+            sku: asText(variant.sku),
+            price_override: asText(variant.price_override),
+          };
+        })
+      : []
+  ));
+  const [sizePrices, setSizePrices] = useState<Record<string, string>>(() => {
+    const initial = Array.isArray(record?.fields.Size_Prices) ? record.fields.Size_Prices : [];
+    return Object.fromEntries(initial.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const price = entry as Record<string, unknown>;
+      return typeof price.size === "string"
+        ? [[price.size.toLocaleLowerCase(), asText(price.price)]]
+        : [];
+    }));
+  });
+
+  useEffect(() => {
+    if (readOnly) return;
+    const controller = new AbortController();
+
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?keys=brand,product-master,category,sub-category,size-group,color&limit=500&includeDummyData=false&includeArticleDetails=false&skipLookupLabels=brand,product-master,size-group,color&shape=compact`,
+      { signal: controller.signal },
+    )
+      .then(async (response) => {
+        const data = await response.json() as {
+          error?: unknown;
+          masterOptions?: unknown;
+        };
+        if (!response.ok) {
+          throw new Error(typeof data.error === "string" ? data.error : "Unable to load Article lookup options.");
+        }
+        if (!data.masterOptions || typeof data.masterOptions !== "object" || Array.isArray(data.masterOptions)) {
+          throw new Error("The Article lookup response was invalid.");
+        }
+
+        const masterOptions = data.masterOptions as Record<string, unknown>;
+        const lookupKeys = ["brand", "product-master", "category", "sub-category", "size-group", "color"] as const;
+        const parsedOptions = Object.fromEntries(lookupKeys.map((key) => {
+          const options = masterOptions[key];
+          if (!Array.isArray(options) || options.some((option) =>
+            !option || typeof option !== "object"
+            || typeof (option as Record<string, unknown>).id !== "string"
+            || typeof (option as Record<string, unknown>).value_id !== "string"
+            || typeof (option as Record<string, unknown>).label !== "string",
+          )) {
+            throw new Error(`The ${key} lookup response was invalid.`);
+          }
+          return [key, options.map((option) => {
+            const item = option as Record<string, unknown>;
+            return {
+              id: item.id as string,
+              value_id: item.value_id as string,
+              label: item.label as string,
+              parent_id: typeof item.parent_id === "string" ? item.parent_id : null,
+              fields: item.fields && typeof item.fields === "object" && !Array.isArray(item.fields)
+                ? item.fields as Record<string, unknown>
+                : {},
+            } satisfies ArticleOption;
+          })];
+        }));
+        const sizeGroups = masterOptions["size-group"] as Array<Record<string, unknown>>;
+        const sizesByGroup = Object.fromEntries(sizeGroups.map((group) => {
+          const sizes = Array.isArray(group.sizes) ? group.sizes : [];
+          if (sizes.some((size) =>
+            !size || typeof size !== "object" || typeof (size as Record<string, unknown>).label !== "string",
+          )) {
+            throw new Error("The Size Group size options were invalid.");
+          }
+          return [group.id as string, sizes.map((size) => (size as Record<string, unknown>).label as string)];
+        }));
+
+        if (!controller.signal.aborted) {
+          setArticleLookupOptions(parsedOptions);
+          setArticleSizeGroupSizes(sizesByGroup);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setLookupError(error instanceof Error ? error.message : "Unable to load Article lookup options.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingLookups(false);
+      });
+
+    return () => controller.abort();
+  }, [organizationId, readOnly, lookupRetry]);
+
+  const setField = (key: string, value: string | string[]) => {
+    setFields((current) => ({ ...current, [key]: value }));
+  };
+  const sizeGroup = articleLookupOptions["size-group"]?.find((option) => option.label === fields.Size_Group);
+  const availableSizes = sizeGroup ? articleSizeGroupSizes[sizeGroup.id] ?? [] : [];
+  const categoryOptions = (articleLookupOptions.category ?? []).filter((option) =>
+    !fields.Product_Master || asText(option.fields.Product_Master) === fields.Product_Master);
+  const subcategoryOptions = (articleLookupOptions["sub-category"] ?? []).filter((option) =>
+    !fields.Category || asText(option.fields.category) === fields.Category);
+  const sizePriceRows: ArticleSizePrice[] = fields.Sizes.map((size) => ({
+    size,
+    price: sizePrices[size.toLocaleLowerCase()]?.trim() || null,
+  }));
+  const hasSizePrices = sizePriceRows.some((entry) => entry.price !== null);
+
+  const setSizes = (selected: string[], orderedAvailableSizes = availableSizes) => {
+    const selectedSet = new Set(selected);
+    const orderedSelection = orderedAvailableSizes.filter((size) => selectedSet.has(size));
+    setField("Sizes", orderedSelection);
+    const retainedPrices = Object.fromEntries(orderedSelection.flatMap((size) => {
+      const price = sizePrices[size.toLocaleLowerCase()];
+      return price ? [[size.toLocaleLowerCase(), price]] : [];
+    }));
+    setSizePrices(retainedPrices);
+    const enteredPrices = orderedSelection.map((size) => retainedPrices[size.toLocaleLowerCase()] ?? "").filter(Boolean);
+    if (enteredPrices.length > 0) {
+      const normalized = enteredPrices.map(normalizePrice);
+      setField("default_price", orderedSelection.length > 0
+        && enteredPrices.length === orderedSelection.length
+        && normalized.every((price) => price === normalized[0])
+        ? enteredPrices[0]
+        : "");
+    }
+  };
+
+  const setSizePrice = (size: string, price: string) => {
+    const nextPrices = { ...sizePrices, [size.toLocaleLowerCase()]: price };
+    setSizePrices(nextPrices);
+    const selectedPrices = fields.Sizes.map((selectedSize) => nextPrices[selectedSize.toLocaleLowerCase()]?.trim() ?? "");
+    const enteredPrices = selectedPrices.filter(Boolean);
+    const normalized = enteredPrices.map(normalizePrice);
+    setField("default_price", selectedPrices.length > 0
+      && enteredPrices.length > 0
+      && selectedPrices.every(Boolean)
+      && normalized.every((value) => value === normalized[0])
+      ? enteredPrices[0]
+      : "");
+  };
+
+  const applyQuickCreatedOption = (option: QuickCreateLookupOption) => {
+    if (!quickCreateTarget) return;
+    const masterKey = quickCreateTarget.masterKey;
+    const articleOption = {
+      ...option,
+      value_id: option.value_id ?? option.id,
+      parent_id: option.parent_id ?? null,
+      fields: option.fields ?? {},
+    };
+    setArticleLookupOptions((current) => ({
+      ...current,
+      [masterKey]: [
+        ...(current[masterKey] ?? []).filter((item) => item.label !== articleOption.label),
+        articleOption,
+      ],
+    }));
+
+    if (masterKey === "size-group") {
+      const sizes = (option.sizes ?? []).map((item) => item.label);
+      setArticleSizeGroupSizes((current) => ({ ...current, [option.id]: sizes }));
+      setFields((current) => ({
+        ...current,
+        Size_Group: option.label,
+        Sizes: sizes,
+      }));
+    } else if (quickCreateTarget.variantIndex !== undefined) {
+      setVariants((current) => current.map((variant, index) => (
+        index === quickCreateTarget.variantIndex ? { ...variant, color: option.label } : variant
+      )));
+    } else {
+      setFields((current) => {
+        if (quickCreateTarget.fieldKey === "Product_Master") {
+          return { ...current, Product_Master: option.label, Category: "", Subcategory: "" };
+        }
+        if (quickCreateTarget.fieldKey === "Category") {
+          return { ...current, Category: option.label, Subcategory: "" };
+        }
+        return { ...current, [quickCreateTarget.fieldKey]: option.label };
+      });
+    }
+    setQuickCreateTarget(null);
+  };
+
+  const articlePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article`;
+  const formAction = editing ? updateAction : createAction;
+  const quickCreateInitialFields = quickCreateTarget?.masterKey === "category"
+    ? { Product_Master: fields.Product_Master }
+    : quickCreateTarget?.masterKey === "sub-category"
+      ? { category: fields.Category }
+      : quickCreateTarget?.masterKey === "size-group"
+        ? { Brand1: fields.Brand }
+        : {};
+
+  if (readOnly && record) {
+    const detailHref = `${articlePath}/${encodeURIComponent(record.code || record.value_id)}`;
+    const displayValue = (value: string) => value.trim() || "—";
+    const detailField = (label: string, value: string) => (
+      <div key={label} className="min-w-0 space-y-1">
+        <dt className="text-xs font-medium text-[var(--erp-muted)]">{label}</dt>
+        <dd className="break-words text-sm text-[var(--erp-text)]">{displayValue(value)}</dd>
+      </div>
+    );
+
+    return (
+      <Page as="div">
+        <Section className="space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => router.push(editing
+                  ? `${articlePath}/${encodeURIComponent(record.code || record.value_id)}`
+                  : articlePath)}
+                className="w-fit px-0"
+              >
+                {editing ? "Back to Article details" : "Back to Articles"}
+              </Button>
+              <p className="erp-eyebrow mt-4">Article master</p>
+              <h1 className="mt-1 break-words text-2xl font-bold text-[var(--erp-text)]">{record.label}</h1>
+              <p className="mt-1 text-sm text-[var(--erp-muted)]">{record.code}</p>
+            </div>
+            <Button type="button" onClick={() => router.push(`${detailHref}?mode=edit`)}>Edit</Button>
+          </div>
+          {error ? <p role="alert" className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{error}</p> : null}
+          {saved ? <p role="status" className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-success)]">Article saved successfully.</p> : null}
+          <Card className="space-y-6 p-6">
+            <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} ariaLabel="Article details" />
+            {activeTab === "general" ? (
+              <dl className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
+                {detailField("Article Name", fields.article)}
+                {detailField("Article Code", fields.article_code)}
+                {detailField("Brand", fields.Brand)}
+                {detailField("Finished Goods Type", fields.Product_Master)}
+                {detailField("Finished Goods Category", fields.Category)}
+                {detailField("Finished Goods Subcategory", fields.Subcategory)}
+                {detailField("Design By", fields.design_by)}
+                {detailField("Designed Date", fields.designed_date)}
+              </dl>
+            ) : null}
+            {activeTab === "colour" ? (
+              <section className="space-y-4">
+                <h2 className="text-base font-semibold text-[var(--erp-text)]">Color variants</h2>
+                {variants.length ? variants.map((variant, index) => (
+                  <dl key={variant.id ?? `${variant.color}-${index}`} className="grid min-w-0 grid-cols-1 gap-4 rounded-xl border border-[var(--erp-border)] p-4 sm:grid-cols-2">
+                    {detailField("Color", variant.color)}
+                    {detailField("Variant Code", variant.variant_code)}
+                    {detailField("SKU", variant.sku)}
+                    {detailField("Price Override", variant.price_override)}
+                  </dl>
+                )) : <p className="text-sm text-[var(--erp-muted)]">No color variants added.</p>}
+              </section>
+            ) : null}
+            {activeTab === "size" ? (
+              <section className="space-y-4">
+                <h2 className="text-base font-semibold text-[var(--erp-text)]">Size and pricing</h2>
+                <dl className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+                  {detailField("Size Group", fields.Size_Group)}
+                  {detailField("Default Price", fields.default_price)}
+                  {detailField("Sizes", fields.Sizes.join(", "))}
+                </dl>
+                {sizePriceRows.length ? (
+                  <div className="space-y-2">
+                    {sizePriceRows.map((row) => (
+                      <dl key={row.size} className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border border-[var(--erp-border)] p-3 sm:grid-cols-2">
+                        {detailField("Size", row.size)}
+                        {detailField("Price", row.price ?? "")}
+                      </dl>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+          </Card>
+        </Section>
+      </Page>
+    );
+  }
+
+  return (
+    <Page as="div">
+      <Section className="space-y-6">
+        <Button type="button" variant="ghost" onClick={() => router.push(articlePath)} className="w-fit px-0">
+          Back to Articles
+        </Button>
+        <div>
+          <p className="erp-eyebrow">Article master</p>
+          <h1 className="mt-1 text-2xl font-bold text-[var(--erp-text)]">
+            {editing ? `Edit ${record.label}` : "Create Article"}
+          </h1>
+          <p className="mt-1 text-sm text-[var(--erp-muted)]">
+            Manage article details, color variants, and size-wise pricing in one page.
+          </p>
+        </div>
+        {error ? <p role="alert" className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{error}</p> : null}
+        {saved ? <p role="status" className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-success)]">Article saved successfully.</p> : null}
+        {isLoadingLookups ? <p role="status" className="text-sm text-[var(--erp-muted)]">Loading lookup options…</p> : null}
+        {lookupError ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
+            <span>{lookupError}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setIsLoadingLookups(true);
+                setLookupError("");
+                setLookupRetry((current) => current + 1);
+              }}
+            >
+              Retry lookups
+            </Button>
+          </div>
+        ) : null}
+
+        <form action={formAction}>
+          <input type="hidden" name="workspaceId" value={workspaceId} />
+          <input type="hidden" name="organizationId" value={organizationId} />
+          <input type="hidden" name="moduleKey" value="article" />
+          <input type="hidden" name="returnToArticleDetail" value="true" />
+          {returnToUniformManagement ? <input type="hidden" name="returnToUniformManagement" value="true" /> : null}
+          {editing ? <input type="hidden" name="valueId" value={record.value_id} /> : null}
+          <input type="hidden" name="field_variants" value={JSON.stringify(variants)} />
+          <input type="hidden" name="articleSizePrices" value={JSON.stringify(sizePriceRows)} />
+          <input type="hidden" name="field_Sizes" value="" />
+
+          <Card className="space-y-6 p-6">
+            <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} ariaLabel="Article details" />
+
+            <div id="article-general-panel" role="tabpanel" aria-labelledby="article-general-tab" hidden={activeTab !== "general"} className={activeTab === "general" ? "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2" : "hidden"}>
+              <Input
+                label="Article Name"
+                name="field_article"
+                required
+                value={fields.article}
+                onChange={(event) => setField("article", event.target.value)}
+              />
+              {editing ? (
+                <>
+                  <Input label="Article Code" name="field_article_code" value={fields.article_code} readOnly />
+                  <input type="hidden" name="code" value={fields.article_code} />
+                </>
+              ) : null}
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <Select
+                  label="Brand"
+                  name="field_Brand"
+                  required
+                  disabled={isLoadingLookups || Boolean(lookupError)}
+                  value={fields.Brand}
+                  onChange={(event) => setField("Brand", event.target.value)}
+                  options={[
+                    { value: "", label: "Select Brand" },
+                    ...(articleLookupOptions.brand ?? []).map(({ label }) => ({ value: label, label })),
+                  ]}
+                />
+                <Button type="button" size="sm" variant="secondary" onClick={() => setQuickCreateTarget({ masterKey: "brand", fieldKey: "Brand" })}>
+                  + Add
+                </Button>
+              </div>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <Select
+                  label="Finished Goods Type"
+                  name="field_Product_Master"
+                  disabled={isLoadingLookups || Boolean(lookupError)}
+                  value={fields.Product_Master}
+                  onChange={(event) => {
+                    const productMaster = event.target.value;
+                    setFields((current) => ({
+                      ...current,
+                      Product_Master: productMaster,
+                      Category: "",
+                      Subcategory: "",
+                    }));
+                  }}
+                  options={[
+                    { value: "", label: "Select Finished Goods Type" },
+                    ...(articleLookupOptions["product-master"] ?? []).map(({ label }) => ({ value: label, label })),
+                  ]}
+                />
+                <Button type="button" size="sm" variant="secondary" onClick={() => setQuickCreateTarget({ masterKey: "product-master", fieldKey: "Product_Master" })}>
+                  + Add
+                </Button>
+              </div>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <Select
+                  label="Finished Goods Category"
+                  name="field_Category"
+                  disabled={isLoadingLookups || Boolean(lookupError)}
+                  value={fields.Category}
+                  onChange={(event) => {
+                    const category = event.target.value;
+                    setFields((current) => ({
+                      ...current,
+                      Category: category,
+                      Subcategory: "",
+                    }));
+                  }}
+                  options={[
+                    { value: "", label: "Select Category" },
+                    ...categoryOptions.map(({ label }) => ({ value: label, label })),
+                  ]}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setQuickCreateTarget({
+                    masterKey: "category",
+                    fieldKey: "Category",
+                  })}
+                >
+                  + Add
+                </Button>
+              </div>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <Select
+                  label="Finished Goods Subcategory"
+                  name="field_Subcategory"
+                  disabled={isLoadingLookups || Boolean(lookupError)}
+                  value={fields.Subcategory}
+                  onChange={(event) => setField("Subcategory", event.target.value)}
+                  options={[
+                    { value: "", label: "Select Subcategory" },
+                    ...subcategoryOptions.map(({ label }) => ({ value: label, label })),
+                  ]}
+                />
+                <Button type="button" size="sm" variant="secondary" onClick={() => setQuickCreateTarget({
+                  masterKey: "sub-category",
+                  fieldKey: "Subcategory",
+                })}>
+                  + Add
+                </Button>
+              </div>
+              <Input
+                label="Design By"
+                name="field_design_by"
+                value={fields.design_by}
+                onChange={(event) => setField("design_by", event.target.value)}
+              />
+              <Input
+                label="Designed Date"
+                name="field_designed_date"
+                type="date"
+                value={fields.designed_date}
+                onChange={(event) => setField("designed_date", event.target.value)}
+              />
+            </div>
+
+            <div id="article-colour-panel" role="tabpanel" aria-labelledby="article-colour-tab" hidden={activeTab !== "colour"} className={activeTab === "colour" ? "space-y-4" : "hidden"}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-[var(--erp-text)]">Color variants</h2>
+                  <p className="mt-1 text-sm text-[var(--erp-muted)]">Assign a color, SKU, and optional price override.</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setVariants((current) => [...current, {
+                    color: "",
+                    variant_code: "",
+                    sku: "",
+                    price_override: "",
+                  }])}
+                >
+                  Add color
+                </Button>
+              </div>
+              {variants.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-[var(--erp-border)] p-6 text-center text-sm text-[var(--erp-muted)]">
+                  No color variants added yet.
+                </p>
+              ) : variants.map((variant, index) => (
+                <div key={variant.id ?? `variant-${index}`} className="grid min-w-0 gap-4 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
+                  <Select
+                    label="Color"
+                    required
+                    disabled={isLoadingLookups || Boolean(lookupError)}
+                    value={variant.color}
+                    onChange={(event) => setVariants((current) => current.map((row, rowIndex) =>
+                      rowIndex === index ? { ...row, color: event.target.value } : row))}
+                    options={[
+                      { value: "", label: "Select Color" },
+                      ...(articleLookupOptions.color ?? []).map(({ label }) => ({ value: label, label })),
+                    ]}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="w-fit"
+                    onClick={() => setQuickCreateTarget({ masterKey: "color", fieldKey: "color", variantIndex: index })}
+                  >
+                    + Add Color
+                  </Button>
+                  <Input label="Variant Code" value={variant.variant_code} onChange={(event) => setVariants((current) => current.map((row, rowIndex) =>
+                    rowIndex === index ? { ...row, variant_code: event.target.value } : row))} />
+                  <Input label="SKU" value={variant.sku} onChange={(event) => setVariants((current) => current.map((row, rowIndex) =>
+                    rowIndex === index ? { ...row, sku: event.target.value } : row))} />
+                  <Input label="Price Override" type="number" step="0.0001" min="0" value={variant.price_override} onChange={(event) => setVariants((current) => current.map((row, rowIndex) =>
+                    rowIndex === index ? { ...row, price_override: event.target.value } : row))} />
+                  <div className="md:col-span-2 xl:col-span-4">
+                    <Button type="button" variant="destructive" size="sm" onClick={() => {
+                      if (window.confirm("Remove this color variant?")) {
+                        setVariants((current) => current.filter((_, rowIndex) => rowIndex !== index));
+                      }
+                    }}>
+                      Remove color
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div id="article-size-panel" role="tabpanel" aria-labelledby="article-size-tab" hidden={activeTab !== "size"} className={activeTab === "size" ? "space-y-5" : "hidden"}>
+              <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                  <Select
+                    label="Size Group"
+                    name="field_Size_Group"
+                    disabled={isLoadingLookups || Boolean(lookupError)}
+                    value={fields.Size_Group}
+                    onChange={(event) => {
+                      setField("Size_Group", event.target.value);
+                      const nextGroup = articleLookupOptions["size-group"]?.find((option) => option.label === event.target.value);
+                      const nextAvailableSizes = nextGroup ? articleSizeGroupSizes[nextGroup.id] ?? [] : [];
+                      const nextSizes = new Set(nextAvailableSizes);
+                      setSizes(fields.Sizes.filter((size) => nextSizes.has(size)), nextAvailableSizes);
+                    }}
+                    options={[
+                      { value: "", label: "Select Size Group" },
+                      ...(articleLookupOptions["size-group"] ?? []).map(({ label }) => ({ value: label, label })),
+                    ]}
+                  />
+                  <Button type="button" size="sm" variant="secondary" onClick={() => setQuickCreateTarget({
+                    masterKey: "size-group",
+                    fieldKey: "Size_Group",
+                  })}>
+                    + Add
+                  </Button>
+                </div>
+                <Input
+                  label="Default Price"
+                  name="field_default_price"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={fields.default_price}
+                  readOnly={hasSizePrices}
+                  hint={hasSizePrices ? "Calculated from size-wise prices." : undefined}
+                  onChange={(event) => setField("default_price", event.target.value)}
+                />
+              </div>
+              <div className="space-y-3">
+                <h2 className="text-sm font-semibold text-[var(--erp-text)]">Available sizes</h2>
+                {availableSizes.length ? (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+                    {availableSizes.map((size) => (
+                      <Checkbox
+                        key={size}
+                        label={size}
+                        name="field_Sizes"
+                        value={size}
+                        checked={fields.Sizes.includes(size)}
+                        onChange={(event) => setSizes(event.target.checked
+                          ? [...fields.Sizes, size]
+                          : fields.Sizes.filter((selected) => selected !== size))}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-[var(--erp-muted)]">Choose a Size Group to select available sizes.</p>
+                )}
+              </div>
+              {fields.Sizes.length > 0 ? (
+                <div className="space-y-3">
+                  <h2 className="text-sm font-semibold text-[var(--erp-text)]">Size-wise prices</h2>
+                  <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {availableSizes.filter((size) => fields.Sizes.includes(size)).map((size) => (
+                      <Input
+                        key={size}
+                        label={`${size} price`}
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        value={sizePrices[size.toLocaleLowerCase()] ?? ""}
+                        onChange={(event) => setSizePrice(size, event.target.value)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
+              <Button type="button" variant="secondary" onClick={() => router.push(articlePath)}>Cancel</Button>
+              <SubmitButton editing={editing} />
+            </div>
+          </Card>
+        </form>
+        {quickCreateTarget ? (
+          <ArticleQuickCreateDialog
+            key={`${quickCreateTarget.masterKey}:${quickCreateTarget.fieldKey}:${quickCreateTarget.variantIndex ?? ""}`}
+            organizationId={organizationId}
+            masterKey={quickCreateTarget.masterKey}
+            initialFields={quickCreateInitialFields}
+            onClose={() => setQuickCreateTarget(null)}
+            onCreated={applyQuickCreatedOption}
+          />
+        ) : null}
+      </Section>
+    </Page>
+  );
+}

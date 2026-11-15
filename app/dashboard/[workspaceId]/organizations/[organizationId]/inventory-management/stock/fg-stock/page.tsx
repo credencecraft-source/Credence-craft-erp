@@ -1,5 +1,5 @@
-import InventoryStagePage from "../../_page-content/inventory-stage-page";
+import FinishedGoodsStockOverviewPage from "../../_page-content/finished-goods-stock-overview-page";
 
 export default function Page() {
-  return <InventoryStagePage stage="fg-stock" />;
+  return <FinishedGoodsStockOverviewPage />;
 }

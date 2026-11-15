@@ -1,0 +1,159 @@
+import { Prisma } from "@prisma/client";
+import { NextResponse } from "next/server";
+
+import { requireSessionUser } from "@/lib/auth/session-manager";
+import { assertAssetPurchaseReceiptLine, getRmGrnVerification, getRmGrnVerificationAllocation, getRmGrnVerificationDraftsForPurchaseOrder, InvalidActualCountError, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "@/lib/services/inventory/rm-grn-verification-service";
+import { getStockVerificationDetails, listPendingStockVerificationTasks, saveStockGroupVerification } from "@/lib/services/inventory/rm-stock-verification-service";
+import { getRawMaterialPickSummariesForGroupedLines } from "@/lib/services/inventory/raw-material-outward-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
+
+function errorResponse(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.startsWith("Access denied:")) {
+    return NextResponse.json({ error: error.message }, { status: 403 });
+  }
+  if (error instanceof RmGrnVerificationNotFoundError) {
+    return NextResponse.json({ error: error.message }, { status: 404 });
+  }
+  if (error instanceof InvalidActualCountError) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  if (error instanceof MasterGroupRequiredError) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2021" || error.code === "P2022") {
+      return NextResponse.json({ error: "RM GRN Verification is unavailable until its database migration is deployed." }, { status: 503 });
+    }
+    if (error.code === "P2002" || error.code === "P2034") {
+      return NextResponse.json({ error: "This verification changed while it was being saved. Reload and try again." }, { status: 409 });
+    }
+  }
+  if (error instanceof Error && !(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  return NextResponse.json({ error: fallback }, { status: 500 });
+}
+
+export async function GET(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const searchParams = new URL(request.url).searchParams;
+    const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_INVENTORY_RECEIPTS");
+    const assetOnlyParameter = searchParams.get("isAssetPurchase");
+    if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
+      return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
+    }
+    const assetOnly = assetOnlyParameter === "true";
+    const allocationId = searchParams.get("allocationId")?.trim();
+    if (allocationId) {
+      const allocation = await getRmGrnVerificationAllocation(organization.id, allocationId);
+      if (!allocation) return NextResponse.json({ error: "GRN allocation was not found." }, { status: 404 });
+      return NextResponse.json({
+        allocation,
+        canEdit: ["OWNER", "ADMIN", "INVENTORY"].includes(organization.role),
+      });
+    }
+    if (searchParams.get("verificationRegister") === "true") {
+      const stockTasks = assetOnly ? [] : await listPendingStockVerificationTasks(organization.id);
+      return NextResponse.json({ stockTasks });
+    }
+    if (searchParams.get("allocationRegister") === "true") {
+      const styleWiseInventory = searchParams.get("styleWiseInventory") === "true";
+      const allocations = styleWiseInventory
+        ? await listRmGrnVerificationAllocations(organization.id, { styleWiseInventory: true })
+        : await listRmGrnVerificationAllocations(organization.id);
+      if (!styleWiseInventory) return NextResponse.json({ allocations });
+      const lineIds = allocations.flatMap((record) => record.orderAllocations.map((line) => line.groupedPurchaseOrderLineId));
+      const pickSummaries = await getRawMaterialPickSummariesForGroupedLines(organization.id, user.id, lineIds);
+      return NextResponse.json({
+        allocations: allocations.map((record) => ({
+          ...record,
+          orderAllocations: record.orderAllocations.map((line) => ({
+            ...line,
+            pickedQuantity: pickSummaries[line.groupedPurchaseOrderLineId]?.pickedQuantity ?? "0",
+            balanceStock: pickSummaries[line.groupedPurchaseOrderLineId]?.balanceStock ?? "0",
+          })),
+        })),
+      });
+    }
+
+    const purchaseOrderId = searchParams.get("purchaseOrderId") ?? "";
+    if (purchaseOrderId) {
+      const drafts = await getRmGrnVerificationDraftsForPurchaseOrder(organization.id, purchaseOrderId);
+      if (!drafts) return NextResponse.json({ error: "Approved Purchase Order not found." }, { status: 404 });
+      return NextResponse.json({ drafts });
+    }
+
+    const receiptLineId = searchParams.get("receiptLineId") ?? "";
+    const stockGroupedPurchaseOrderId = searchParams.get("stockGroupedPurchaseOrderId") ?? "";
+    if (assetOnly && receiptLineId) {
+      await assertAssetPurchaseReceiptLine(organization.id, receiptLineId);
+    }
+    if (stockGroupedPurchaseOrderId) {
+      if (assetOnly) return NextResponse.json({ error: "Asset GRN verification does not include stock verification tasks." }, { status: 404 });
+      const verification = await getStockVerificationDetails(organization.id, stockGroupedPurchaseOrderId);
+      if (!verification) return NextResponse.json({ error: "Stock verification task not found." }, { status: 404 });
+      return NextResponse.json({ verification });
+    }
+    if (!receiptLineId) return NextResponse.json({ error: "GRN raw-material line is required." }, { status: 400 });
+
+    const verification = await getRmGrnVerification(organization.id, receiptLineId);
+    if (!verification) return NextResponse.json({ error: "GRN raw-material line not found." }, { status: 404 });
+    return NextResponse.json({ verification });
+  } catch (error) {
+    return errorResponse(error, "Unable to load RM GRN Verification.");
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const body = await request.json() as Record<string, unknown>;
+    const organization = await requireOrganizationContext(
+      user.id,
+      String(body.organizationId ?? ""),
+      ["OWNER", "ADMIN", "INVENTORY"],
+    );
+    await requireOrganizationPermission(user.id, organization.id, "MANAGE_INVENTORY_RECEIPTS");
+    const receiptLineId = String(body.receiptLineId ?? "").trim();
+    const stockGroupedPurchaseOrderId = String(body.sourceGroupedPurchaseOrderId ?? "").trim();
+    if (body.assetPurchaseOnly !== undefined && typeof body.assetPurchaseOnly !== "boolean") {
+      return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
+    }
+    if (Boolean(receiptLineId) === Boolean(stockGroupedPurchaseOrderId)) {
+      return NextResponse.json({ error: "Choose exactly one GRN line or stock verification task." }, { status: 400 });
+    }
+
+    if (stockGroupedPurchaseOrderId) {
+      if (body.assetPurchaseOnly) {
+        return NextResponse.json({ error: "Asset GRN verification does not include stock verification tasks." }, { status: 400 });
+      }
+      const result = await saveStockGroupVerification(
+        organization.id,
+        stockGroupedPurchaseOrderId,
+        { verifiedQuantity: body.verifiedQuantity, approvedQuantity: body.approvedQuantity },
+        user.id,
+      );
+      return NextResponse.json({ verification: result }, { status: 201 });
+    }
+
+    if (body.assetPurchaseOnly) await assertAssetPurchaseReceiptLine(organization.id, receiptLineId);
+    const result = await saveRmGrnVerification(
+      organization.id,
+      receiptLineId,
+      {
+        verifiedQuantity: body.verifiedQuantity,
+        approvedQuantity: body.approvedQuantity,
+        allocations: body.allocations,
+      },
+      user.id,
+    );
+    return NextResponse.json({ verification: result }, { status: result.created ? 201 : 200 });
+  } catch (error) {
+    return errorResponse(error, "Unable to save RM GRN Verification.");
+  }
+}

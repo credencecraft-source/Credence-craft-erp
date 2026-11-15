@@ -1,15 +1,55 @@
 // app/dashboard/[workspaceId]/organizations/[organizationId]/organization-shell-layout.tsx
 
-import React from "react";
+import React, { Suspense } from "react";
 import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
+import OrganizationKycForm from "./settings/kyc/_page-content/organization-kyc-form";
+import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import {
+  getOrganizationEffectivePermissions,
+  getOrganizationShellContext,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
+import {
+  getOrganizationRoutePermissionRequirements,
+  getOrganizationSubmoduleAccessPermissionForPath,
+  hasOrganizationModulePermission,
+  isOrganizationSubmoduleAccessPermission,
+} from "@/lib/organizations/organization-permission-registry";
+import {
+  getFirstAvailableOrganizationModulePath,
+  OrganizationModuleVisibilityError,
+  isOrganizationModuleAvailable,
+  isOrganizationModuleVisible,
+  setOrganizationModuleVisibility,
+} from "@/lib/services/organizations/organization-module-visibility-service";
+import { getOrganizationKycProfileForUser } from "@/lib/services/organizations/organization-kyc-service";
+import {
+  deleteOrganizationDummyData,
+  getOrganizationDummyDataStatus,
+  startDummyDataWizardStep,
+  type DummyDataWizardStep,
+} from "@/lib/services/organizations/organization-dummy-data-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
-import { getEffectiveSegmentRestrictions } from "@/lib/services/platform/segment-restriction-service";
+import { getErpBusinessTypeDisplayName } from "@/components/erp/erp-config-registry";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
-import { PendingOrganizationPrompt } from "@/components/organizations/pending-organization-prompt";
+import {
+  hasOrganizationTrialAccess,
+  ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE,
+  shouldRedirectExpiredTrialRequest,
+  startOrganizationTrialOnFirstOpen,
+} from "@/lib/services/platform/organization-trial-service";
+import { getPlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { getPlatformPricingSettings, isPricingModeEnabled } from "@/lib/services/platform/pricing-mode-service";
+import { shouldBlockOrganizationForUserPricing } from "@/lib/utilities/organization-trial-visibility";
+import {
+  resetOrganizationKycDraftAction,
+  saveOrganizationKycDraftAction,
+  submitOrganizationKycAction,
+} from "./settings/kyc/organization-kyc-actions";
 
 type OrganizationShellLayoutProps = {
   children: React.ReactNode;
@@ -18,6 +58,51 @@ type OrganizationShellLayoutProps = {
     organizationId: string;
   }>;
 };
+
+type KycToolbarOrganization = NonNullable<
+  Awaited<ReturnType<typeof getOrganizationShellContext>>
+>;
+
+async function OrganizationKycToolbarSlot({
+  userId,
+  workspaceId,
+  organizationId,
+  organization,
+}: {
+  userId: string;
+  workspaceId: string;
+  organizationId: string;
+  organization: KycToolbarOrganization;
+}) {
+  const kycProfile = await getOrganizationKycProfileForUser(userId, organization.id).catch((error: unknown) => {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) return null;
+    throw error;
+  });
+  if (kycProfile?.status === "SUBMITTED" || kycProfile?.status === "APPROVED") return null;
+
+  return (
+    <OrganizationKycForm
+      initialProfile={kycProfile}
+      progressStorageKey={`organization-kyc-progress:${workspaceId}:${organizationId}`}
+      saveDraftAction={saveOrganizationKycDraftAction.bind(null, workspaceId, organizationId)}
+      submitAction={submitOrganizationKycAction.bind(null, workspaceId, organizationId)}
+      resetDraftAction={resetOrganizationKycDraftAction.bind(null, workspaceId, organizationId)}
+      registrationSnapshot={{
+        gst_number: organization.gst_number,
+        name: organization.organization_name,
+        address: [
+          organization.address_line_1,
+          organization.address_line_2,
+          organization.city,
+          organization.state,
+          organization.pin_code,
+          organization.country,
+        ].filter(Boolean).join(", "),
+        createdAt: organization.created_at.toISOString().slice(0, 10),
+      }}
+    />
+  );
+}
 
 export default async function OrganizationShellLayout({
   children,
@@ -50,53 +135,273 @@ export default async function OrganizationShellLayout({
     ? new URL(rawPath).pathname 
     : rawPath;
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
-  const isOrganizationSettingsRoute =
-    currentPath.startsWith(`${organizationPath}/settings`) &&
-    !currentPath.startsWith(`${organizationPath}/settings/master-data`);
 
-  // 3. Fetch and authorize the real organization before checking plan rules.
-  const organization = await getOrganizationForUser(user.id, organizationId);
-  
+  const activeBusinessTypesPromise = listActiveBusinessTypes();
+  const [organization, platformAdmin, pricingSettings] = await Promise.all([
+    getOrganizationShellContext(user.id, organizationId),
+    getPlatformSessionAdmin(),
+    getPlatformPricingSettings(),
+  ]);
+
   if (!organization) {
     redirect(`/dashboard/${user.workspace_id}/home`);
   }
 
+  const hasConfiguredPricingType = isPricingModeEnabled(pricingSettings, organization.pricing_mode);
+
   if (organization.approval_status !== "APPROVED") {
-    return <PendingOrganizationPrompt organizationId={organization.organization_id} />;
+    redirect(`/dashboard/${workspaceId}/home`);
   }
 
-  if (currentPath.includes("/settings")) {
-    const requiredPermission = currentPath.includes("/settings/roles")
-      ? "MANAGE_ROLES"
-      : currentPath.includes("/settings/users")
-        ? "MANAGE_USERS"
-        : currentPath.includes("/settings/reports")
-          ? "VIEW_REPORTS"
-          : currentPath.includes("/settings/master-data")
-            ? "MANAGE_MASTER_DATA"
-            : "ORGANIZATION_SETTINGS";
-    await requireOrganizationPermission(user.id, organizationId, requiredPermission);
+  let trialOrganization = organization;
+  if (organization.trial_enabled && !organization.trial_started_at) {
+    await startOrganizationTrialOnFirstOpen(organization.id, user.id);
+    const refreshedOrganization = await getOrganizationShellContext(user.id, organizationId);
+    if (!refreshedOrganization) {
+      redirect(`/dashboard/${user.workspace_id}/home`);
+    }
+    trialOrganization = refreshedOrganization;
   }
 
-  await validateOrganizationAccess(organization.organization_id, currentPath);
+  const now = new Date();
+  const trialIsActive = Boolean(
+    trialOrganization.trial_enabled
+    && trialOrganization.trial_started_at
+    && trialOrganization.trial_ends_at
+    && trialOrganization.trial_ends_at > now,
+  );
+  if (currentPath === organizationPath) {
+    const organizationHasTrialAccess = await hasOrganizationTrialAccess(organization.id, now, trialOrganization);
+    if (!organizationHasTrialAccess
+      && shouldRedirectExpiredTrialRequest(currentPath, organizationPath)) {
+      redirect(
+        `${organizationPath}/access-blocked?message=${encodeURIComponent(ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE)}`,
+      );
+    }
+    return children;
+  }
 
-  const scopedRestrictions = await getEffectiveSegmentRestrictions(organization.id);
-  const businessTypes = (await listActiveBusinessTypes()).map((businessType) => ({
+  const settingsModule = ERP_MODULES.find(({ key }) => key === "settings");
+  const isErpSettingsModuleRoute = settingsModule?.children.some(({ key, pathSegment }) => {
+    const settingsPath = `${organizationPath}/settings/${pathSegment || key}`;
+    return currentPath === settingsPath || currentPath.startsWith(`${settingsPath}/`);
+  }) ?? false;
+  const isOrganizationSettingsRoute =
+    currentPath.startsWith(`${organizationPath}/settings`) &&
+    !currentPath.startsWith(`${organizationPath}/settings/master-data`) &&
+    !isErpSettingsModuleRoute;
+
+  // 3. Fetch and authorize the real organization before checking plan rules.
+  async function deleteDummyDataAction() {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) {
+      return { deleted: false, error: "Workspace access denied." };
+    }
+
+    try {
+      const result = await deleteOrganizationDummyData(actionUser.id, organizationId);
+      revalidatePath(organizationPath);
+      return result;
+    } catch (error) {
+      return {
+        deleted: false,
+        error: error instanceof Error ? error.message : "Unable to delete dummy data.",
+      };
+    }
+  }
+
+  async function startDummyDataWizardStepAction(step: DummyDataWizardStep) {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) {
+      return { error: "Workspace access denied." };
+    }
+
+    try {
+      const result = await startDummyDataWizardStep(
+        actionUser.id,
+        organizationId,
+        step,
+        actionUser.full_name,
+      );
+      revalidatePath(organizationPath);
+      return { status: "status" in result ? result.status : "IN_PROGRESS", stage: "stage" in result ? result.stage : "" };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to start this sample-data step." };
+    }
+  }
+
+  const permissionCheck = currentPath.includes("/settings")
+    ? requireOrganizationPermission(
+        user.id,
+        organizationId,
+        currentPath.includes("/settings/roles")
+          ? "MANAGE_ROLES"
+          : currentPath.includes("/settings/users")
+            ? "MANAGE_USERS"
+            : currentPath.includes("/settings/tax-rules")
+              ? "MANAGE_TAX_RULES"
+              : currentPath.includes("/settings/reports")
+                ? "VIEW_REPORTS"
+                : currentPath.includes("/settings/master-data")
+                  ? "MANAGE_MASTER_DATA"
+                  : "ORGANIZATION_SETTINGS",
+      )
+    : Promise.resolve();
+
+  const [
+    scopedRestrictions,
+    activeBusinessTypes,
+    dummyDataStatus,
+    ,
+    organizationHasTrialAccess,
+    effectivePermissions,
+  ] = await Promise.all([
+    validateOrganizationAccess(organization, currentPath, trialIsActive),
+    activeBusinessTypesPromise,
+    getOrganizationDummyDataStatus(user.id, organizationId).catch(() => ({
+      status: "UNAVAILABLE",
+      createdAt: null,
+      orderNo: null,
+      orderCount: 0,
+      masterCount: 0,
+    })),
+    permissionCheck,
+    hasOrganizationTrialAccess(organization.id, now, trialOrganization),
+    getOrganizationEffectivePermissions(user.id, organizationId),
+  ]);
+
+  if (!organizationHasTrialAccess
+    && shouldRedirectExpiredTrialRequest(currentPath, organizationPath)) {
+    redirect(
+      `${organizationPath}/access-blocked?message=${encodeURIComponent(ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE)}`,
+    );
+  }
+
+  const businessTypes = activeBusinessTypes.map((businessType) => ({
     ...businessType,
     name: businessType.name.trim().toLowerCase() === "settings"
       ? "Admin"
-      : businessType.name,
+      : getErpBusinessTypeDisplayName(businessType.name),
   }));
-
 
   if (isOrganizationSettingsRoute) {
     return children;
   }
+
+  const moduleStatuses = organization.erpSoftware.flatMap((software) =>
+    software.modules.map(({ module_key, module_name, status, settings }) => ({
+      moduleKey: module_key,
+      moduleName: module_name,
+      status,
+      isVisible: isOrganizationModuleVisible(settings),
+    })),
+  );
+  const accessibleModuleKeys = new Set(ERP_MODULES
+    .filter((module) => hasOrganizationModulePermission(module.key, effectivePermissions))
+    .map((module) => module.key));
+  const accessibleSubmodulePermissions = effectivePermissions.filter(isOrganizationSubmoduleAccessPermission);
+  const accessibleModuleStatuses = moduleStatuses.filter(({ moduleKey }) =>
+    accessibleModuleKeys.has(moduleKey),
+  );
+  const routeModule = ERP_MODULES.find(({ pathSegment }) =>
+    currentPath === `${organizationPath}/${pathSegment}`
+    || currentPath.startsWith(`${organizationPath}/${pathSegment}/`),
+  );
+  if (routeModule) {
+    const requiredPermissions = getOrganizationRoutePermissionRequirements(routeModule.key, currentPath);
+    if (requiredPermissions.length > 0
+      && !requiredPermissions.some((permission) => effectivePermissions.includes(permission))) {
+      redirect(`${organizationPath}/access-blocked?message=${encodeURIComponent("Your organization role does not have permission to access this module.")}`);
+    }
+    const submoduleAccessPermission = getOrganizationSubmoduleAccessPermissionForPath(
+      currentPath,
+      organizationPath,
+    );
+    if (submoduleAccessPermission && !effectivePermissions.includes(submoduleAccessPermission)) {
+      redirect(`${organizationPath}/access-blocked?message=${encodeURIComponent("Your organization role does not have permission to access this sidebar module.")}`);
+    }
+    const routeModuleStatus = accessibleModuleStatuses.find(({ moduleKey }) => moduleKey === routeModule.key);
+    if (!routeModuleStatus || !isOrganizationModuleAvailable(routeModuleStatus.status, routeModuleStatus.isVisible)) {
+      const fallbackModulePath = getFirstAvailableOrganizationModulePath(accessibleModuleStatuses);
+      if (fallbackModulePath) {
+        redirect(`${organizationPath}${fallbackModulePath}`);
+      }
+      redirect(`${organizationPath}/access-blocked?message=${encodeURIComponent("This module is not visible for your organization. Contact your organization administrator.")}`);
+    }
+  }
+
+  let canManageModuleVisibility = false;
+  try {
+    await requireOrganizationPermission(user.id, organizationId, "ORGANIZATION_SETTINGS");
+    canManageModuleVisibility = true;
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith("Access denied:")) throw error;
+  }
+
+  async function updateModuleVisibilityAction(moduleKey: string, isVisible: boolean) {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) {
+      return { error: "Workspace access denied." };
+    }
+
+    let result: Awaited<ReturnType<typeof setOrganizationModuleVisibility>>;
+    try {
+      result = await setOrganizationModuleVisibility(
+        actionUser.id,
+        organizationId,
+        moduleKey,
+        isVisible,
+      );
+    } catch (error) {
+      if (error instanceof OrganizationModuleVisibilityError) {
+        return { error: error.message };
+      }
+      console.error("Organization module visibility update failed", { organizationId });
+      return { error: "Unable to update organization module visibility." };
+    }
+
+    revalidatePath(organizationPath);
+    return result;
+  }
+
   return (
     <MasterModuleWrapper
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      moduleStatuses={accessibleModuleStatuses}
+      submodulePermissions={accessibleSubmodulePermissions}
+      canManageModuleVisibility={canManageModuleVisibility}
+      updateModuleVisibility={updateModuleVisibilityAction}
+      canAccessPlatformControlPanel={Boolean(platformAdmin)}
+      hasConfiguredPricingType={hasConfiguredPricingType}
+      pricingMode={organization.pricing_mode}
+      userMonthlyPrice={pricingSettings.user_monthly_price.toNumber()}
+      requiresUserPricingToAccess={shouldBlockOrganizationForUserPricing(
+        organization.pricing_mode,
+        hasConfiguredPricingType,
+        organizationHasTrialAccess,
+      )}
+      trialEnabled={trialOrganization.trial_enabled}
+      aiEnabled={organization.ai_enabled}
+      trialStartedAt={trialOrganization.trial_started_at?.toISOString() ?? null}
+      trialEndsAt={trialOrganization.trial_ends_at?.toISOString() ?? null}
+      startDummyDataWizardStep={startDummyDataWizardStepAction}
+      deleteDummyData={deleteDummyDataAction}
+      kycToolbarControl={isOrganizationSettingsRoute ? null : (
+        <Suspense fallback={null}>
+          <OrganizationKycToolbarSlot
+            userId={user.id}
+            workspaceId={workspaceId}
+            organizationId={organizationId}
+            organization={organization}
+          />
+        </Suspense>
+      )}
+      dummyDataStatus={dummyDataStatus}
       businessTypes={businessTypes}
       restrictions={scopedRestrictions}
     >

@@ -5,6 +5,9 @@ import { notFound, redirect } from "next/navigation";
 
 import { SESSION_COOKIE_NAME, requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import WorkspaceMobileNumberSettings from "./workspace-mobile-number-settings";
 
 const isDevBypass = process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL;
 
@@ -84,43 +87,30 @@ export default async function WorkspaceConfigurationPage({
 </Link>
 
             <form action={logoutAction}>
-              <button type="submit" >
+              <Button type="submit" variant="secondary">
                 Logout
-              </button>
+              </Button>
             </form>
           </div>
         </div>
 
         <form action={updateProfileAction} >
           <div >
-            <label >
-              <span >Full name</span>
-              <input
-                name="fullName"
-                defaultValue={user.full_name}
-                
-              />
-            </label>
-
-            <label >
-              <span >Profile name</span>
-              <input
-                name="profileName"
-                defaultValue={user.profile_name}
-                
-              />
-            </label>
+            <Input label="Full name" name="fullName" defaultValue={user.full_name} />
+            <Input label="Profile name" name="profileName" defaultValue={user.profile_name} />
           </div>
 
-          <button type="submit" >
+          <Button type="submit">
             Update profile
-          </button>
+          </Button>
         </form>
+
+        <WorkspaceMobileNumberSettings />
 
         <div >
           <div >
             <p >Email</p>
-            <p >{user.email}</p>
+            <p >{user.email ?? "Not provided"}</p>
           </div>
           <div >
             <p >Last login</p>
@@ -133,9 +123,9 @@ export default async function WorkspaceConfigurationPage({
           <p >
             Workspace deletion is restricted and should only be allowed after all dependent resources are removed. This flow is intentionally protected with explicit confirmation and enterprise safety checks.
           </p>
-          <button type="button" >
+          <Button type="button" variant="danger">
             Delete workspace
-          </button>
+          </Button>
         </div>
       </div>
     </main>

@@ -6,7 +6,8 @@ import { INVENTORY_MASTER_DEFINITIONS } from "@/lib/master-data/inventory-manage
 import { QUALITY_MANAGEMENT_MASTER_DEFINITIONS } from "@/lib/master-data/quality-management-system/quality-management-masters";
 import { FINANCE_MANAGEMENT_MASTER_DEFINITIONS } from "@/lib/master-data/finance-management/finance-management-masters";
 import { GOLD_SEAL_MASTER_DEFINITIONS } from "@/lib/master-data/design-development/gold-seal-masters";
-import { createMaster, type MasterDefinition, type MasterFieldDefinition, type MasterFieldType } from "@/lib/master-data/master-data-models";
+import { DISTRIBUTION_MASTER_DEFINITIONS } from "@/lib/master-data/distribution/distribution-masters";
+import { createMaster, lookup, text, type MasterDefinition } from "@/lib/master-data/master-data-models";
 
 export type { MasterFieldType, MasterFieldDefinition, MasterDefinition } from "@/lib/master-data/master-data-models";
 export { createMaster, lookup, text } from "@/lib/master-data/master-data-models";
@@ -14,6 +15,18 @@ export { createMaster, lookup, text } from "@/lib/master-data/master-data-models
 const GENERAL_MASTER_DEFINITIONS: MasterDefinition[] = [
   createMaster("status", "Status", "General ERP status labels.", [], { hidden: true, moduleGroup: "admin", moduleSubGroup: "general", moduleOrder: 1 }),
   createMaster("entity-type", "Entity Type", "General entity classifications.", [], { hidden: true, moduleGroup: "settings", moduleSubGroup: "general", moduleOrder: 1 }),
+  createMaster("location", "Location", "Organization locations linked to an entity.", [
+    text("location_name", "Location", { required: true, unique: true }),
+    lookup("entity_id", "Entity Master", "entity", { required: true }),
+  ], { moduleGroup: "settings", moduleSubGroup: "general", moduleOrder: 2 }),
+  createMaster("storage-node", "Inventory Storage Hierarchy", "Organization-owned Location/Site, Warehouse, Sub-store, Rack, and Bin records.", [
+    text("node_type", "Hierarchy Level", { type: "picklist", required: true, options: ["LOCATION_SITE", "WAREHOUSE", "SUB_STORE", "RACK", "BIN"] }),
+    text("node_code", "Storage Code", { required: true, unique: true }),
+    text("node_name", "Name", { required: true, unique: true }),
+    lookup("entity_id", "Legal Entity (Location/Site only)", "entity"),
+    lookup("master_location_id", "Operational Location (optional)", "location", { dependsOn: "entity_id" }),
+    lookup("parent_node_id", "Parent Storage Node", "storage-node"),
+  ], { labelField: "node_name", moduleGroup: "settings", moduleSubGroup: "general", moduleOrder: 3 }),
 ];
 
 export const MASTER_DEFINITIONS: MasterDefinition[] = [
@@ -24,6 +37,7 @@ export const MASTER_DEFINITIONS: MasterDefinition[] = [
   ...INVENTORY_MASTER_DEFINITIONS,
   ...QUALITY_MANAGEMENT_MASTER_DEFINITIONS,
   ...FINANCE_MANAGEMENT_MASTER_DEFINITIONS,
+  ...DISTRIBUTION_MASTER_DEFINITIONS,
   ...GOLD_SEAL_MASTER_DEFINITIONS,
   ...GENERAL_MASTER_DEFINITIONS,
 ];
@@ -69,6 +83,14 @@ export const MASTER_MODULE_HIERARCHY: Record<string, { label: string; children: 
     label: "Finance Management",
     children: {
       transactions: "Transactions",
+    },
+  },
+  distribution: {
+    label: "Advance Booking",
+    children: {
+      dispatch: "Dispatch",
+      delivery: "Delivery",
+      "sales-order": "Sales Order",
     },
   },
   approvals: {

@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { listBomItemsPage } from "@/lib/services/orders/order-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+} from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
   try {
@@ -13,16 +16,17 @@ export async function GET(request: Request) {
     }
 
     const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "merchandising/bom", "view");
     const searchParams = new URL(request.url).searchParams;
-    const limit = Number(searchParams.get("limit") || 100);
+    const limit = Number(searchParams.get("limit") || 50);
 
     const page = await listBomItemsPage(organization.id, {
       cursor: searchParams.get("cursor") || undefined,
-      limit: Number.isFinite(limit) ? limit : 100,
+      limit: Number.isFinite(limit) ? limit : 50,
     });
     return NextResponse.json(page);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to fetch BOM report.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: message.startsWith("Access denied:") ? 403 : 500 });
   }
 }

@@ -1,27 +1,27 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
-import Modal from "@/components/ui/Modal";
 
 type Receipt = {
   id: string;
   receipt_no: string;
-  warehouse: string;
+  entity: { entity_name: string } | null;
+  location: { location_name: string } | null;
   received_date: string;
   purchaseOrder: { purchase_order_no: string; display_no: number | null };
   lines: Array<{ received_quantity: number | string; accepted_quantity: number | string; rejected_quantity: number | string }>;
 };
 
-type ReceiptField = "receipt_no" | "warehouse" | "received_date" | "purchase_order_no" | "total_received" | "total_accepted" | "total_rejected";
+type ReceiptField = "receipt_no" | "entityName" | "locationName" | "received_date" | "purchase_order_no" | "total_received" | "total_accepted" | "total_rejected";
 
 const reportFields: Array<{ key: ReceiptField; label: string }> = [
   { key: "receipt_no", label: "GRN No" },
-  { key: "warehouse", label: "Warehouse" },
+  { key: "entityName", label: "Entity" },
+  { key: "locationName", label: "Location" },
   { key: "received_date", label: "Received Date" },
   { key: "purchase_order_no", label: "PO No" },
   { key: "total_received", label: "Received Qty" },
@@ -32,21 +32,21 @@ const reportFields: Array<{ key: ReceiptField; label: string }> = [
 const number = (value: number | string | null | undefined) => Number(value ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 const formatDate = (value: string | null | undefined) => (value ? new Date(value).toLocaleDateString("en-IN") : "To be confirmed");
 
-export default function RmGrnReportPage() {
+export default function RmGrnReportPage({ assetMode = false }: { assetMode?: boolean }) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
-  const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
+  const basePath = assetMode
+    ? `/dashboard/${workspaceId}/organizations/${organizationId}/asset-management/asset-grn`
+    : `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [visibleFields, setVisibleFields] = useState<ReceiptField[]>(reportFields.map((field) => field.key));
 
   useEffect(() => {
-    void fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
+    void fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}${assetMode ? "&isAssetPurchase=true" : ""}`, { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Unable to load GRN report.");
@@ -54,7 +54,7 @@ export default function RmGrnReportPage() {
       })
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load GRN report."))
       .finally(() => setLoading(false));
-  }, [organizationId]);
+  }, [assetMode, organizationId]);
 
   const reportRows = useMemo(
     () =>
@@ -70,6 +70,8 @@ export default function RmGrnReportPage() {
 
         return {
           ...receipt,
+          entityName: receipt.entity?.entity_name ?? "Missing Entity",
+          locationName: receipt.location?.location_name ?? "Location not set",
           purchase_order_no: receipt.purchaseOrder.display_no ? `PO-${receipt.purchaseOrder.display_no}` : receipt.purchaseOrder.purchase_order_no,
           total_received: totals.received,
           total_accepted: totals.accepted,
@@ -79,58 +81,17 @@ export default function RmGrnReportPage() {
     [receipts],
   );
 
-  const handleDeleteSelected = async () => {
-    if (selectedIds.length === 0) return;
-
-    try {
-      const response = await fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ receiptIds: selectedIds }),
-      });
-
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.error || "Unable to delete selected GRN records.");
-
-      setReceipts((current) => current.filter((receipt) => !selectedIds.includes(receipt.id)));
-      setSelectedIds([]);
-      setShowDeleteConfirmation(false);
-    } catch (deleteError) {
-      alert(deleteError instanceof Error ? deleteError.message : "Unable to delete selected GRN records.");
-    }
-  };
-
   return (
     <div className="mx-auto max-w-[1500px] space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
-          <Link href={basePath} className="text-xs font-semibold text-emerald-700">&larr; RM GRN</Link>
-          <h1 className="mt-3 text-2xl font-bold text-slate-900">RM GRN Report</h1>
+          <h1 className="mt-3 text-2xl font-bold text-slate-900">{assetMode ? "Asset GRN Report" : "RM GRN Report"}</h1>
         </div>
 
         <Button type="button" variant="primary" size="sm" onClick={() => router.push(`${basePath}/create`)}>
-          Create GRN
+          {assetMode ? "Create Asset GRN" : "Create GRN"}
         </Button>
       </header>
-
-      {showDeleteConfirmation && (
-        <Modal open={showDeleteConfirmation} onClose={() => setShowDeleteConfirmation(false)} ariaLabel="Delete selected GRN records" variant="danger" size="sm" className="p-5">
-          <div className="space-y-4">
-            <div>
-              <h3 id="delete-grn-title" className="text-base font-bold text-slate-900">Delete selected GRN records?</h3>
-              <p className="mt-1 text-xs text-slate-500">This will permanently remove {selectedIds.length} selected record{selectedIds.length === 1 ? "" : "s"} from the report.</p>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowDeleteConfirmation(false)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700">
-                Cancel
-              </button>
-              <button type="button" onClick={() => void handleDeleteSelected()} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white">
-                Delete Records
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
 
       {loading ? (
         <div className="erp-surface flex min-h-48 items-center justify-center text-sm text-slate-500">Loading GRN report...</div>
@@ -139,26 +100,24 @@ export default function RmGrnReportPage() {
       ) : (
         <div className="erp-surface overflow-hidden">
           <ReportGrid
-            title="RM GRN Register"
+            title={assetMode ? "Asset GRN Register" : "RM GRN Register"}
             records={reportRows}
             fields={reportFields}
             visibleFields={visibleFields}
             onVisibleFieldsChange={(next) => setVisibleFields(next as ReceiptField[])}
             rowIdSelector={(row) => row.id}
-            selectedIds={selectedIds}
+            storageKey={`${assetMode ? "asset" : "rm"}-grn-report-columns-${organizationId}`}
+            selectedIds={[]}
+            selectable={false}
             onRowClick={(recordId) => router.push(`${basePath}/report/${encodeURIComponent(recordId)}`)}
-            onToggleSelectAll={(checked) => setSelectedIds(checked ? reportRows.map((row) => row.id) : [])}
-            onToggleRowSelection={(recordId, checked) =>
-              setSelectedIds((current) => (checked ? [...new Set([...current, recordId])] : current.filter((id) => id !== recordId)))
-            }
-            onDeleteSelected={() => setShowDeleteConfirmation(true)}
-            deleteSelectedLabel="Delete Selected"
             renderCell={(fieldKey, row) => {
               switch (fieldKey as ReceiptField) {
                 case "receipt_no":
                   return row.receipt_no;
-                case "warehouse":
-                  return row.warehouse;
+                case "entityName":
+                  return row.entityName;
+                case "locationName":
+                  return row.locationName;
                 case "received_date":
                   return formatDate(row.received_date);
                 case "purchase_order_no":
@@ -173,7 +132,7 @@ export default function RmGrnReportPage() {
                   return "";
               }
             }}
-            emptyMessage="No raw-material GRN records found."
+            emptyMessage={assetMode ? "No asset GRN records found." : "No raw-material GRN records found."}
           />
         </div>
       )}

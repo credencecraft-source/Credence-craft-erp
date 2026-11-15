@@ -1,15 +1,19 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
 const movementTypes = new Set(["CHALLAN", "VISITOR", "STAFF", "COURIER", "OTHER"]);
 const directions = new Set(["INWARD", "OUTWARD"]);
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function errorStatus(error: unknown) {
+  return error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
 }
 
 function purchaseOrderWhere(organizationId: string, purchaseOrderNo: string) {
@@ -24,7 +28,9 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_GATE_ENTRIES");
     const challanNo = text(searchParams.get("challanNo"));
+    const entryId = text(searchParams.get("entryId"));
 
     if (challanNo) {
       const purchaseOrder = await prisma.purchaseOrder.findFirst({
@@ -37,14 +43,17 @@ export async function GET(request: Request) {
     }
 
     const entries = await prisma.gateEntry.findMany({
-      where: { organization_id: organization.id },
+      where: { organization_id: organization.id, ...(entryId ? { id: entryId } : {}) },
       orderBy: { entry_at: "desc" },
-      take: 100,
+      ...(entryId ? {} : { take: 100 }),
       include: { purchaseOrder: { select: { purchase_order_no: true } } },
     });
+    if (entryId && entries.length === 0) {
+      return NextResponse.json({ error: "Gate entry was not found." }, { status: 404 });
+    }
     return NextResponse.json({ entries });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load gate entries." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load gate entries." }, { status: errorStatus(error) });
   }
 }
 
@@ -53,6 +62,7 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const body = await request.json() as Record<string, unknown>;
     const organization = await requireOrganizationContext(user.id, text(body.organizationId));
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_GATE_ENTRIES");
     const direction = text(body.direction).toUpperCase();
     const movementType = text(body.movementType).toUpperCase();
     const personName = text(body.personName);
@@ -64,58 +74,37 @@ export async function POST(request: Request) {
       : null;
     if (movementType === "CHALLAN" && !purchaseOrder) throw new Error("A valid challan number is required for challan movement.");
 
-    const result = await prisma.$transaction(async (transaction) => {
-      const entry = await transaction.gateEntry.create({
-        data: {
-          organization_id: organization.id,
-          purchase_order_id: purchaseOrder?.id,
-          entry_no: `GE-${Date.now()}-${randomUUID().slice(0, 6).toUpperCase()}`,
-          direction,
-          movement_type: movementType,
-          challan_no: challanNo || (purchaseOrder?.display_no ? `PO-${purchaseOrder.display_no}` : purchaseOrder?.purchase_order_no),
-          person_name: personName,
-          company_name: text(body.companyName) || null,
-          id_type: text(body.idType) || null,
-          id_number: text(body.idNumber) || null,
-          contact_number: text(body.contactNumber) || null,
-          vehicle_number: text(body.vehicleNumber) || null,
-          purpose: text(body.purpose) || null,
-          item_description: text(body.itemDescription) || null,
-          quantity: text(body.quantity) ? Number(body.quantity) : null,
-          from_to: text(body.fromTo) || null,
-          entry_at: text(body.entryAt) ? new Date(text(body.entryAt)) : new Date(),
-          notes: text(body.notes) || null,
-          created_by: user.full_name || user.email,
-        },
-        include: { purchaseOrder: { select: { purchase_order_no: true } } },
-      });
-
-      let grn = null;
-      if (movementType === "CHALLAN" && purchaseOrder) {
-        grn = await transaction.inventoryReceipt.findFirst({ where: { organization_id: organization.id, purchase_order_id: purchaseOrder.id, status: "DRAFT" }, select: { id: true, receipt_no: true } });
-        if (!grn) {
-          const orderLines = await transaction.purchaseOrderLine.findMany({ where: { purchase_order_id: purchaseOrder.id } });
-          grn = await transaction.inventoryReceipt.create({
-            data: {
-              organization_id: organization.id,
-              purchase_order_id: purchaseOrder.id,
-              receipt_no: `GRN-${Date.now()}-${randomUUID().slice(0, 6).toUpperCase()}`,
-              status: "DRAFT",
-              warehouse: "Main Warehouse",
-              received_date: text(body.entryAt) ? new Date(text(body.entryAt)) : new Date(),
-              received_by: user.full_name || user.email,
-              notes: `Created from Gate Entry ${entry.entry_no}`,
-              lines: { create: orderLines.map((line) => ({ purchase_order_line_id: line.id, raw_material: line.raw_material, ordered_quantity: line.quantity, received_quantity: 0, accepted_quantity: 0, rejected_quantity: 0 })) },
-            },
-            select: { id: true, receipt_no: true },
-          });
-        }
-      }
-      return { entry, grn };
-    });
-    return NextResponse.json({ ok: true, entry: result.entry, grn: result.grn }, { status: 201 });
+    const entry = await prisma.$transaction(async (transaction) => transaction.gateEntry.create({
+      data: {
+        organization_id: organization.id,
+        purchase_order_id: purchaseOrder?.id,
+        entry_no: await reserveChallanNumber(organization.id, "GATE_ENTRY", transaction),
+        direction,
+        movement_type: movementType,
+        challan_no: challanNo || (purchaseOrder?.display_no ? `PO-${purchaseOrder.display_no}` : purchaseOrder?.purchase_order_no),
+        person_name: personName,
+        company_name: text(body.companyName) || null,
+        id_type: text(body.idType) || null,
+        id_number: text(body.idNumber) || null,
+        contact_number: text(body.contactNumber) || null,
+        vehicle_number: text(body.vehicleNumber) || null,
+        purpose: text(body.purpose) || null,
+        item_description: text(body.itemDescription) || null,
+        quantity: text(body.quantity) ? Number(body.quantity) : null,
+        from_to: text(body.fromTo) || null,
+        entry_at: text(body.entryAt) ? new Date(text(body.entryAt)) : new Date(),
+        notes: text(body.notes) || null,
+        created_by: user.full_name,
+      },
+      include: { purchaseOrder: { select: { purchase_order_no: true } } },
+    }));
+    return NextResponse.json({
+      ok: true,
+      entry,
+      nextStep: movementType === "CHALLAN" ? "INVENTORY_RECEIVING" : "SECURITY_HANDOFF",
+    }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save gate entry." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save gate entry." }, { status: errorStatus(error) });
   }
 }
 
@@ -126,6 +115,7 @@ export async function DELETE(request: Request) {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const organizationId = text(searchParams.get("organizationId") || body.organizationId);
     const organization = await requireOrganizationContext(user.id, organizationId);
+    await requireOrganizationPermission(user.id, organizationId, "DELETE_GATE_ENTRIES");
     const rawIds = Array.isArray(body.entryIds) ? body.entryIds : Array.isArray(body.ids) ? body.ids : [];
     const entryIds = rawIds.map((id) => String(id).trim()).filter(Boolean);
 
@@ -142,6 +132,6 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ ok: true, deletedCount: result.count });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete gate entries." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete gate entries." }, { status: errorStatus(error) });
   }
 }

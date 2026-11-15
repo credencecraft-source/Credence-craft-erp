@@ -1,0 +1,155 @@
+import { Prisma } from "@prisma/client";
+import { NextResponse } from "next/server";
+
+import { requireSessionUser } from "@/lib/auth/session-manager";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
+import { measureDatabaseQueries } from "@/lib/database/prisma-query-timing";
+import {
+  createAdvanceBooking,
+  deleteAdvanceBookings,
+  getAdvanceBookingById,
+  listAdvanceBookings,
+  listAssignableWorkOrders,
+} from "@/lib/services/distribution/advance-booking-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+
+function errorResponse(error: unknown, fallback: string) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2021" || error.code === "P2022") {
+      return NextResponse.json({ error: "Advance Booking is unavailable until its database migration is deployed." }, { status: 503 });
+    }
+    if (error.code === "P2003") {
+      return NextResponse.json({ error: "Booking dependencies changed while deleting. Reload and follow the required deletion order." }, { status: 409 });
+    }
+    if (error.code === "P2002" || error.code === "P2034") {
+      return NextResponse.json({ error: "Advance booking data changed while saving or deleting. Reload and try again." }, { status: 409 });
+    }
+  }
+  if (isDatabaseUnavailableError(error)) {
+    console.error("Unable to access advance bookings because the database is unavailable.", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+  }
+  const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+  return NextResponse.json({ error: error instanceof Error ? error.message : fallback }, { status });
+}
+
+export async function GET(request: Request) {
+  try {
+    const search = new URL(request.url).searchParams;
+    const authorization = await measureDatabaseQueries(async () => {
+      const user = await requireSessionUser();
+      const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
+      await requireOrganizationPermission(user.id, organization.id, "VIEW_ORDERS");
+      return organization.id;
+    });
+    const bookingRecordId = search.get("bookingId")?.trim();
+    if (bookingRecordId) {
+      return NextResponse.json(await getAdvanceBookingById(authorization.value, bookingRecordId));
+    }
+    const bookingId = search.get("assignableWorkOrdersFor")?.trim();
+    if (bookingId) {
+      return NextResponse.json(await listAssignableWorkOrders(authorization.value, bookingId));
+    }
+    const limit = Number(search.get("limit") ?? 100);
+    const list = await measureDatabaseQueries(() => listAdvanceBookings(authorization.value, {
+      cursor: search.get("cursor") || undefined,
+      limit: Number.isFinite(limit) ? limit : 100,
+      view: search.get("view") ?? undefined,
+      search: search.get("search") ?? undefined,
+    }));
+    const response = NextResponse.json(list.value);
+    if (process.env.NODE_ENV === "development") {
+      response.headers.set("Server-Timing", [
+        `auth;dur=${authorization.durationMs.toFixed(1)}`,
+        `authdb;dur=${authorization.databaseDurationMs.toFixed(1)}`,
+        `list;dur=${list.durationMs.toFixed(1)}`,
+        `listdb;dur=${list.databaseDurationMs.toFixed(1)}`,
+        `listqueries;desc="${list.queryCount}"`,
+      ].join(", "));
+    }
+    return response;
+  } catch (error) {
+    return errorResponse(error, "Unable to load advance bookings.");
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const body = await request.json() as Record<string, unknown>;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error("Submit a valid advance booking.");
+    }
+    const organization = await requireOrganizationContext(
+      user.id,
+      String(body.organizationId ?? ""),
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
+    if (!Array.isArray(body.sizes)) throw new Error("Submit size-wise advance booking quantities.");
+    if (body.vendorId !== undefined && body.vendorId !== null && typeof body.vendorId !== "string") {
+      throw new Error("Select a valid optional End Customer.");
+    }
+    if (body.contactId !== undefined && body.contactId !== null && typeof body.contactId !== "string") {
+      throw new Error("Select a valid optional Contact Master contact.");
+    }
+    if (
+      typeof body.contactId === "string" && body.contactId.trim() &&
+      typeof body.vendorId === "string" && body.vendorId.trim()
+    ) {
+      throw new Error("Select an End Customer from either Contact Master or Vendor Master, not both.");
+    }
+    const sizes = body.sizes.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Each advance booking size quantity must be valid.");
+      }
+      const line = value as Record<string, unknown>;
+      const size = String(line.size ?? "").trim();
+      const quantity = typeof line.quantity === "number" ? line.quantity : Number.NaN;
+      if (!size || !Number.isSafeInteger(quantity) || quantity < 0) {
+        throw new Error("Each size needs a whole-number quantity of zero or more.");
+      }
+      if (quantity > 2147483647) {
+        throw new Error("Each size quantity must not exceed 2147483647.");
+      }
+      return { size, quantity };
+    });
+    const booking = await createAdvanceBooking(organization.id, user.id, {
+      orderId: String(body.orderId ?? "").trim(),
+      vendorId: typeof body.vendorId === "string" && body.vendorId.trim() ? body.vendorId.trim() : null,
+      contactId: typeof body.contactId === "string" && body.contactId.trim() ? body.contactId.trim() : null,
+      sizes,
+    });
+    return NextResponse.json({ booking }, { status: 201 });
+  } catch (error) {
+    return errorResponse(error, "Unable to create advance booking.");
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const body = await request.json() as Record<string, unknown>;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error("Submit a valid advance booking deletion request.");
+    }
+    if (typeof body.organizationId !== "string" || !body.organizationId.trim()) {
+      throw new Error("Select the organization for this booking deletion.");
+    }
+    const organization = await requireOrganizationContext(
+      user.id,
+      String(body.organizationId ?? ""),
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
+    if (!Array.isArray(body.bookingIds) || body.bookingIds.some((id) => typeof id !== "string")) {
+      throw new Error("Select advance bookings to delete.");
+    }
+    const result = await deleteAdvanceBookings(organization.id, user.id, body.bookingIds);
+    return NextResponse.json(result);
+  } catch (error) {
+    return errorResponse(error, "Unable to delete advance bookings.");
+  }
+}

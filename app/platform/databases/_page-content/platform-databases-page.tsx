@@ -5,10 +5,12 @@ import Button from "@/components/ui/Button";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
 import { listDatabaseConnections } from "@/lib/services/platform/database-connection-service";
 
 export default async function PlatformDatabasesPage() {
+  await requirePlatformConfigurationAccess();
   await ensurePlatformDefaults();
   const connections = await listDatabaseConnections();
 

@@ -1,14 +1,45 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { apiErrorResponse } from "@/lib/api/api-error-response";
+import {
+  approveGeneralPurchaseOrderPrice,
+  createGeneralPurchaseOrderFromGroups,
+  createGeneralPurchaseOrderGroups,
+  createGeneralPurchaseOrderRequests,
+  listGeneralPurchaseOrderGroups,
+  listGeneralPurchaseOrderRequests,
+  saveGeneralPurchaseOrderPrice,
+} from "@/lib/services/orders/general-purchase-order-service";
 import {
   createGroupedPurchaseOrder,
   getProcurementSummary,
-  listAllocatableBomRows,
-  listGroupedPurchaseOrders,
+  listAllocatableBomRowsPage,
+  listGroupedPurchaseOrdersPage,
 } from "@/lib/services/orders/grouped-purchase-order-service";
-import { createMasterPurchaseOrder, listMasterPurchaseOrders } from "@/lib/services/orders/master-purchase-order-service";
-import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+import { createMasterPurchaseOrder, listMasterPurchaseOrdersPage } from "@/lib/services/orders/master-purchase-order-service";
+import {
+  requireOrganizationContext,
+  requireOrganizationOrderManagementPermission,
+  requireOrganizationPermission,
+} from "@/lib/services/organizations/organization-service";
+
+function parsePageParameters(url: URL, defaultLimit = 50, cursorParameter = "cursor") {
+  const limitValues = url.searchParams.getAll("limit");
+  const cursorValues = url.searchParams.getAll(cursorParameter);
+  if (limitValues.length > 1 || cursorValues.length > 1) return null;
+
+  const limitValue = limitValues[0];
+  if (limitValue !== undefined && !/^[1-9]\d*$/.test(limitValue)) return null;
+
+  const cursor = cursorValues[0]?.trim();
+  if (cursorValues[0] !== undefined && (!cursor || cursor.length > 128)) return null;
+
+  return {
+    limit: Math.min(Number(limitValue ?? defaultLimit), 100),
+    ...(cursor ? { cursor } : {}),
+  };
+}
 
 export async function GET(request: Request) {
   try {
@@ -19,20 +50,107 @@ export async function GET(request: Request) {
 
     const organization = await requireOrganizationContext(user.id, organizationId);
     const view = url.searchParams.get("view") ?? "price-approval";
+    const resource = ["general-po", "general-groups", "general-po-request"].includes(view)
+      ? "procurement/general-po"
+      : "procurement/style-wise-po";
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, resource, "view");
+    const assetOnlyParameter = url.searchParams.get("isAsset");
+    if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
+      return NextResponse.json({ error: "Asset classification filter must be true or false." }, { status: 400 });
+    }
+    const assetClassification = assetOnlyParameter === null ? undefined : assetOnlyParameter === "true";
+    if (view === "general-po-request") {
+      const requestId = url.searchParams.get("requestId")?.trim();
+      if (!requestId) {
+        return NextResponse.json({ error: "General PO request ID is required." }, { status: 400 });
+      }
+      const result = await listGeneralPurchaseOrderRequests(
+        organization.id,
+        ["PENDING_PRICE_APPROVAL"],
+        { requestId, limit: 1, ...(assetClassification === undefined ? {} : { isAsset: assetClassification }) },
+      );
+      if (!result.requests[0]) {
+        return NextResponse.json({ error: "The pending General PO price request was not found." }, { status: 404 });
+      }
+      return NextResponse.json({ request: result.requests[0] });
+    }
+    if (view === "general-po") {
+      const statusParameter = url.searchParams.get("status");
+      const requestedStatuses = statusParameter?.split(",").map((status) => status.trim());
+      const allowedStatuses = ["PENDING_PRICE_APPROVAL", "PRICE_APPROVED", "PO_CREATED"];
+      if (requestedStatuses && (!requestedStatuses.length || requestedStatuses.some((status) => !allowedStatuses.includes(status)))) {
+        return NextResponse.json({ error: "One or more General PO statuses are invalid." }, { status: 400 });
+      }
+      const page = parsePageParameters(url);
+      if (!page) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
+      return NextResponse.json({
+        ...await listGeneralPurchaseOrderRequests(organization.id, requestedStatuses, {
+          ...page,
+          unGroupedOnly: url.searchParams.get("unGroupedOnly") === "true",
+          ...(assetClassification === undefined ? {} : { isAsset: assetClassification }),
+        }),
+      });
+    }
+    if (view === "general-groups") {
+      const statusParameter = url.searchParams.get("status");
+      const requestedStatuses = statusParameter?.split(",").map((status) => status.trim());
+      const allowedStatuses = ["MASTER_GROUPED", "PO_CREATED"];
+      if (requestedStatuses && (!requestedStatuses.length || requestedStatuses.some((status) => !allowedStatuses.includes(status)))) {
+        return NextResponse.json({ error: "One or more General PO group statuses are invalid." }, { status: 400 });
+      }
+      const page = parsePageParameters(url);
+      if (!page) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
+      return NextResponse.json(await listGeneralPurchaseOrderGroups(organization.id, requestedStatuses, {
+        ...page,
+        ...(assetClassification === undefined ? {} : { isAsset: assetClassification }),
+      }));
+    }
     if (view === "summary") {
       return NextResponse.json(await getProcurementSummary(organization.id));
     }
     if (view === "allocatable") {
-      return NextResponse.json({ bomRows: await listAllocatableBomRows(organization.id) });
+      const page = parsePageParameters(url, 100);
+      if (!page) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
+      return NextResponse.json(await listAllocatableBomRowsPage(organization.id, {
+        ...page,
+      }));
     }
 
-    const status = view === "all" ? undefined : ["PENDING_PRICE_APPROVAL", "PRICE_APPROVED"];
+    if (view === "all") {
+      const page = parsePageParameters(url);
+      if (!page) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
+      const result = await listGroupedPurchaseOrdersPage(organization.id, undefined, page);
+      return NextResponse.json({
+        groupedPurchaseOrders: result.groupedPurchaseOrders,
+        nextGroupedCursor: result.nextCursor,
+      });
+    }
+    const status = ["PENDING_PRICE_APPROVAL", "PRICE_APPROVED"];
+    const pageInput = parsePageParameters(url);
+    if (!pageInput) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
+    const include = url.searchParams.get("include") ?? "both";
+    const masterPageInput = view === "create" && include !== "grouped"
+      ? parsePageParameters(url, 50, "masterCursor")
+      : null;
+    if (view === "create" && include !== "grouped" && !masterPageInput) {
+      return NextResponse.json({ error: "Master purchase order pagination parameters are invalid." }, { status: 400 });
+    }
+    const groupedPagePromise = include !== "master"
+      ? listGroupedPurchaseOrdersPage(organization.id, status, pageInput)
+      : Promise.resolve(null);
+    const masterPagePromise = masterPageInput
+      ? listMasterPurchaseOrdersPage(organization.id, masterPageInput)
+      : Promise.resolve(null);
+    const [groupedPage, masterPage] = await Promise.all([groupedPagePromise, masterPagePromise]);
     return NextResponse.json({
-      groupedPurchaseOrders: await listGroupedPurchaseOrders(organization.id, status),
-      ...(view === "create" ? { masterPurchaseOrders: await listMasterPurchaseOrders(organization.id) } : {}),
+      ...(groupedPage ? { ...groupedPage, nextGroupedCursor: groupedPage.nextCursor } : {}),
+      ...(masterPage ? { ...masterPage, nextMasterCursor: masterPage.nextCursor } : {}),
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load procurement records." }, { status: 400 });
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: "You do not have permission to view Purchase Orders." }, { status: 403 });
+    }
+    return apiErrorResponse(error, { context: "procurement.GET" });
   }
 }
 
@@ -41,26 +159,111 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const body = await request.json();
     const organizationId = String(body.organizationId ?? "");
+    if (body.action === "create-general-requests") {
+      const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/general-po", "create");
+      const requestRows = Array.isArray(body.requests) ? body.requests : [];
+      if (requestRows.some((item: unknown) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+        const values = item as Record<string, unknown>;
+        return values.isAsset !== undefined && typeof values.isAsset !== "boolean";
+      })) {
+        return NextResponse.json({ error: "Every material line must have a valid asset classification." }, { status: 400 });
+      }
+      const generalPurchaseOrderRequests = await createGeneralPurchaseOrderRequests(
+        organization.id,
+        requestRows.length
+          ? requestRows.map((item: { entityId?: unknown; rawMaterialId?: unknown; quantity?: unknown; isAsset?: boolean }) => ({
+              entityId: String(item.entityId ?? ""),
+              rawMaterialId: String(item.rawMaterialId ?? ""),
+              quantity: item.quantity as number | string,
+              ...(item.isAsset === undefined ? {} : { isAsset: item.isAsset }),
+            }))
+          : [],
+        user.full_name,
+        user.id,
+      );
+      return NextResponse.json({ ok: true, generalPurchaseOrderRequests }, { status: 201 });
+    }
+    if (body.action === "save-general-price") {
+      const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/general-po", "edit");
+      await saveGeneralPurchaseOrderPrice(
+        organization.id,
+        String(body.requestId ?? ""),
+        {
+          vendorId: String(body.vendorId ?? ""),
+          vendorPrice: body.vendorPrice as number | string,
+          quantity: body.quantity as number | string,
+          gstMasterId: body.gstMasterId ? String(body.gstMasterId) : null,
+          hsnCode: body.hsnCode ? String(body.hsnCode) : null,
+        },
+        user.id,
+      );
+      return NextResponse.json({ ok: true });
+    }
+    if (body.action === "approve-general-price") {
+      const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationPermission(user.id, organization.id, "APPROVE_PURCHASE_ORDERS");
+      const result = await approveGeneralPurchaseOrderPrice(
+        organization.id,
+        String(body.requestId ?? ""),
+        user.full_name,
+        user.id,
+      );
+      return NextResponse.json({ ok: true, request: result });
+    }
+    if (body.action === "create-general-po") {
+      const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/general-po", "create");
+      const purchaseOrder = await createGeneralPurchaseOrderFromGroups(
+        organization.id,
+        Array.isArray(body.groupIds) ? body.groupIds.map(String) : [],
+        user.full_name,
+        user.id,
+        body.poDate ? String(body.poDate) : null,
+        body.deliveryDate ? String(body.deliveryDate) : null,
+      );
+      return NextResponse.json({ ok: true, purchaseOrder }, { status: 201 });
+    }
+    if (body.action === "create-general-master-groups") {
+      const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/general-po", "create");
+      const groups = await createGeneralPurchaseOrderGroups(
+        organization.id,
+        Array.isArray(body.requestIds) ? body.requestIds.map(String) : [],
+        user.full_name,
+        user.id,
+        body.entityId ? String(body.entityId) : null,
+      );
+      return NextResponse.json({ ok: true, groups }, { status: 201 });
+    }
     if (body.action === "master-group") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/style-wise-po", "create");
       const masterPurchaseOrder = await createMasterPurchaseOrder(
         organization.id,
         Array.isArray(body.groupedPurchaseOrderIds) ? body.groupedPurchaseOrderIds.map((id: unknown) => String(id)) : [],
-        user.full_name || user.email,
+        user.full_name,
       );
       return NextResponse.json({ ok: true, masterPurchaseOrder }, { status: 201 });
     }
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationOrderManagementPermission(user.id, organization.id, "procurement/style-wise-po", "create");
     const groupedPurchaseOrder = await createGroupedPurchaseOrder({
       organizationId: organization.id,
       vendorId: String(body.vendorId ?? ""),
-      submittedBy: user.full_name || user.email,
+      submittedBy: user.full_name,
+      submittedByUserId: user.id,
       lines: Array.isArray(body.lines)
         ? body.lines.map((line: { bomItemId?: unknown; groupedQty?: unknown }) => ({ bomItemId: String(line.bomItemId ?? ""), groupedQty: line.groupedQty as number | string }))
         : [],
     });
     return NextResponse.json({ ok: true, groupedPurchaseOrder }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create grouped purchase order." }, { status: 400 });
+    if (error instanceof Error && error.message.startsWith("Access denied:")) {
+      return NextResponse.json({ error: "You do not have permission to manage Purchase Orders." }, { status: 403 });
+    }
+    return apiErrorResponse(error, { context: "procurement.POST" });
   }
 }

@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 import { cn } from "@/lib/utilities/utility-helpers";
 
-type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+type ButtonVariant = "primary" | "secondary" | "outline" | "ghost" | "destructive" | "danger" | "card";
 type ButtonSize = "sm" | "md" | "lg";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -23,11 +23,17 @@ export default function Button({
     primary:
       "border border-[var(--erp-brand)] bg-[var(--erp-brand)] text-white shadow-sm hover:bg-[var(--erp-brand-hover)] focus-visible:ring-[var(--erp-brand)]",
     secondary:
-      "border border-[var(--erp-border)] bg-[var(--erp-surface)] text-slate-800 shadow-sm hover:bg-[var(--erp-surface-soft)] focus-visible:ring-slate-500",
+      "border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-text)] shadow-sm hover:bg-[var(--erp-surface-soft)] focus-visible:ring-[var(--erp-brand)]",
+    outline:
+      "border border-[var(--erp-brand)] bg-transparent text-[var(--erp-brand)] shadow-sm hover:bg-[var(--erp-brand-soft)] focus-visible:ring-[var(--erp-brand)]",
+    destructive:
+      "border border-[var(--erp-danger)] bg-[var(--erp-danger)] text-white shadow-sm hover:bg-[var(--erp-danger-hover)] focus-visible:ring-[var(--erp-danger)]",
     danger:
-      "border border-red-600 bg-red-600 text-white shadow-sm hover:bg-red-700 focus-visible:ring-red-600",
+      "border border-[var(--erp-danger)] bg-[var(--erp-danger)] text-white shadow-sm hover:bg-[var(--erp-danger-hover)] focus-visible:ring-[var(--erp-danger)]",
     ghost:
-      "border border-transparent bg-transparent text-slate-700 hover:bg-[var(--erp-surface-soft)] focus-visible:ring-slate-500",
+      "border border-transparent bg-transparent text-[var(--erp-text)] hover:bg-[var(--erp-surface-soft)] focus-visible:ring-[var(--erp-brand)]",
+    card:
+      "flex-col items-stretch justify-start rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] text-left text-[var(--erp-text)] shadow-sm hover:border-[var(--erp-brand)] hover:bg-[var(--erp-surface)] hover:shadow-md focus-visible:ring-[var(--erp-brand)]",
   };
 
   const sizes = {

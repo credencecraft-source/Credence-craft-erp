@@ -6,7 +6,7 @@ import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
-import { createSegment, deleteSegment, listSegments } from "@/lib/services/platform/segment-service";
+import { createSegment, deleteSegment, listSegments, updateSegmentSortOrder } from "@/lib/services/platform/segment-service";
 
 export default async function SegmentsPage({
   searchParams,
@@ -41,6 +41,19 @@ export default async function SegmentsPage({
     redirect("/platform/segments");
   }
 
+  async function updateOrderAction(formData: FormData) {
+    "use server";
+    try {
+      await updateSegmentSortOrder(
+        String(formData.get("id") || ""),
+        Number(formData.get("sortOrder") || 0),
+      );
+    } catch (error) {
+      redirect(`/platform/segments?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to update segment rank.")}`);
+    }
+    redirect("/platform/segments");
+  }
+
   return (
     <Page className="max-w-5xl">
       <Section className="space-y-6">
@@ -63,15 +76,16 @@ export default async function SegmentsPage({
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <Table>
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-              <tr><th className="px-4 py-3">Segment</th><th className="px-4 py-3">Description</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr>
+              <tr><th className="px-4 py-3">Rank</th><th className="px-4 py-3">Segment</th><th className="px-4 py-3">Description</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm">
               {segments.map((segment) => (
                 <tr key={segment.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3"><form action={updateOrderAction} className="flex items-center gap-2"><input type="hidden" name="id" value={segment.id} /><Input name="sortOrder" type="number" min="1" defaultValue={segment.sort_order} aria-label={`Rank for ${segment.name}`} className="w-16 px-2 py-1 text-center text-sm" /><Button type="submit" size="sm" variant="secondary">Save</Button></form></td>
                   <td className="px-4 py-3 font-semibold text-slate-900">{segment.name}</td>
                   <td className="px-4 py-3 text-slate-600">{segment.description || "-"}</td>
                   <td className="px-4 py-3"><span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">{segment.is_active ? "Active" : "Inactive"}</span></td>
-                  <td className="px-4 py-3 text-right"><form action={deleteAction}><input type="hidden" name="id" value={segment.id} /><button type="submit" className="text-xs font-semibold text-rose-600 hover:underline">Delete</button></form></td>
+                  <td className="px-4 py-3 text-right"><form action={deleteAction}><input type="hidden" name="id" value={segment.id} /><Button type="submit" size="sm" variant="danger">Delete</Button></form></td>
                 </tr>
               ))}
             </tbody>

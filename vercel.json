@@ -1,0 +1,22 @@
+{
+  "git": {
+    "deploymentEnabled": {
+      "test-branch": false
+    }
+  },
+  "buildCommand": "npm run db:migrate:deploy && npm run build",
+  "crons": [
+    {
+      "path": "/api/cron/platform-whatsapp-campaigns",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/aggregate-usage",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/finance-sync",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}

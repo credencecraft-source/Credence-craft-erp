@@ -1,123 +1,380 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { createMasterValueForOrganization, getMasterValuesForOrganization, getMasterDefinition } from "@/lib/master-data/master-data-constants";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
+import { getOrganizationForUser, getOrganizationShellContext, requireOrganizationAccess, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { createMasterValueForOrganization, getActiveOrganizationDummyDataBatch, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
+import { listVendorSelectOptionsForOrganization } from "@/lib/services/master-data/vendor-select-lookup-service";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
+
+type OrderedMasterValue = {
+  parent_id?: string | null;
+  fields?: Record<string, unknown>;
+};
+
+type MasterLookupRouteProfile = {
+  startedAt: number;
+  organizationMs: number;
+  lookupMs: number;
+};
+
+function profiledJsonResponse(
+  body: unknown,
+  init?: ResponseInit,
+  profile?: MasterLookupRouteProfile,
+) {
+  const serializationStartedAt = profile ? performance.now() : 0;
+  const response = NextResponse.json(body, init);
+  if (profile) {
+    const duration = (value: number) => Math.max(0, value).toFixed(1);
+    response.headers.set(
+      "Server-Timing",
+      `organization;dur=${duration(profile.organizationMs)}, lookup;dur=${duration(profile.lookupMs)}, json;dur=${duration(performance.now() - serializationStartedAt)}, total;dur=${duration(performance.now() - profile.startedAt)}`,
+    );
+  }
+  return response;
+}
+
+function groupMasterValues<T extends OrderedMasterValue>(
+  values: readonly T[],
+  orderField: string,
+) {
+  const groups = new Map<string, T[]>();
+  for (const value of values) {
+    if (!value.parent_id) continue;
+    const group = groups.get(value.parent_id) ?? [];
+    group.push(value);
+    groups.set(value.parent_id, group);
+  }
+  for (const group of groups.values()) {
+    group.sort((left, right) =>
+      Number(left.fields?.[orderField] ?? 0) - Number(right.fields?.[orderField] ?? 0),
+    );
+  }
+  return groups;
+}
 
 export async function GET(
   request: Request,
   context: { params: Promise<{ organizationId: string; moduleKey: string }> }
 ) {
+  const profile = process.env.NODE_ENV === "development"
+    ? { startedAt: performance.now(), organizationMs: 0, lookupMs: 0 }
+    : undefined;
+  let lookupStartedAt: number | undefined;
+  const respond = (body: unknown, init?: ResponseInit) =>
+    profiledJsonResponse(body, init, profile);
+
   try {
     const { organizationId, moduleKey } = await context.params;
     const { searchParams } = new URL(request.url);
     const includeInactive = searchParams.get("includeInactive") !== "false";
+    const includeDummyData = moduleKey === "vendor" && searchParams.get("includeDummyData") === "true";
+    const entityId = moduleKey === "location" ? searchParams.get("entityId") || undefined : undefined;
+    const parentId = searchParams.get("parentId") || undefined;
     const search = searchParams.get("search") || undefined;
+    const exactSearch = searchParams.get("exact") === "true";
+    const paginated = searchParams.get("page") === "true";
+    const cursor = searchParams.get("cursor") || undefined;
+    const rawFilters = searchParams.get("filters");
+    let filters: Record<string, { operator: string; value: string }> | undefined;
+    if (rawFilters) {
+      try {
+        const parsedFilters: unknown = JSON.parse(rawFilters);
+        if (typeof parsedFilters !== "object" || parsedFilters === null || Array.isArray(parsedFilters)) {
+          return respond({ error: "Master report filters are invalid." }, { status: 400 });
+        }
+        const entries = Object.entries(parsedFilters);
+        if (entries.length > 20 || entries.some(([, filter]) =>
+          typeof filter !== "object" || filter === null || Array.isArray(filter)
+          || !("operator" in filter) || !["contains", "is", "notContains", "empty"].includes(String(filter.operator))
+          || !("value" in filter) || typeof filter.value !== "string" || filter.value.length > 200,
+        )) {
+          return respond({ error: "Master report filters are invalid." }, { status: 400 });
+        }
+        filters = Object.fromEntries(entries) as Record<string, { operator: string; value: string }>;
+      } catch {
+        return respond({ error: "Master report filters are invalid." }, { status: 400 });
+      }
+    }
+    const compactOrderLookups = searchParams.get("shape") === "compact";
     const requestedLimit = Number(searchParams.get("limit") || 100);
-    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100;
+    const maximumLimit = moduleKey === "order-lookups" ? 500 : 200;
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), maximumLimit) : 100;
+    if (cursor && (!paginated || cursor.length > 128)) {
+      return respond({ error: "The master record cursor is invalid." }, { status: 400 });
+    }
+    const respondWithPage = (items: unknown[]) => {
+      if (!paginated) return respond(items);
+      const pageItems = items.slice(0, limit);
+      const hasMore = items.length > limit;
+      return respond({
+        items: pageItems,
+        hasMore,
+        nextCursor: hasMore && pageItems.length > 0
+          ? (pageItems[pageItems.length - 1] as { id?: string }).id ?? null
+          : null,
+      });
+    };
 
     if (!organizationId) {
-      return NextResponse.json({ error: "Organization ID is required" }, { status: 400 });
+      return respond({ error: "Organization ID is required" }, { status: 400 });
     }
 
     const user = await requireSessionUser();
     if (!user.workspace_id) {
-      return NextResponse.json({ error: "Unauthorized user workspace" }, { status: 401 });
+      return respond({ error: "Unauthorized user workspace" }, { status: 401 });
     }
 
-    const organization = await getOrganizationForUser(user.id, organizationId);
+    const organizationStartedAt = profile ? performance.now() : 0;
+    const organization = await getOrganizationShellContext(user.id, organizationId);
+    if (profile) profile.organizationMs = performance.now() - organizationStartedAt;
     if (!organization) {
-      return NextResponse.json({ error: "Organization not found" }, { status: 404 });
+      return respond({ error: "Organization not found" }, { status: 404 });
+    }
+
+    if (moduleKey === "vendor" && includeDummyData && searchParams.get("shape") === "select") {
+      lookupStartedAt = profile ? performance.now() : undefined;
+      const vendorOptions = await listVendorSelectOptionsForOrganization(organization.id, {
+        limit,
+        includeInactive,
+      });
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respond(vendorOptions);
     }
 
     if (moduleKey === "order-lookups") {
-      const lookupKeys = ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group", "size", "raw-material-type", "raw-material-category", "raw-material-sub-category", "raw-material"];
-      const lookupValues = await Promise.all(
-        lookupKeys.map(async (key) => [
-          key,
-          await getMasterValuesForOrganization(organization.id, key, includeInactive, { limit }),
-        ] as const),
+      const allLookupKeys = ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group", "size", "raw-material-type", "raw-material-category", "raw-material-sub-category", "raw-material", "product-master"];
+      const requestedKeys = searchParams.get("keys")?.split(",").map((key) => key.trim()).filter(Boolean);
+      const invalidKeys = requestedKeys?.filter((key) => !allLookupKeys.includes(key));
+      if (invalidKeys?.length) {
+        return respond({ error: "One or more requested order lookup keys are invalid." }, { status: 400 });
+      }
+      lookupStartedAt = profile ? performance.now() : undefined;
+      const lookupKeys = requestedKeys?.length
+        ? allLookupKeys.filter((key) => requestedKeys.includes(key))
+        : allLookupKeys;
+      const includeSizeGroupSizes = searchParams.get("includeSizeGroupSizes") !== "false";
+      const includeLookupDummyData = searchParams.get("includeDummyData") !== "false";
+      const skippedLookupLabels = new Set(
+        (searchParams.get("skipLookupLabels") ?? "")
+          .split(",")
+          .map((key) => key.trim())
+          .filter((key) => lookupKeys.includes(key)),
       );
-      const masterOptions = Object.fromEntries(lookupValues);
+      const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
+      const lookupValues = await Promise.all(
+        lookupKeys.map(async (key) => {
+          let sizeLinksPromise: ReturnType<typeof getSizeGroupSizesForOrganization> | undefined;
+          const values = await getMasterValuesForOrganization(organization.id, key, includeInactive, {
+            limit,
+            includeDummyData: includeLookupDummyData,
+            includeLookupLabels: !skippedLookupLabels.has(key),
+            activeDummyDataBatch,
+            ...(key === "size-group" && includeSizeGroupSizes ? {
+              onRowsFetched: (rowIds) => {
+                sizeLinksPromise = getSizeGroupSizesForOrganization(organization.id, rowIds, true);
+                return sizeLinksPromise.then(() => undefined);
+              },
+            } : {}),
+            ...(requestedKeys?.length && key === "article" ? { includeArticleMetrics: false } : {}),
+            ...(key === "article"
+              ? { includeArticleDetails: searchParams.get("includeArticleDetails") !== "false" }
+              : {}),
+          });
+          const sizeLinks = key === "size-group"
+            ? await sizeLinksPromise
+            : undefined;
+          return [key, values, sizeLinks] as const;
+        }),
+      );
+      const masterOptions = Object.fromEntries(lookupValues.map(([key, values]) => [key, values]));
       const buyers = masterOptions.buyer;
       const seasons = masterOptions.season;
       const brands = masterOptions.brand;
       const articles = masterOptions.article;
       const colors = masterOptions.color;
-      const sizes = masterOptions.size;
-      const sizeGroups = masterOptions["size-group"].map((group) => ({
+      const sizeGroupOptions = masterOptions["size-group"] ?? [];
+      const sizeLinks = lookupValues.find(([key]) => key === "size-group")?.[2] ?? [];
+      const sizesByGroup = new Map<string, typeof sizeLinks>();
+      for (const link of sizeLinks) {
+        const groupSizes = sizesByGroup.get(link.groupId) ?? [];
+        groupSizes.push(link);
+        sizesByGroup.set(link.groupId, groupSizes);
+      }
+      const sizeGroups = sizeGroupOptions.map((group) => ({
         ...group,
-        sizes: sizes.filter((size) => size.parent_id === group.value_id || size.parent_id === group.id),
+        sizes: (sizesByGroup.get(group.id) ?? []).map((link) => link.size),
       }));
       const enrichedMasterOptions = { ...masterOptions, "size-group": sizeGroups };
 
-      return NextResponse.json({
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      const responseBody = {
         masterOptions: enrichedMasterOptions,
+        orderLookups: ORDER_LOOKUP_FIELDS,
+      };
+      if (compactOrderLookups) {
+        return respond(responseBody);
+      }
+
+      return respond({
+        ...responseBody,
         buyers,
         seasons,
         brands,
         articles,
         colors,
         sizeGroups,
-        orderLookups: ORDER_LOOKUP_FIELDS,
       });
     }
 
-    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit });
-    if (moduleKey === "process-template") {
-      const steps = await getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500 });
-      const operationTemplates = await getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500 });
-      const operationSteps = await getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500 });
+    lookupStartedAt = profile ? performance.now() : undefined;
+    const activeDummyDataBatch = ["size-group", "process-template"].includes(moduleKey)
+      ? getActiveOrganizationDummyDataBatch(organization.id)
+      : undefined;
+    const selectShape = searchParams.get("shape") === "select";
+    let sizeLinksPromise: ReturnType<typeof getSizeGroupSizesForOrganization> | undefined;
+    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, {
+      search,
+      filters,
+      limit: paginated ? limit + 1 : limit,
+      cursor,
+      exactSearch,
+      includeDummyData,
+      entityId,
+      parentId,
+      ...(activeDummyDataBatch ? { activeDummyDataBatch } : {}),
+      ...(moduleKey === "size-group" && !selectShape ? {
+        onRowsFetched: (rowIds) => {
+          sizeLinksPromise = getSizeGroupSizesForOrganization(
+            organization.id,
+            rowIds,
+            false,
+            activeDummyDataBatch,
+          );
+          return sizeLinksPromise.then(() => undefined);
+        },
+      } : {}),
+    });
+    if (selectShape) {
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respondWithPage(values.map(({ id, label }) => ({ id, label })));
+    }
+    if (moduleKey === "size-group") {
+      const sizeLinks = sizeLinksPromise ? await sizeLinksPromise : [];
+      const sizesByGroup = new Map<string, typeof sizeLinks[number][]>();
+      for (const link of sizeLinks) {
+        if (!includeInactive && !link.size.is_active) continue;
+        const groupSizes = sizesByGroup.get(link.groupId) ?? [];
+        groupSizes.push(link);
+        sizesByGroup.set(link.groupId, groupSizes);
+      }
 
-      return NextResponse.json(values.map((template) => ({
-        ...template,
-        steps: steps
-          .filter((step) => step.parent_id === template.id)
-          .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
-          .map((step) => {
-            const processName = String(step.fields?.Process ?? step.label).trim();
-            const legacyOperationTemplateName = String(step.fields?.Operation_Template ?? "").trim();
-            const matchingOperationTemplates = operationTemplates
-              .filter((item) => String(item.fields?.Process ?? "").trim() === processName)
-              .sort((left, right) => Number(left.fields?.Sort_Order ?? 0) - Number(right.fields?.Sort_Order ?? 0));
-            const operationTemplate = matchingOperationTemplates[0]
-              ?? operationTemplates.find((item) => item.label === legacyOperationTemplateName);
-            const operationTemplateName = operationTemplate?.label ?? legacyOperationTemplateName;
-            const mapOperations = (selectedOperationTemplate: typeof operationTemplate) => selectedOperationTemplate
-              ? operationSteps
-                  .filter((operationStep) => operationStep.parent_id === selectedOperationTemplate.id)
-                  .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
-                  .map((operationStep) => ({
-                    id: operationStep.id,
-                    valueId: operationStep.value_id,
-                    slNo: Number(operationStep.fields?.Sl_No ?? 0),
-                    operation: String(operationStep.fields?.Operation ?? operationStep.label),
-                    price: Number(operationStep.fields?.Price ?? 0),
-                  }))
-              : [];
-
-            return {
-              id: step.id,
-              valueId: step.value_id,
-              slNo: Number(step.fields?.Sl_No ?? 0),
-              processName,
-              operationTemplateName: operationTemplateName || null,
-              operationTemplateId: operationTemplate?.id ?? null,
-              operationTemplates: matchingOperationTemplates.map((candidate) => ({
-                id: candidate.id,
-                valueId: candidate.value_id,
-                label: candidate.label,
-                operations: mapOperations(candidate),
-              })),
-              operations: mapOperations(operationTemplate),
-            };
-          }),
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respondWithPage(values.map((group) => ({
+        ...group,
+        sizes: (sizesByGroup.get(group.id) ?? []).map((link) => link.size),
       })));
     }
-    return NextResponse.json(values);
-  } catch (error: any) {
+    if (moduleKey === "process-template") {
+      const [steps, operationTemplates, operationSteps] = await Promise.all([
+        getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500, activeDummyDataBatch }),
+        getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500, activeDummyDataBatch }),
+        getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500, activeDummyDataBatch }),
+      ]);
+      const stepsByTemplate = groupMasterValues(steps, "Sl_No");
+      const operationTemplatesByProcess = new Map<string, typeof operationTemplates>();
+      const operationTemplateByLabel = new Map<string, (typeof operationTemplates)[number]>();
+      for (const operationTemplate of operationTemplates) {
+        const processName = String(operationTemplate.fields?.Process ?? "").trim();
+        const matchingTemplates = operationTemplatesByProcess.get(processName) ?? [];
+        matchingTemplates.push(operationTemplate);
+        operationTemplatesByProcess.set(processName, matchingTemplates);
+        if (!operationTemplateByLabel.has(operationTemplate.label)) {
+          operationTemplateByLabel.set(operationTemplate.label, operationTemplate);
+        }
+      }
+      for (const matchingTemplates of operationTemplatesByProcess.values()) {
+        matchingTemplates.sort((left, right) =>
+          Number(left.fields?.Sort_Order ?? 0) - Number(right.fields?.Sort_Order ?? 0),
+        );
+      }
+      const operationStepsByTemplate = groupMasterValues(operationSteps, "Sl_No");
+      const operationsByTemplate = new Map<string, Array<{
+        id: string;
+        valueId: string;
+        slNo: number;
+        operation: string;
+        price: number;
+      }>>();
+      for (const operationTemplate of operationTemplates) {
+        operationsByTemplate.set(
+          operationTemplate.id,
+          (operationStepsByTemplate.get(operationTemplate.id) ?? []).map((operationStep) => ({
+            id: operationStep.id,
+            valueId: operationStep.value_id,
+            slNo: Number(operationStep.fields?.Sl_No ?? 0),
+            operation: String(operationStep.fields?.Operation ?? operationStep.label),
+            price: Number(operationStep.fields?.Price ?? 0),
+          })),
+        );
+      }
+
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respondWithPage(values.map((template) => ({
+        ...template,
+        steps: (stepsByTemplate.get(template.id) ?? []).map((step) => {
+          const processName = String(step.fields?.Process ?? step.label).trim();
+          const legacyOperationTemplateName = String(step.fields?.Operation_Template ?? "").trim();
+          const matchingOperationTemplates = operationTemplatesByProcess.get(processName) ?? [];
+          const operationTemplate = operationTemplateByLabel.get(legacyOperationTemplateName)
+            ?? matchingOperationTemplates[0];
+          const operationTemplateName = operationTemplate?.label ?? legacyOperationTemplateName;
+          const mapOperations = (selectedOperationTemplate: typeof operationTemplate) =>
+            selectedOperationTemplate ? operationsByTemplate.get(selectedOperationTemplate.id) ?? [] : [];
+
+          return {
+            id: step.id,
+            valueId: step.value_id,
+            slNo: Number(step.fields?.Sl_No ?? 0),
+            processName,
+            isReturnableProcess: step.fields?.Is_Returnable_Process === true,
+            blockByProcessName: String(step.fields?.Block_By ?? "").trim() || null,
+            operationTemplateName: operationTemplateName || null,
+            operationTemplateId: operationTemplate?.id ?? null,
+            operationTemplates: matchingOperationTemplates.map((candidate) => ({
+              id: candidate.id,
+              valueId: candidate.value_id,
+              label: candidate.label,
+              operations: mapOperations(candidate),
+            })),
+            operations: mapOperations(operationTemplate),
+          };
+        }),
+      })));
+    }
+    if (profile && lookupStartedAt !== undefined) {
+      profile.lookupMs = performance.now() - lookupStartedAt;
+    }
+    return respondWithPage(values);
+  } catch (error: unknown) {
     console.error("Error fetching master data:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    if (profile && lookupStartedAt !== undefined) {
+      profile.lookupMs = performance.now() - lookupStartedAt;
+    }
+    if (isDatabaseUnavailableError(error)) {
+      return respond({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return respond({ error: "Unable to load master data. Please try again." }, { status: 500 });
   }
 }
 
@@ -145,8 +402,12 @@ export async function POST(
     }
 
     const body = await request.json();
-    await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
     const masterKey = routeModuleKey || body.masterKey || body.moduleKey || body.masterId || body.key;
+    if (masterKey === "storage-node") {
+      await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+    } else {
+      await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    }
     const label = body.label || body.name;
     const code = body.code;
     const description = body.description;
@@ -177,11 +438,16 @@ export async function POST(
       description: description ? String(description).trim() : null,
       parentValueId: parentId || null,
       fields,
+      createOnly: body.createOnly === true,
+      actorUserId: user.id,
+      ...(masterKey === "size" && typeof body.sizeGroupId === "string" && body.sizeGroupId.trim()
+        ? { sizeGroupId: body.sizeGroupId.trim() }
+        : {}),
     });
 
     const multiLookupField = definition.fields.find((field) => field.type === "lookup" && field.multiple && field.lookupModuleKey);
     const selectedValues = multiLookupField ? fields[multiLookupField.key] : [];
-    if (multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
+    if (masterKey !== "size-group" && multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
       for (const selectedValue of [...new Set(selectedValues.map((value: unknown) => String(value).trim()).filter(Boolean))]) {
         await createMasterValueForOrganization(organization.id, multiLookupField.lookupModuleKey, {
           label: selectedValue,
@@ -192,8 +458,8 @@ export async function POST(
     }
 
     return NextResponse.json(newMasterValue, { status: 201 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating master value:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Internal Server Error" }, { status: 500 });
   }
 }

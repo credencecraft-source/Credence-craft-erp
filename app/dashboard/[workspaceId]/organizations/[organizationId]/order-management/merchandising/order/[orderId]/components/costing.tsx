@@ -1,14 +1,38 @@
 "use client";
 
 import React, { useState } from "react";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
+import type { OrderFormState } from "./order-form-types";
 
 type CostingItem = {
   id: string;
-  category: string;
-  costType: string;
-  description: string;
-  amount: string;
+  category?: string;
+  costType?: string;
+  description?: string;
+  amount?: number | string | null;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isCostingItem = (value: unknown): value is CostingItem =>
+  isRecord(value)
+  && typeof value.id === "string"
+  && (value.category === undefined || typeof value.category === "string")
+  && (value.costType === undefined || typeof value.costType === "string")
+  && (value.description === undefined || typeof value.description === "string")
+  && (value.amount === undefined || value.amount === null || typeof value.amount === "number" || typeof value.amount === "string");
+
+const getRows = (form: unknown, key: "costingRows" | "actualCostingRows"): unknown[] => {
+  if (!isRecord(form)) return [];
+  const rows = form[key];
+  return Array.isArray(rows) ? rows : [];
+};
+
+const getCostingRows = (form: unknown, key: "costingRows" | "actualCostingRows"): CostingItem[] =>
+  getRows(form, key).filter(isCostingItem);
 
 const COST_CATEGORIES = [
   "Product Cost",
@@ -31,11 +55,11 @@ export default function CostingTab({
   form,
   setForm,
 }: {
-  form: any;
-  setForm: any;
+  form: OrderFormState;
+  setForm: React.Dispatch<React.SetStateAction<OrderFormState>>;
 }) {
-  const costingRows: CostingItem[] = form?.costingRows || [];
-  const actualCostingRows: CostingItem[] = form?.actualCostingRows || [];
+  const costingRows = getCostingRows(form, "costingRows");
+  const actualCostingRows = getCostingRows(form, "actualCostingRows");
   
   const [mainTab, setMainTab] = useState<string>("BUYER");
   const [activeCategory, setActiveCategory] = useState<string>(COST_CATEGORIES[0]);
@@ -50,23 +74,23 @@ export default function CostingTab({
       amount: "",
     };
     if (isActual) {
-      setForm((current: any) => ({
+      setForm((current) => ({
         ...current,
-        actualCostingRows: [...(current.actualCostingRows || []), newItem],
+        actualCostingRows: [...getCostingRows(current, "actualCostingRows"), newItem],
       }));
     } else {
-      setForm((current: any) => ({
+      setForm((current) => ({
         ...current,
-        costingRows: [...(current.costingRows || []), newItem],
+        costingRows: [...getCostingRows(current, "costingRows"), newItem],
       }));
     }
   };
 
   const updateCostingRow = (id: string, field: keyof CostingItem, value: string, isActual = false) => {
     const key = isActual ? "actualCostingRows" : "costingRows";
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      [key]: (current[key] || []).map((row: CostingItem) =>
+      [key]: getCostingRows(current, key).map((row) =>
         row.id === id ? { ...row, [field]: value } : row
       ),
     }));
@@ -74,9 +98,9 @@ export default function CostingTab({
 
   const removeCostingRow = (id: string, isActual = false) => {
     const key = isActual ? "actualCostingRows" : "costingRows";
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      [key]: (current[key] || []).filter((row: CostingItem) => row.id !== id),
+      [key]: getCostingRows(current, key).filter((row) => row.id !== id),
     }));
   };
 
@@ -102,7 +126,7 @@ export default function CostingTab({
       <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h3 className="text-sm font-bold text-slate-900">
-            All these for One PCS Cost. Freeze your costing. Once it's frozen, your team cannot purchase or spend beyond the budgeted rules unless costing is revised.
+            All these for One PCS Cost. Freeze your costing. Once it&apos;s frozen, your team cannot purchase or spend beyond the budgeted rules unless costing is revised.
           </h3>
         </div>
         <span className="shrink-0 px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-lg border border-emerald-200">
@@ -148,7 +172,9 @@ export default function CostingTab({
 
       {/* 2. MAIN SHEET TABS (BUYER COST SHEET vs ACTUAL COST SHEET) */}
       <div className="flex gap-3 border-b border-slate-200 pb-3">
-        <button
+        <Button
+          variant={mainTab === "BUYER" ? "primary" : "secondary"}
+          size="md"
           type="button"
           onClick={() => setMainTab("BUYER")}
           className={`px-5 py-2.5 font-bold rounded-xl text-xs transition-all flex items-center gap-2 ${
@@ -161,9 +187,11 @@ export default function CostingTab({
           <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 text-[10px]">
             ₹{buyerTotalCost.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
-        </button>
+        </Button>
 
-        <button
+        <Button
+          variant={mainTab === "ACTUAL" ? "primary" : "secondary"}
+          size="md"
           type="button"
           onClick={() => setMainTab("ACTUAL")}
           className={`px-5 py-2.5 font-bold rounded-xl text-xs transition-all flex items-center gap-2 ${
@@ -176,7 +204,7 @@ export default function CostingTab({
           <span className="ml-2 px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 text-[10px]">
             ₹{actualTotalCost.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
-        </button>
+        </Button>
       </div>
 
       {/* 3. CATEGORY TABS WITH TOTAL AMOUNTS EMBEDDED */}
@@ -187,7 +215,9 @@ export default function CostingTab({
             .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
           return (
-            <button
+            <Button
+              variant={activeCategory === category ? "primary" : "secondary"}
+              size="sm"
               key={category}
               type="button"
               onClick={() => setActiveCategory(category)}
@@ -203,7 +233,7 @@ export default function CostingTab({
               }`}>
                 ₹{categoryTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -218,7 +248,9 @@ export default function CostingTab({
               .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
             return (
-              <button
+              <Button
+                variant={activeBomCategory === bomCat ? "primary" : "secondary"}
+                size="sm"
                 key={bomCat}
                 type="button"
                 onClick={() => setActiveBomCategory(bomCat)}
@@ -234,7 +266,7 @@ export default function CostingTab({
                 }`}>
                   ₹{bomTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -260,13 +292,15 @@ export default function CostingTab({
                     ₹{catTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <button
+                <Button
+                  variant="primary"
+                  size="sm"
                   type="button"
                   onClick={() => addCostingRow(category, mainTab === "ACTUAL")}
                   className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-all flex items-center gap-1"
                 >
                   <span>+</span> Add Breakdown
-                </button>
+                </Button>
               </div>
 
               {categoryRows.length > 0 ? (
@@ -289,17 +323,15 @@ export default function CostingTab({
                         <tr key={row.id} className="hover:bg-slate-50/40">
                           <td className="p-2">
                             {category === "Raw Material" ? (
-                              <select
+                              <Select
+                                aria-label="BOM category"
                                 value={row.costType || activeBomCategory}
                                 onChange={(e) => updateCostingRow(row.id, "costType", e.target.value, mainTab === "ACTUAL")}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none transition-all bg-white"
-                              >
-                                {RAW_MATERIAL_BOM_CATEGORIES.map((bCat) => (
-                                  <option key={bCat} value={bCat}>{bCat}</option>
-                                ))}
-                              </select>
+                                options={RAW_MATERIAL_BOM_CATEGORIES.map((bCat) => ({ value: bCat, label: bCat }))}
+                              />
                             ) : (
-                              <input
+                              <Input
                                 type="text"
                                 value={row.costType}
                                 onChange={(e) => updateCostingRow(row.id, "costType", e.target.value, mainTab === "ACTUAL")}
@@ -309,7 +341,7 @@ export default function CostingTab({
                             )}
                           </td>
                           <td className="p-2">
-                            <input
+                            <Input
                               type="text"
                               value={row.description}
                               onChange={(e) => updateCostingRow(row.id, "description", e.target.value, mainTab === "ACTUAL")}
@@ -318,22 +350,24 @@ export default function CostingTab({
                             />
                           </td>
                           <td className="p-2">
-                            <input
+                            <Input
                               type="number"
-                              value={row.amount}
+                              value={row.amount ?? ""}
                               onChange={(e) => updateCostingRow(row.id, "amount", e.target.value, mainTab === "ACTUAL")}
                               placeholder="0.00"
                               className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-800 font-semibold focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none transition-all bg-white"
                             />
                           </td>
                           <td className="p-2 pt-3">
-                            <button
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               type="button"
                               onClick={() => removeCostingRow(row.id, mainTab === "ACTUAL")}
                               className="text-red-500 hover:text-red-700 font-semibold text-xs transition-colors"
                             >
                               Remove
-                            </button>
+                            </Button>
                           </td>
                         </tr>
                       ))}
@@ -342,7 +376,7 @@ export default function CostingTab({
                 </div>
               ) : (
                 <div className="p-8 text-center text-slate-400 text-xs italic bg-slate-50/30">
-                  No breakdown items added under {category} ({activeBomCategory}). Click "+ Add Breakdown" to start.
+                  No breakdown items added under {category} ({activeBomCategory}). Click &quot;+ Add Breakdown&quot; to start.
                 </div>
               )}
             </div>

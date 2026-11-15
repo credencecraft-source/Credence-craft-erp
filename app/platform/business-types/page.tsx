@@ -13,9 +13,12 @@ import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
+import { getErpBusinessTypeDisplayName } from "@/components/erp/erp-config-registry";
+
+export const dynamic = "force-dynamic";
 
 function getBusinessTypeLabel(name: string) {
-  return name.trim().toLowerCase() === "settings" ? "Admin" : name;
+  return name.trim().toLowerCase() === "settings" ? "Admin" : getErpBusinessTypeDisplayName(name);
 }
 
 export default async function BusinessTypesPage({
@@ -165,7 +168,7 @@ export default async function BusinessTypesPage({
                         name="isActive"
                         value={String(isActive)}
                       />
-                      <button
+                      <Button
                         type="submit"
                         className={`cursor-pointer rounded border px-2.5 py-1 text-xs font-semibold transition-colors ${
                           isActive
@@ -174,17 +177,17 @@ export default async function BusinessTypesPage({
                         }`}
                       >
                         {isActive ? "Deactivate" : "Activate"}
-                      </button>
+                      </Button>
                     </form>
 
                     <form action={deleteAction} className="inline">
                       <input type="hidden" name="id" value={bt.id} />
-                      <button
+                      <Button
                         type="submit"
                         className="cursor-pointer rounded border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-100"
                       >
                         Delete
-                      </button>
+                      </Button>
                     </form>
                   </td>
                 </tr>

@@ -7,7 +7,7 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Select from "@/components/ui/Select";
 import Textarea from "@/components/ui/Textarea";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import { createDatabaseConnection } from "@/lib/services/platform/database-connection-service";
 
 const PROVIDER_OPTIONS = [
@@ -25,7 +25,7 @@ export default async function CreateDatabasePage({
 }: {
   searchParams?: Promise<{ error?: string }>;
 }) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformConfigurationAccess();
   const params = (await searchParams) ?? {};
 
   async function createDatabaseAction(formData: FormData) {

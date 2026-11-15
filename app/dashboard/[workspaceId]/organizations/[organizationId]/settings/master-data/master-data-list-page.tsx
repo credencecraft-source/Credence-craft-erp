@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { ArrowUpRight } from "lucide-react";
 
-import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
-import { MASTER_DEFINITIONS, MASTER_MODULE_HIERARCHY, getMasterModuleGroupInfo } from "@/lib/master-data/master-data-registry";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
+import { MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
+import { MASTER_DATA_CATEGORIES, getMastersForCategory } from "@/app/dashboard/[workspaceId]/organizations/[organizationId]/settings/master-data/master-data-categories";
 
 export default async function MasterDataListPage({
   params,
@@ -26,168 +27,111 @@ export default async function MasterDataListPage({
     notFound();
   }
 
-  const organization = await getOrganizationForUser(
+  const organization = await getOrganizationForUserWithPermission(
     user.id,
     organizationId,
+    "MANAGE_MASTER_DATA",
   );
 
   if (!organization) {
     notFound();
   }
 
-  const groupedMasters = MASTER_DEFINITIONS.filter((master) => !master.hidden).reduce<Record<string, Record<string, typeof MASTER_DEFINITIONS[number][]>>>(
-    (accumulator, master) => {
-      const { topLevel, subLevel } = getMasterModuleGroupInfo(master.key);
+  const masters = MASTER_DEFINITIONS
+    .filter((master) => !master.hidden)
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
 
-      if (!accumulator[topLevel]) {
-        accumulator[topLevel] = {};
-      }
-
-      if (!accumulator[topLevel][subLevel]) {
-        accumulator[topLevel][subLevel] = [];
-      }
-
-      accumulator[topLevel][subLevel].push(master);
-      accumulator[topLevel][subLevel].sort((left, right) => (left.moduleOrder ?? 999) - (right.moduleOrder ?? 999));
-
-      return accumulator;
-    },
-    {},
-  );
-
-  const orderedGroups = Object.entries(MASTER_MODULE_HIERARCHY).map(([topLevelKey, topLevelConfig]) => ({
-    key: topLevelKey,
-    label: topLevelConfig.label,
-    subGroups: Object.entries(topLevelConfig.children).map(([subKey, subLabel]) => ({
-      key: subKey,
-      label: subLabel,
-      masters: groupedMasters[topLevelKey]?.[subKey] ?? [],
-    })).filter((group) => group.masters.length > 0),
-  })).filter((group) => group.subGroups.length > 0);
-
-  const ungroupedMasters = MASTER_DEFINITIONS.filter((master) => !master.hidden && !master.moduleGroup && !master.moduleSubGroup);
+  const masterGroups = MASTER_DATA_CATEGORIES.map((category) => ({
+    ...category,
+    masters: getMastersForCategory(masters, category),
+  }));
+  const priceListMaster = masters.find((master) => master.key === "price-list");
+  const entityMaster = masters.find((master) => master.key === "entity");
 
   return (
     <Page as="div">
-      <Section className="space-y-8">
-        <div>
-          <Badge>Master Registry</Badge>
+      <Section className="space-y-6">
+        <Link
+          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/migration`}
+          className="inline-flex rounded-lg text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+        >
+          Organization Master Setup — create related masters together
+        </Link>
 
-          <h1 className="mt-3 text-3xl font-bold text-slate-900">
-            Master Modules
-          </h1>
-
-          <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Organised to follow the ERP structure used in the app. Each master sits inside the same module hierarchy used in the left sidebar, with nested groups such as Factory Management → Pre Production → Production.
-          </p>
-        </div>
-
-        <div className="space-y-8">
-          {orderedGroups.map((moduleGroup) => (
-            <div key={moduleGroup.key} className="space-y-4">
-              <div className="border-b border-slate-200 pb-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  {moduleGroup.label}
-                </p>
-              </div>
-
-              <div className="space-y-6">
-                {moduleGroup.subGroups.map((subGroup) => (
-                  <div key={`${moduleGroup.key}-${subGroup.key}`} className="space-y-3">
-                    <h2 className="text-lg font-bold text-slate-900">
-                      {subGroup.label}
-                    </h2>
-
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      {subGroup.masters.map((master) => (
-                        <Link
-                          key={master.key}
-                          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}
-                          className="group block"
-                        >
-                          <Card className="h-full transition-all duration-200 hover:border-emerald-300 hover:shadow-md">
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
-                                Master
-                              </p>
-
-                              <Badge>Active</Badge>
-                            </div>
-
-                            <h3 className="mt-3 text-xl font-bold text-slate-900">
-                              {master.label}
-                            </h3>
-
-                            <p className="mt-2 text-sm text-slate-600">
-                              {master.description}
-                            </p>
-
-                            <div className="mt-6 flex items-center justify-between">
-                              <span className="text-sm font-semibold text-emerald-700">
-                                Open Module
-                              </span>
-
-                              <span aria-hidden="true" className="text-lg transition-transform group-hover:translate-x-1">
-                                →
-                              </span>
-                            </div>
-                          </Card>
-                        </Link>
-                      ))}
-                    </div>
+        <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Master data categories">
+          {entityMaster ? (
+            <Link
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${entityMaster.key}`}
+              className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+            >
+              <Card className="flex min-h-40 flex-col justify-between gap-4 rounded-2xl p-5 transition group-hover:border-[var(--erp-brand)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--erp-brand)]">Organization</p>
+                    <h2 className="mt-2 text-xl font-semibold text-[var(--erp-text)]">Entities</h2>
                   </div>
-                ))}
-              </div>
-            </div>
+                  <ArrowUpRight aria-hidden="true" className="mt-1 h-5 w-5 shrink-0 text-slate-400 transition group-hover:text-[var(--erp-brand)]" />
+                </div>
+
+                <p className="text-sm leading-6 text-slate-600">View and manage all entities belonging to this organization.</p>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+                  <span className="rounded-full border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-2.5 py-1">
+                    View all entities
+                  </span>
+                </div>
+              </Card>
+            </Link>
+          ) : null}
+          {priceListMaster ? (
+            <Link
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${priceListMaster.key}`}
+              className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+            >
+              <Card className="flex min-h-40 flex-col justify-between gap-4 rounded-2xl p-5 transition group-hover:border-[var(--erp-brand)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--erp-brand)]">Master data</p>
+                    <h2 className="mt-2 text-xl font-semibold text-[var(--erp-text)]">{priceListMaster.label}</h2>
+                  </div>
+                  <ArrowUpRight aria-hidden="true" className="mt-1 h-5 w-5 shrink-0 text-slate-400 transition group-hover:text-[var(--erp-brand)]" />
+                </div>
+
+                <p className="text-sm leading-6 text-slate-600">{priceListMaster.description}</p>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+                  <span className="rounded-full border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-2.5 py-1">
+                    1 master
+                  </span>
+                </div>
+              </Card>
+            </Link>
+          ) : null}
+          {masterGroups.map((group) => (
+            <Link
+              key={group.id}
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${group.routeSegment}`}
+              className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+            >
+              <Card className="flex min-h-40 flex-col justify-between gap-4 rounded-2xl p-5 transition group-hover:border-[var(--erp-brand)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--erp-brand)]">Master data</p>
+                    <h2 className="mt-2 text-xl font-semibold text-[var(--erp-text)]">{group.title}</h2>
+                  </div>
+                  <ArrowUpRight aria-hidden="true" className="mt-1 h-5 w-5 shrink-0 text-slate-400 transition group-hover:text-[var(--erp-brand)]" />
+                </div>
+
+                <p className="text-sm leading-6 text-slate-600">{group.description}</p>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+                  <span className="rounded-full border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-2.5 py-1">
+                    {group.masters.length} masters
+                  </span>
+                </div>
+              </Card>
+            </Link>
           ))}
-
-          {ungroupedMasters.length > 0 && (
-            <div className="space-y-4">
-              <div className="border-b border-slate-200 pb-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  General
-                </p>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {ungroupedMasters.map((master) => (
-                  <Link
-                    key={master.key}
-                    href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}
-                    className="group block"
-                  >
-                    <Card className="h-full transition-all duration-200 hover:border-emerald-300 hover:shadow-md">
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
-                          Master
-                        </p>
-
-                        <Badge>Active</Badge>
-                      </div>
-
-                      <h3 className="mt-3 text-xl font-bold text-slate-900">
-                        {master.label}
-                      </h3>
-
-                      <p className="mt-2 text-sm text-slate-600">
-                        {master.description}
-                      </p>
-
-                      <div className="mt-6 flex items-center justify-between">
-                        <span className="text-sm font-semibold text-emerald-700">
-                          Open Module
-                        </span>
-
-                        <span aria-hidden="true" className="text-lg transition-transform group-hover:translate-x-1">
-                          →
-                        </span>
-                      </div>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </Section>
     </Page>

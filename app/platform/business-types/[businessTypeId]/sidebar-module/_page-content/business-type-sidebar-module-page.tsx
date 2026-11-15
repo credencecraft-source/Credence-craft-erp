@@ -5,7 +5,11 @@ import {
   createBusinessTypeSidebarModule,
   getBusinessType,
 } from "@/lib/services/platform/business-type-service";
-import { getErpModuleForBusinessTypeName, type SubModuleOption } from "@/components/erp/erp-config-registry";
+import {
+  getErpBusinessTypeDisplayName,
+  getErpModuleForBusinessTypeName,
+  type SubModuleOption,
+} from "@/components/erp/erp-config-registry";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
@@ -79,7 +83,7 @@ export default async function BusinessTypeSidebarModulePage({
           <div>
             <p className="erp-eyebrow">Business Type</p>
             <h1 className="text-2xl font-bold text-slate-900">
-              {businessType.name} Sidebar Module
+              {getErpBusinessTypeDisplayName(businessType.name)} Sidebar Module
             </h1>
             <p className="mt-1 text-sm text-slate-600">
               Manage the sidebar module and review the items available to organizations.

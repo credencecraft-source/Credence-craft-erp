@@ -1,0 +1,151 @@
+import { Prisma } from "@prisma/client";
+import { NextResponse } from "next/server";
+
+import { requireSessionUser } from "@/lib/auth/session-manager";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
+import {
+  deleteDistributionQuotation,
+  getDistributionQuotation,
+  saveDistributionQuotationDraft,
+} from "@/lib/services/distribution/quotation-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+
+type RouteContext = { params: Promise<{ quotationId: string }> };
+
+export async function GET(request: Request, context: RouteContext) {
+  try {
+    const user = await requireSessionUser();
+    const url = new URL(request.url);
+    const organization = await requireOrganizationContext(
+      user.id,
+      url.searchParams.get("organizationId") ?? "",
+    );
+    await requireOrganizationPermission(user.id, organization.id, "VIEW_ORDERS");
+    const { quotationId } = await context.params;
+    const mode = url.searchParams.get("mode");
+    const quotationDocument = mode === "QUOTATION_PDF";
+    const salesOrderDocument = mode === "MASTER_PDF";
+    const masterOrder = mode === "MASTER" || salesOrderDocument;
+    const includeChildren = mode !== "QUOTATION" && !quotationDocument;
+    return NextResponse.json(await getDistributionQuotation(organization.id, quotationId, {
+      masterOrder,
+      includeChildren,
+      salesOrderDocument,
+      includeTaxOptions: mode === "QUOTATION",
+      quotationDocument,
+    }));
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2021", "P2022"].includes(error.code)) {
+      return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
+    }
+    if (isDatabaseUnavailableError(error)) {
+      console.error("Unable to load distribution quotation because the database is unavailable.", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the Advance Booking quotation." }, { status });
+  }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  try {
+    const user = await requireSessionUser();
+    const body = await request.json() as Record<string, unknown>;
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Submit valid quotation header and detail values.");
+    const organization = await requireOrganizationContext(
+      user.id,
+      String(body.organizationId ?? ""),
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
+    if (!Array.isArray(body.lines)) throw new Error("Submit quotation detail lines.");
+    if (typeof body.quotationDate !== "string" ||
+        typeof body.validUntil !== "string" ||
+        typeof body.notes !== "string" ||
+        typeof body.deliveryCharge !== "string" ||
+        typeof body.deliveryTaxRate !== "string") {
+      throw new Error("Submit quotation dates, notes, delivery charge, and delivery tax rate as text values.");
+    }
+    const lines = body.lines.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Each quotation detail line must be valid.");
+      const line = value as Record<string, unknown>;
+      if (typeof line.id !== "string" || typeof line.unitPrice !== "string" || typeof line.taxRate !== "string") {
+        throw new Error("Each quotation detail line needs its ID, unit price, and tax rate.");
+      }
+      return { id: line.id, unitPrice: line.unitPrice, taxRate: line.taxRate };
+    });
+    const { quotationId } = await context.params;
+    const quotation = await saveDistributionQuotationDraft(organization.id, user.id, quotationId, {
+      quotationDate: body.quotationDate,
+      validUntil: body.validUntil,
+      notes: body.notes,
+      deliveryCharge: body.deliveryCharge,
+      deliveryTaxRate: body.deliveryTaxRate,
+      lines,
+    });
+    return NextResponse.json({ quotation });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2021" || error.code === "P2022") {
+        return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
+      }
+      if (error.code === "P2002" || error.code === "P2034") {
+        return NextResponse.json({ error: "Quotation or booking data changed while saving. Reload and try again." }, { status: 409 });
+      }
+    }
+
+    if (isDatabaseUnavailableError(error)) {
+      console.error("Unable to save distribution quotation because the database is unavailable.", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to save the Advance Booking quotation." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  try {
+    const user = await requireSessionUser();
+    const body = await request.json() as Record<string, unknown>;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error("Submit a valid quotation deletion request.");
+    }
+    if (typeof body.organizationId !== "string" || !body.organizationId.trim()) {
+      throw new Error("Select the organization for this quotation deletion.");
+    }
+    const organization = await requireOrganizationContext(
+      user.id,
+      String(body.organizationId ?? ""),
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    await requireOrganizationPermission(user.id, organization.id, "CREATE_ORDERS");
+    const { quotationId } = await context.params;
+    const deleted = await deleteDistributionQuotation(organization.id, user.id, quotationId);
+    return NextResponse.json({ deleted });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (["P2021", "P2022"].includes(error.code)) {
+        return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
+      }
+      if (["P2003", "P2034"].includes(error.code)) {
+        return NextResponse.json({ error: "Quotation dependencies changed while deleting. Reload and follow the required deletion order." }, { status: 409 });
+      }
+    }
+    if (isDatabaseUnavailableError(error)) {
+      console.error("Unable to delete distribution quotation because the database is unavailable.", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to delete the Advance Booking quotation." },
+      { status: error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400 },
+    );
+  }
+}

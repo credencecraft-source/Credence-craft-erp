@@ -14,5 +14,5 @@ export const GOLD_SEAL_MASTER_DEFINITIONS = [
     text("size", "Size"),
     text("sku", "SKU"),
     text("barcode", "Barcode"),
-  ], { labelField: "variant", hidden: true }),
+  ], { labelField: "variant", hidden: true, moduleGroup: "design-development", moduleSubGroup: "tech-pack" }),
 ];

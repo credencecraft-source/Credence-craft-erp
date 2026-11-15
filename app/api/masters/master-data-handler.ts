@@ -2,18 +2,44 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createMasterValueForOrganization, getMasterValuesForOrganization, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-constants";
-import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
-import { prisma } from "@/lib/database/prisma-client";
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const organizationId = searchParams.get("organizationId");
     const includeInactive = searchParams.get("includeInactive") === "true";
+    const requestedModuleKeys = (searchParams.get("moduleKeys") ?? searchParams.get("keys"))
+      ?.split(",")
+      .map((key) => key.trim())
+      .filter(Boolean);
 
     if (!organizationId) {
       return NextResponse.json({ error: "Organization id is required." }, { status: 400 });
+    }
+    if (!requestedModuleKeys?.length || requestedModuleKeys.length > 20) {
+      return NextResponse.json(
+        { error: "Request between 1 and 20 master module keys." },
+        { status: 400 },
+      );
+    }
+
+    const definitionsByKey = new Map(
+      MASTER_DEFINITIONS.filter((definition) => !definition.hidden)
+        .map((definition) => [definition.key, definition]),
+    );
+    const moduleKeys = [...new Set(requestedModuleKeys)];
+    const requestedDefinitions = moduleKeys.map((moduleKey) => definitionsByKey.get(moduleKey));
+    if (requestedDefinitions.some((definition) => !definition)) {
+      return NextResponse.json({ error: "One or more master modules were not found." }, { status: 404 });
+    }
+    const definitions = requestedDefinitions.filter(
+      (definition): definition is NonNullable<typeof definition> => Boolean(definition),
+    );
+    const requestedLimit = Number(searchParams.get("limit") ?? 500);
+    if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 500) {
+      return NextResponse.json({ error: "Master lookup limit must be between 1 and 500." }, { status: 400 });
     }
 
     const user = await requireSessionUser();
@@ -27,15 +53,16 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Organization not found." }, { status: 404 });
     }
 
-    if (!organization) {
-      return NextResponse.json({ error: "Organization not found." }, { status: 404 });
-    }
-
-    const masters = await Promise.all(MASTER_DEFINITIONS.map(async (definition) => ({
+    const masters = await Promise.all(definitions.map(async (definition) => ({
       module_key: definition.key,
       module_name: definition.label,
       fields: definition.fields,
-      values: await getMasterValuesForOrganization(organization.id, definition.key, includeInactive),
+      values: await getMasterValuesForOrganization(
+        organization.id,
+        definition.key,
+        includeInactive,
+        { limit: requestedLimit },
+      ),
     })));
 
     return NextResponse.json({ masters, orderLookups: ORDER_LOOKUP_FIELDS });
@@ -64,16 +91,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Organization, master module, and name are required." }, { status: 400 });
     }
 
-    const organization = await requireOrganizationAccess(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    const organization = await requireOrganizationPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
 
     const definitionExists = MASTER_DEFINITIONS.some((definition) => definition.key === moduleKey);
     if (!definitionExists) {
-      const dbDefinition = await (prisma as any).masterDefinition?.findFirst?.({
-        where: { organizationId, moduleKey }
-      });
-      if (!dbDefinition) {
-        return NextResponse.json({ error: "Master module not found." }, { status: 404 });
-      }
+      return NextResponse.json({ error: "Master module not found." }, { status: 404 });
     }
 
     const value = await createMasterValueForOrganization(organization.id, moduleKey, {

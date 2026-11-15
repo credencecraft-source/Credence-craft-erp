@@ -12,7 +12,7 @@ export default async function FactoryManagementWorkOrderCreatePage({
       params={params}
       area="Pre Production"
       title="Create Work Order"
-      description="Create partial work orders against an order number until every size quantity is allocated."
+      description="Choose an Order No. or Article No. lookup, then allocate the work order quantities by size."
       content={<WorkOrderForm workspaceId={workspaceId} organizationId={organizationId} showReport={false} />}
     />
   );

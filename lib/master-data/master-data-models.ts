@@ -1,4 +1,4 @@
-export type MasterFieldType = "text" | "number" | "percentage" | "decimal" | "date" | "url" | "checkbox" | "picklist" | "lookup" | "child-list";
+export type MasterFieldType = "text" | "number" | "percentage" | "decimal" | "date" | "url" | "image" | "checkbox" | "picklist" | "lookup" | "child-list";
 
 export type MasterFieldDefinition = {
   key: string;

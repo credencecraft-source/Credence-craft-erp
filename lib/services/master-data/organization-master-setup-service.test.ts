@@ -1,0 +1,229 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { prismaMock, transactionMock, createMasterValueMock, deleteAllMasterValuesMock } = vi.hoisted(() => {
+  const delegate = (name: string) => {
+    let sequence = 0;
+    return {
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: `${name}-${++sequence}`,
+        is_active: true,
+        ...data,
+      })),
+      findFirst: vi.fn().mockResolvedValue(null),
+    };
+  };
+  const transactionMock = {
+    masterBrand: delegate("brand"),
+    masterBuyer: delegate("buyer"),
+    masterCategory: delegate("category"),
+    masterProduct: delegate("product"),
+    masterSize: delegate("size"),
+    masterSizeGroup: delegate("group"),
+    masterSizeGroupSize: delegate("group-size"),
+    masterSubCategory: delegate("subcategory"),
+  };
+  const prismaMock = { $transaction: vi.fn() };
+  const createMasterValueMock = vi.fn();
+  const deleteAllMasterValuesMock = vi.fn();
+  return { prismaMock, transactionMock, createMasterValueMock, deleteAllMasterValuesMock };
+});
+
+vi.mock("@/lib/database/prisma-client", () => ({ prisma: prismaMock }));
+vi.mock("@/lib/master-data/master-data-constants", () => ({
+  createMasterValueForOrganization: createMasterValueMock,
+  deleteAllMasterValuesForOrganization: deleteAllMasterValuesMock,
+  getMasterValuesForOrganization: vi.fn(),
+}));
+
+import {
+  createOrganizationMasterSetupSection,
+  createOrganizationMasterSetupStage,
+  createOrganizationMerchandisingStarterMasters,
+  deleteOrganizationMasterSetupSection,
+  ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS,
+} from "./organization-master-setup-service";
+import { createOrganizationMasterSetupUploadLookupReference } from "@/lib/master-data/organization-master-setup-stages";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  prismaMock.$transaction.mockImplementation(
+    (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock),
+  );
+  transactionMock.masterProduct.findFirst.mockResolvedValue({ id: "finished-goods-id" });
+});
+
+describe("createOrganizationMerchandisingStarterMasters", () => {
+  it("creates normal organization masters and their required relationships", async () => {
+    const result = await createOrganizationMerchandisingStarterMasters("org-id");
+
+    expect(result.createdCount).toBe(38);
+    expect(transactionMock.masterBrand.create.mock.calls.map(([call]) => call.data.brand)).toEqual([
+      "Louis Philippe", "Peter England", "Allen Solly", "Andamen", "Benetton",
+      "Royal Enfield", "Blackberry", "Snitch", "Polar Bear",
+    ]);
+    expect(transactionMock.masterBuyer.create.mock.calls.map(([call]) => call.data.buyer_name)).toEqual([
+      "Madurai Fashion", "Lifestyle Fashion",
+    ]);
+    expect(transactionMock.masterSize.create.mock.calls.map(([call]) => call.data.size)).toEqual([
+      "S", "M", "L", "XL", "XXL", "32", "34", "36", "38", "40",
+    ]);
+    expect(transactionMock.masterCategory.create.mock.calls.map(([call]) => call.data.category_name)).toEqual([
+      "Shirt", "Pant", "Kurta", "Suits",
+    ]);
+    expect(transactionMock.masterCategory.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ product_master_id: "finished-goods-id", organization_id: "org-id", is_active: true }),
+    }));
+    expect(transactionMock.masterSizeGroup.create.mock.calls.map(([call]) => call.data.size_group)).toEqual([
+      "Shirt S-XXL", "Pant 32-40",
+    ]);
+    expect(transactionMock.masterSizeGroup.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ brand_id: "brand-1", organization_id: "org-id" }),
+    }));
+    expect(transactionMock.masterSizeGroupSize.create).toHaveBeenCalledTimes(10);
+    expect(transactionMock.masterSubCategory.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ category_id: "category-1", sub_category: "Full Sleeve" }),
+    }));
+  });
+
+  it("reuses active values and existing group links on repeat runs", async () => {
+    transactionMock.masterBrand.findFirst.mockResolvedValue({ id: "brand-id", is_active: true });
+    transactionMock.masterBuyer.findFirst.mockResolvedValue({ id: "buyer-id", is_active: true });
+    transactionMock.masterSize.findFirst.mockResolvedValue({ id: "size-id", is_active: true });
+    transactionMock.masterSizeGroup.findFirst.mockResolvedValue({ id: "group-id", is_active: true, brand_id: "brand-id" });
+    transactionMock.masterSizeGroupSize.findFirst.mockResolvedValue({ id: "link-id" });
+    transactionMock.masterCategory.findFirst.mockResolvedValue({ id: "category-id", is_active: true, product_master_id: "finished-goods-id" });
+    transactionMock.masterSubCategory.findFirst.mockResolvedValue({ id: "subcategory-id", is_active: true, category_id: "category-id" });
+
+    const result = await createOrganizationMerchandisingStarterMasters("org-id");
+
+    expect(result.createdCount).toBe(0);
+    expect(transactionMock.masterBrand.create).not.toHaveBeenCalled();
+    expect(transactionMock.masterSizeGroupSize.create).not.toHaveBeenCalled();
+  });
+
+  it("stops before creating records when Finished Goods is missing", async () => {
+    transactionMock.masterProduct.findFirst.mockResolvedValue(null);
+
+    await expect(createOrganizationMerchandisingStarterMasters("org-id"))
+      .rejects.toThrow("An active Finished Goods product type is required.");
+
+    expect(transactionMock.masterBrand.create).not.toHaveBeenCalled();
+    expect(transactionMock.masterBuyer.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an existing size group assigned to another brand", async () => {
+    transactionMock.masterBrand.findFirst.mockResolvedValue({ id: "brand-id", is_active: true });
+    transactionMock.masterBuyer.findFirst.mockResolvedValue({ id: "buyer-id", is_active: true });
+    transactionMock.masterSize.findFirst.mockResolvedValue({ id: "size-id", is_active: true });
+    transactionMock.masterSizeGroup.findFirst.mockResolvedValue({ id: "group-id", is_active: true, brand_id: "other-brand-id" });
+
+    await expect(createOrganizationMerchandisingStarterMasters("org-id"))
+      .rejects.toThrow('Size group "Shirt S-XXL" already exists with a different parent or brand.');
+  });
+});
+
+
+describe("createOrganizationMasterSetupStage", () => {
+  it("allows creating Finished Goods Category records from the related-masters stage", async () => {
+    createMasterValueMock.mockResolvedValue({ id: "category-id" });
+    await createOrganizationMasterSetupStage("org-id", [{
+      moduleKey: "category",
+      label: "Shirt",
+      fields: { Product_Master: "finished-goods-id" },
+    }]);
+
+    expect(ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS.has("category")).toBe(false);
+    expect(createMasterValueMock).toHaveBeenCalledWith("org-id", "category", {
+      label: "Shirt",
+      fields: { Product_Master: "finished-goods-id" },
+    });
+  });
+
+  it("creates category parents before resolving inline finished-goods and raw-material subcategories", async () => {
+    createMasterValueMock.mockImplementation(async (_organizationId, moduleKey: string, input: { label: string }) => ({
+      id: `${moduleKey}:${input.label}`,
+    }));
+    await createOrganizationMasterSetupStage("org-id", [
+      {
+        moduleKey: "raw-material-sub-category",
+        label: "Cotton",
+        fields: {
+          Raw_Material_Category1: createOrganizationMasterSetupUploadLookupReference(
+            "raw-material-category",
+            "Fabric",
+          ),
+        },
+      },
+      {
+        moduleKey: "sub-category",
+        label: "Full Sleeve",
+        fields: {
+          category: createOrganizationMasterSetupUploadLookupReference("category", "Shirt"),
+        },
+      },
+      {
+        moduleKey: "category",
+        label: "Shirt",
+        fields: { Product_Master: "finished-goods-id" },
+      },
+      {
+        moduleKey: "raw-material-category",
+        label: "Fabric",
+        fields: { Raw_Material_Type1: "item-type-id" },
+      },
+    ]);
+
+    expect(createMasterValueMock.mock.calls.map(([organizationId, moduleKey, input]) => [
+      organizationId,
+      moduleKey,
+      input,
+    ])).toEqual([
+      ["org-id", "category", { label: "Shirt", fields: { Product_Master: "finished-goods-id" } }],
+      ["org-id", "raw-material-category", { label: "Fabric", fields: { Raw_Material_Type1: "item-type-id" } }],
+      ["org-id", "raw-material-sub-category", { label: "Cotton", fields: { Raw_Material_Category1: "raw-material-category:Fabric" } }],
+      ["org-id", "sub-category", { label: "Full Sleeve", fields: { category: "category:Shirt" } }],
+    ]);
+  });
+
+  describe("createOrganizationMasterSetupSection", () => {
+    it("creates only records belonging to the selected section", async () => {
+      await createOrganizationMasterSetupSection("org-id", [
+        { moduleKey: "color", label: "Navy", fields: {} },
+        { moduleKey: "size", label: "Large", fields: { Size: "Large" } },
+      ], "color");
+
+      expect(createMasterValueMock).toHaveBeenCalledTimes(1);
+      expect(createMasterValueMock).toHaveBeenCalledWith("org-id", "color", {
+        label: "Navy",
+        fields: {},
+      });
+    });
+
+    it("rejects a selected section that has no values", async () => {
+      await expect(createOrganizationMasterSetupSection("org-id", [
+        { moduleKey: "size", label: "Large", fields: { Size: "Large" } },
+      ], "color")).rejects.toThrow("Enter at least one value for this master.");
+
+      expect(createMasterValueMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("deleteOrganizationMasterSetupSection", () => {
+    it("delegates an allowed related master deletion to the atomic organization-scoped helper", async () => {
+      deleteAllMasterValuesMock.mockResolvedValue({ deletedCount: 4 });
+
+      await expect(deleteOrganizationMasterSetupSection("org-id", "user-id", "category"))
+        .resolves.toEqual({ deletedCount: 4 });
+
+      expect(deleteAllMasterValuesMock).toHaveBeenCalledWith("org-id", "user-id", "category");
+    });
+
+    it("rejects a master outside the setup steps", async () => {
+      await expect(deleteOrganizationMasterSetupSection("org-id", "user-id", "article"))
+        .rejects.toThrow("This master section is not available for bulk deletion.");
+
+      expect(deleteAllMasterValuesMock).not.toHaveBeenCalled();
+    });
+  });
+});

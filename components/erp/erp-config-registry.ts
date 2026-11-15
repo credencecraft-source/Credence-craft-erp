@@ -4,6 +4,7 @@ export type SubModuleOption = {
   key: string;
   label: string;
   pathSegment?: string;
+  href?: string;
   children?: SubModuleOption[];
 };
 
@@ -16,13 +17,50 @@ export type ErpModule = {
 
 export const ERP_MODULES: ErpModule[] = [
   {
+    key: "online",
+    label: "Online",
+    pathSegment: "online",
+    children: [
+      {
+        key: "pre-order",
+        label: "Pre Order",
+        pathSegment: "pre-order",
+        children: [
+          { key: "b2b-dashboard", label: "B2B Dashboard", pathSegment: "b2b-dashboard" },
+          { key: "b2c-dashboard", label: "B2C Dashboard", pathSegment: "b2c-dashboard" },
+        ],
+      },
+      {
+        key: "ready-stock",
+        label: "Ready Stock",
+        pathSegment: "ready-stock",
+        children: [
+          { key: "b2b-dashboard", label: "B2B Dashboard", pathSegment: "b2b-dashboard" },
+          { key: "b2c-dashboard", label: "B2C Dashboard", pathSegment: "b2c-dashboard" },
+        ],
+      },
+    ],
+  },
+  {
     key: "pos",
     label: "POS",
     pathSegment: "pos",
     children: [
       { key: "quick-invoice", label: "Quick Invoice", pathSegment: "quick-invoice" },
+      { key: "counter", label: "Counter", pathSegment: "counter" },
+      { key: "daybook", label: "Day Book", pathSegment: "daybook" },
+      { key: "purchase-bill", label: "Purchase Bill", pathSegment: "purchase-bill" },
+      { key: "offers", label: "Offers", pathSegment: "offers" },
+      { key: "coupon-code", label: "Coupon Code", pathSegment: "cupencode" },
       { key: "invoice", label: "Invoice", pathSegment: "invoice" },
+      { key: "sales-return", label: "Sales Return", pathSegment: "sales-return" },
       { key: "stock", label: "Stock", pathSegment: "stock" },
+      { key: "vendor-customer", label: "Vendor/Customer", href: "/pos/vendor-customer" },
+      {
+        key: "online-store",
+        label: "Online Store",
+        href: "/pos/online-store/manage",
+      },
     ],
   },
   {
@@ -36,7 +74,9 @@ export const ERP_MODULES: ErpModule[] = [
         pathSegment: "merchandising",
         children: [
           { key: "order", label: "Order", pathSegment: "order" },
+          { key: "bulk-order-creation", label: "Bulk Order", pathSegment: "bulk-order-creation" },
           { key: "bom", label: "BOM", pathSegment: "bom" },
+          { key: "style-health", label: "Style Health", pathSegment: "style-health" },
           { key: "order-summary", label: "Order Summary", pathSegment: "order-summary" },
         ],
       },
@@ -49,6 +89,34 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "style-wise-po", label: "Style Wise PO", pathSegment: "create-po/style-wise" },
           { key: "purchase-order", label: "Purchase Order", pathSegment: "purchase-order" },
         ],
+      },
+    ],
+  },
+  {
+    key: "asset-management",
+    label: "Asset Management",
+    pathSegment: "asset-management",
+    children: [
+      {
+        key: "asset-purchase",
+        label: "Asset Purchase",
+        pathSegment: "asset-purchase",
+        children: [
+          { key: "asset-purchase-order", label: "Asset Purchase Order", href: "/asset-management/asset-po/purchase-orders" },
+          { key: "create-po", label: "Create PO", href: "/asset-management/asset-po/allocate-vendor" },
+          { key: "asset-grn", label: "Asset GRN", href: "/asset-management/asset-grn/report" },
+        ],
+      },
+      {
+        key: "asset-inventory",
+        label: "Asset Inventory",
+        href: "/asset-management/asset-inventory",
+      },
+      {
+        key: "preventive-maintenance",
+        label: "Preventive Maintenance",
+        pathSegment: "preventive-maintenance",
+        href: "/asset-management/preventive-maintenance",
       },
     ],
   },
@@ -85,7 +153,14 @@ export const ERP_MODULES: ErpModule[] = [
         label: "Production",
         pathSegment: "production",
         children: [
+          {
+            key: "style-status",
+            label: "Style Status",
+            pathSegment: "style-status",
+            href: "/factory-management/style-status",
+          },
           { key: "shop-floor", label: "Shop Floor", pathSegment: "shop-floor" },
+          { key: "dpr-report", label: "DPR Report", pathSegment: "dpr-report" },
         ],
       },
       {
@@ -96,6 +171,18 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "scan-pack", label: "Scan Pack", pathSegment: "scan-pack" },
         ],
       },
+    ],
+  },
+  {
+    key: "uniform-management",
+    label: "Uniform Management",
+    pathSegment: "uniform-management",
+    children: [
+      { key: "dashboard", label: "Dashboard", pathSegment: "dashboard" },
+      { key: "styles", label: "Uniform Styles", pathSegment: "styles" },
+      { key: "people", label: "People", pathSegment: "people" },
+      { key: "take-measurements", label: "Take Measurements", pathSegment: "take-measurements" },
+      { key: "grouped-measurements", label: "Grouped Measurements", pathSegment: "grouped-measurements" },
     ],
   },
   {
@@ -133,6 +220,7 @@ export const ERP_MODULES: ErpModule[] = [
         children: [
           { key: "sales-invoice", label: "Sales Invoice", pathSegment: "sales-invoice" },
           { key: "purchase-invoice", label: "Purchase Invoice", pathSegment: "purchase-invoice" },
+          { key: "create-purchase-bill", label: "Create Purchase Bill", pathSegment: "purchase-invoice/new" },
           { key: "debit-note", label: "Debit Note", pathSegment: "debit-note" },
           { key: "credit-note", label: "Credit Note", pathSegment: "credit-note" },
           { key: "delivery-challan", label: "Delivery Challan", pathSegment: "delivery-challan" },
@@ -157,20 +245,79 @@ export const ERP_MODULES: ErpModule[] = [
         ],
       },
       {
+        key: "stock",
+        label: "Stock",
+        pathSegment: "stock",
+        children: [
+          {
+            key: "inventory-status",
+            label: "Inventory Status",
+            pathSegment: "inventory-status",
+            href: "/inventory-management/stock/inventory-status",
+          },
+          { key: "rm-stock", label: "RM Stock", pathSegment: "rm-stock" },
+          { key: "fg-stock", label: "FG Stock", pathSegment: "fg-stock" },
+        ],
+      },
+      {
         key: "outward",
         label: "Outward",
         pathSegment: "outward",
         children: [
           { key: "raw-material-dc", label: "Raw Material DC", pathSegment: "raw-material-dc" },
+          { key: "fg-stock-dc", label: "FG Stock DC", pathSegment: "fg-stock-dc" },
+          { key: "fg-issued", label: "FG Issued", pathSegment: "fg-issued" },
+        ],
+      },
+    ],
+  },
+  {
+    key: "distribution",
+    label: "Advance Booking",
+    pathSegment: "advance-booking",
+    children: [
+      {
+        key: "quotation",
+        label: "Quotation",
+        href: "/advance-booking",
+        children: [
+          {
+            key: "advance-booking",
+            label: "Advance Booking",
+            href: "/advance-booking/order/advance-booking",
+          },
+          {
+            key: "order-form",
+            label: "Order Form",
+            href: "/advance-booking/order/order-form",
+          },
+          {
+            key: "quotation",
+            label: "Quotation",
+            href: "/advance-booking/quotation",
+          },
+          {
+            key: "master-quotation",
+            label: "Sales Order",
+            href: "/advance-booking/sales-order",
+          },
         ],
       },
       {
-        key: "stock",
-        label: "Stock",
-        pathSegment: "stock",
+        key: "asn",
+        label: "ASN",
+        href: "/advance-booking",
         children: [
-          { key: "rm-stock", label: "RM Stock", pathSegment: "rm-stock" },
-          { key: "fg-stock", label: "FG Stock", pathSegment: "fg-stock" },
+          {
+            key: "fulfillment",
+            label: "Allocate Bookings",
+            href: "/advance-booking/fulfillment",
+          },
+          {
+            key: "shipment-tracking",
+            label: "Shipment Tracking",
+            href: "/advance-booking/shipment-tracking",
+          },
         ],
       },
     ],
@@ -218,6 +365,7 @@ export const ERP_MODULES: ErpModule[] = [
         ],
       },
       { key: "users", label: "Users", pathSegment: "users" },
+      { key: "challan-numbers", label: "Challan Numbers", pathSegment: "challan-numbers" },
     ],
   },
   {
@@ -226,21 +374,75 @@ export const ERP_MODULES: ErpModule[] = [
     pathSegment: "admin",
     children: [
       { key: "master-data", label: "Masters", pathSegment: "master-data" },
+      {
+        key: "challan-print-out",
+        label: "Challan Print Out",
+        pathSegment: "challan-print-out",
+      },
+      {
+        key: "barcode-qr-code",
+        label: "Barcode / QR Code",
+        pathSegment: "barcode-qr-code",
+        href: "/design-development/barcode-qr-code",
+        children: [
+          {
+            key: "page-setup",
+            label: "Page Setup",
+            pathSegment: "page-setup",
+            href: "/design-development/barcode-qr-code/page-setup",
+          },
+          {
+            key: "templates",
+            label: "Templates",
+            pathSegment: "templates",
+            href: "/design-development/barcode-qr-code/templates",
+          },
+          {
+            key: "print-download",
+            label: "Print/Download",
+            pathSegment: "print-download",
+            href: "/design-development/barcode-qr-code/print-download",
+          },
+        ],
+      },
+      {
+        key: "integrations",
+        label: "Integrations",
+        pathSegment: "integrations",
+        children: [
+          { key: "whatsapp", label: "WhatsApp", pathSegment: "whatsapp" },
+        ],
+      },
+      {
+        key: "migration",
+        label: "Migration",
+        pathSegment: "migration",
+        children: [
+          { key: "excel", label: "Via Excel", pathSegment: "excel" },
+          { key: "direct", label: "Direct", pathSegment: "direct" },
+          { key: "import-history", label: "Import History", pathSegment: "import-history" },
+        ],
+      },
     ],
   },
 ];
 
 const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
+  "online": "online",
   "pos": "pos",
   "point-of-sale": "pos",
   "order-management": "order-management",
+  "asset-management": "asset-management",
   "design-development": "design-development",
   "design-and-development": "design-development",
   "factory-management": "factory-management",
+  "uniform-management": "uniform-management",
   "quality-management-system": "quality-management-system",
   "quality-management": "quality-management-system",
   "finance-management": "finance-management",
   "inventory-management": "inventory-management",
+  "distribution": "distribution",
+  "advance-booking": "distribution",
   "security-management": "security-management",
   "security": "security-management",
   "settings": "settings",
@@ -250,10 +452,34 @@ const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "approval": "approvals",
 };
 
+export function getErpBusinessTypeDisplayName(name: string) {
+  return name.trim().toLowerCase() === "distribution" ? "Advance Booking" : name;
+}
+
+export function getErpBusinessTypeRouteSegment(name: string) {
+  return getErpBusinessTypeDisplayName(name)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function isErpBusinessTypeRouteSegment(name: string, segment: string) {
+  const rawSegment = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return rawSegment === segment || getErpBusinessTypeRouteSegment(name) === segment;
+}
+
 export function getErpModuleForBusinessTypeName(name: string) {
   const normalizedName = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const moduleKey = BUSINESS_TYPE_MODULE_ALIASES[normalizedName];
   return ERP_MODULES.find((module) => module.key === moduleKey) ?? null;
+}
+
+export function getErpModuleForOrganizationPath(pathname: string, organizationPath: string) {
+  return ERP_MODULES.find(({ pathSegment }) => {
+    const modulePath = `${organizationPath}/${pathSegment}`;
+    return pathname === modulePath || pathname.startsWith(`${modulePath}/`);
+  }) ?? null;
 }
 
 export type ErpModuleType = (typeof ERP_MODULES)[number];

@@ -2,12 +2,45 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 
-export type ProcurementDocumentType = "GROUPED_PO" | "MASTER_GROUP" | "PURCHASE_ORDER";
+export type ProcurementDocumentType =
+  | "GROUPED_PO"
+  | "MASTER_GROUP"
+  | "GENERAL_MASTER_GROUP"
+  | "PURCHASE_ORDER"
+  | "RM_OUTWARD_REQUEST"
+  | "RM_OUTWARD_BOX"
+  | "RM_OUTWARD_PACKING_LIST"
+  | "FG_OUTWARD_REQUEST"
+  | "FG_OUTWARD_BOX"
+  | "FG_OUTWARD_PACKING_LIST"
+  | "FG_MATERIAL_ISSUE"
+  | "ADVANCE_BOOKING"
+  | "DISTRIBUTION_ORDER_FORM"
+  | "DISTRIBUTION_QUOTATION"
+  | "DISTRIBUTION_MASTER_QUOTATION"
+  | "POS_SALES_INVOICE"
+  | "POS_SALES_RETURN"
+  | "PROCUREMENT_VENDOR_BILL";
 
 const documentPrefixes: Record<ProcurementDocumentType, string> = {
   GROUPED_PO: "GP",
   MASTER_GROUP: "MGP",
+  GENERAL_MASTER_GROUP: "GMG",
   PURCHASE_ORDER: "PO",
+  RM_OUTWARD_REQUEST: "RMR",
+  RM_OUTWARD_BOX: "RM-BOX",
+  RM_OUTWARD_PACKING_LIST: "RM-PL",
+  FG_OUTWARD_REQUEST: "FGR",
+  FG_OUTWARD_BOX: "FG-BOX",
+  FG_OUTWARD_PACKING_LIST: "FG-PL",
+  FG_MATERIAL_ISSUE: "FG-ISS",
+  ADVANCE_BOOKING: "BK",
+  DISTRIBUTION_ORDER_FORM: "OF",
+  DISTRIBUTION_QUOTATION: "QT",
+  DISTRIBUTION_MASTER_QUOTATION: "MQT",
+  POS_SALES_INVOICE: "POS",
+  POS_SALES_RETURN: "SR",
+  PROCUREMENT_VENDOR_BILL: "VB",
 };
 
 export async function reserveProcurementDocumentNumber(

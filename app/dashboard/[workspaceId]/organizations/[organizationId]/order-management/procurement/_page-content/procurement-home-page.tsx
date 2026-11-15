@@ -3,6 +3,7 @@
 import { ArrowRight, ClipboardCheck, FilePlus2, Loader2, PackageCheck, PackageSearch } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import Button from "@/components/ui/Button";
 
 type ProcurementSummary = {
   pendingVendorAllocation: number;
@@ -57,9 +58,9 @@ export default function ProcurementHomePage() {
         <h1 className="erp-page-heading mt-1">Procurement overview</h1>
         <p className="mt-1 max-w-2xl text-sm text-slate-500">A quick view of work waiting across the procurement workflow.</p>
       </div>
-      <button type="button" onClick={openWorkflow} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800">
+      <Button type="button" onClick={openWorkflow} size="lg" className="gap-2">
         Open procurement workflow <ArrowRight className="h-4 w-4" />
-      </button>
+      </Button>
     </header>
 
     {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
@@ -102,9 +103,9 @@ function InsightCard({ label, value, detail, icon: Icon, tone }: { label: string
 }
 
 function WorkflowStep({ number, title, detail, onClick }: { number: string; title: string; detail: string; onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="group flex items-center gap-4 px-5 py-5 text-left transition hover:bg-emerald-50/60">
+  return <Button type="button" variant="ghost" size="lg" onClick={onClick} className="group h-auto w-full justify-start rounded-none px-5 py-5 text-left">
     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700">{number}</span>
     <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-950">{title}</span><span className="mt-1 block text-xs text-slate-500">{detail}</span></span>
     <ArrowRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-1 group-hover:text-emerald-700" />
-  </button>;
+  </Button>;
 }

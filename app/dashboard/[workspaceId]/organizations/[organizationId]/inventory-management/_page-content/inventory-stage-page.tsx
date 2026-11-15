@@ -1,10 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ArrowLeft, ArrowRight, Boxes, ClipboardList, Plus } from "lucide-react";
+import { ReportGrid } from "@/components/reports/report-grid-display";
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
+import Select from "@/components/ui/Select";
+import Tabs from "@/components/ui/Tabs";
 
-type InventoryStage = "purchase-order" | "packing-list-grn" | "wo-grn" | "returnable-dc-grn" | "raw-material-dc" | "rm-stock" | "fg-stock";
+type InventoryStage = "purchase-order" | "packing-list-grn" | "wo-grn" | "returnable-dc-grn" | "raw-material-dc" | "rm-stock" | "assets-stock" | "fg-stock";
 
 type PurchaseOrder = {
   id: string;
@@ -16,7 +24,101 @@ type PurchaseOrder = {
   lines: Array<{ rawMaterial: string | null; quantity: number | null; total: number | null }>;
 };
 
-type StockRow = { id: string; raw_material?: string; style_name?: string; size?: string | null; warehouse: string; quantity_on_hand: number | string; quantity_reserved: number | string; quantity_issued: number | string };
+type StockRow = {
+  id: string;
+  raw_material?: string;
+  category?: string;
+  style_name?: string;
+  size?: string | null;
+  location: { location_name: string };
+  storage_path?: string | null;
+  quantity_on_hand: number | string;
+  quantity_reserved: number | string;
+  quantity_issued: number | string;
+  source_type?: string;
+  receipt_no?: string | null;
+  received_at?: string | null;
+  created_at?: string | null;
+  fresh_excess?: number | string;
+  rejected_quantity?: number | string;
+  total_excess?: number | string;
+};
+
+type BookedStockRow = {
+  id: string;
+  takeFromStockId: string;
+  currentStoreVendor: string;
+  rawMaterial: string;
+  location: string;
+  entity: string;
+  orderNo: string;
+  styleName: string | null;
+  bookedQuantity: number;
+  fulfilledQuantity: number;
+  status: string;
+  bookedBy: string | null;
+  bookedAt: string;
+};
+
+type StockMasterOption = { id: string; label: string; isAsset: boolean };
+type StockLocationOption = { id: string; label: string; entityId: string };
+type StockStorageOption = { id: string; label: string; entityId: string };
+
+type ManualStockForm = {
+  rawMaterialId: string;
+  locationId: string;
+  storageNodeId: string;
+  quantity: string;
+  reason: string;
+};
+
+type AssetStockReportRow = {
+  id: string;
+  asset: string;
+  location: string;
+  source: string;
+  receiptNo: string;
+  entryDate: string;
+  onHand: number;
+  freshExcess: number;
+  rejectedQuantity: number;
+  totalExcess: number;
+  reserved: number;
+  available: number;
+};
+
+const assetStockReportFields = [
+  { key: "asset", label: "Asset" },
+  { key: "location", label: "Location" },
+  { key: "storagePath", label: "Storage Path" },
+  { key: "source", label: "Source" },
+  { key: "receiptNo", label: "GRN No." },
+  { key: "entryDate", label: "Entry Date" },
+  { key: "onHand", label: "On Hand" },
+  { key: "freshExcess", label: "Fresh Excess" },
+  { key: "rejectedQuantity", label: "Rejected Qty" },
+  { key: "totalExcess", label: "Total Excess" },
+  { key: "reserved", label: "Reserved" },
+  { key: "available", label: "Available" },
+];
+
+const emptyManualStockForm = (): ManualStockForm => ({ rawMaterialId: "", locationId: "", storageNodeId: "", quantity: "", reason: "" });
+
+const bookedStockFields = [
+  { key: "id", label: "Booking ID" },
+  { key: "takeFromStockId", label: "Take from Stock ID" },
+  { key: "currentStoreVendor", label: "Current Store Vendor" },
+  { key: "entity", label: "Entity" },
+  { key: "location", label: "Location" },
+  { key: "rawMaterial", label: "Raw Material" },
+  { key: "orderNo", label: "Order No." },
+  { key: "styleName", label: "Style" },
+  { key: "bookedQuantity", label: "Booked Qty" },
+  { key: "fulfilledQuantity", label: "Physically Approved Qty" },
+  { key: "status", label: "Status" },
+  { key: "bookedBy", label: "Booked By" },
+  { key: "bookedAt", label: "Booked At" },
+];
 
 const stageDetails: Record<InventoryStage, { eyebrow: string; title: string; description: string; next?: { label: string; path: string } }> = {
   "purchase-order": {
@@ -44,13 +146,18 @@ const stageDetails: Record<InventoryStage, { eyebrow: string; title: string; des
     eyebrow: "Inventory / Outward",
     title: "Raw Material Delivery Challans",
     description: "Record raw material issues and transfers with source document, destination, quantity, and acknowledgement status.",
-    next: { label: "View RM Stock", path: "../../stock/rm-stock" },
+    next: { label: "View RM Stock", path: "stock/rm-stock/general-inventory" },
   },
   "rm-stock": {
     eyebrow: "Inventory / Stock",
-    title: "RM Stock",
-    description: "Monitor raw material on-hand, reserved, issued, and available quantities by item and warehouse.",
-    next: { label: "View FG Stock", path: "../fg-stock" },
+    title: "General Inventory",
+    description: "Monitor raw material on-hand, reserved, issued, and available quantities by item and location.",
+    next: { label: "View FG Stock", path: "stock/fg-stock" },
+  },
+  "assets-stock": {
+    eyebrow: "Inventory / Stock",
+    title: "Assets Stock",
+    description: "Monitor asset-classified raw materials received through GRN verification, with on-hand, reserved, and available quantities by location.",
   },
   "fg-stock": {
     eyebrow: "Inventory / Stock",
@@ -66,16 +173,43 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
   const details = stageDetails[stage];
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [stock, setStock] = useState<StockRow[]>([]);
+  const [bookedStock, setBookedStock] = useState<BookedStockRow[]>([]);
+  const [bookedLoading, setBookedLoading] = useState(stage === "rm-stock");
+  const [bookedError, setBookedError] = useState("");
+  const [stockTab, setStockTab] = useState("general");
+  const [selectedAssetCategory, setSelectedAssetCategory] = useState<string | null>(null);
+  const [manualStockOpen, setManualStockOpen] = useState(false);
+  const [manualStockForm, setManualStockForm] = useState<ManualStockForm>(emptyManualStockForm);
+  const [rawMaterialOptions, setRawMaterialOptions] = useState<StockMasterOption[]>([]);
+  const [locationOptions, setLocationOptions] = useState<StockLocationOption[]>([]);
+  const [storageOptions, setStorageOptions] = useState<StockStorageOption[]>([]);
+  const [storageSearch, setStorageSearch] = useState("");
+  const [storageSearchLoading, setStorageSearchLoading] = useState(false);
+  const [storageSearchError, setStorageSearchError] = useState("");
+  const [storageSearchRetry, setStorageSearchRetry] = useState(0);
+  const [hasMoreStorageOptions, setHasMoreStorageOptions] = useState(false);
+  const [manualOptionsLoading, setManualOptionsLoading] = useState(false);
+  const [manualStockSaving, setManualStockSaving] = useState(false);
+  const [manualStockError, setManualStockError] = useState("");
+  const [manualOptionsError, setManualOptionsError] = useState("");
+  const manualOptionsRequestId = useRef(0);
   const [loading, setLoading] = useState(stage === "purchase-order" || (stage.endsWith("stock") && stage !== "fg-stock"));
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!organizationId) return;
     if (stage.endsWith("stock") && stage !== "fg-stock") {
-      fetch(`/api/inventory/stock?organizationId=${encodeURIComponent(organizationId)}&type=RM`, { cache: "no-store" })
+      const stockType = stage === "assets-stock" ? "ASSET" : "RM";
+      fetch(`/api/inventory/stock?organizationId=${encodeURIComponent(organizationId)}&type=${stockType}`, { cache: "no-store" })
         .then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data?.error || "Unable to load stock."); setStock(data.stock ?? []); })
         .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load stock."))
         .finally(() => setLoading(false));
+      if (stage === "rm-stock") {
+        fetch(`/api/inventory/booked-stock?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
+          .then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data?.error || "Unable to load booked stock."); setBookedStock(data.bookings ?? []); })
+          .catch((loadError) => setBookedError(loadError instanceof Error ? loadError.message : "Unable to load booked stock."))
+          .finally(() => setBookedLoading(false));
+      }
       return;
     }
     if (stage !== "purchase-order") return;
@@ -94,45 +228,259 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
     approved: purchaseOrders.filter((order) => order.status === "APPROVED").length,
     lines: purchaseOrders.reduce((total, order) => total + order.lines.length, 0),
   }), [purchaseOrders]);
+  const assetCategoryCards = useMemo(() => {
+    const categories = new Map<string, { count: number; onHand: number; available: number }>();
+    for (const row of stock) {
+      const category = row.category?.trim() || "Uncategorized";
+      const summary = categories.get(category) ?? { count: 0, onHand: 0, available: 0 };
+      const onHand = Number(row.quantity_on_hand);
+      summary.count += 1;
+      summary.onHand += onHand;
+      summary.available += onHand - Number(row.quantity_reserved);
+      categories.set(category, summary);
+    }
+    return [...categories.entries()]
+      .map(([category, summary]) => ({ category, ...summary }))
+      .sort((left, right) => left.category.localeCompare(right.category));
+  }, [stock]);
+  const selectedAssetStockRows = useMemo<AssetStockReportRow[]>(() => stock
+    .filter((row) => (row.category?.trim() || "Uncategorized") === selectedAssetCategory)
+    .map((row) => {
+      const onHand = Number(row.quantity_on_hand);
+      const reserved = Number(row.quantity_reserved);
+      return {
+        id: row.id,
+        asset: row.raw_material ?? row.style_name ?? "—",
+        location: row.location.location_name,
+        storagePath: row.storage_path ?? "Legacy / not assigned",
+        source: row.source_type === "GRN" ? "GRN" : row.source_type === "MANUAL" ? "Manual Entry" : "Legacy Balance",
+        receiptNo: row.receipt_no ?? "—",
+        entryDate: row.received_at || row.created_at
+          ? new Date(row.received_at ?? row.created_at!).toLocaleDateString("en-IN")
+          : "—",
+        onHand,
+        freshExcess: Number(row.fresh_excess ?? 0),
+        rejectedQuantity: Number(row.rejected_quantity ?? 0),
+        totalExcess: Number(row.total_excess ?? 0),
+        reserved,
+        available: onHand - reserved,
+      };
+    }), [selectedAssetCategory, stock]);
+  const selectedStockLocation = locationOptions.find((option) => option.id === manualStockForm.locationId);
+  const availableStorageOptions = storageOptions.filter((option) =>
+    option.entityId === selectedStockLocation?.entityId,
+  );
+
+  useEffect(() => {
+    const siteEntityId = selectedStockLocation?.entityId;
+    const search = storageSearch.trim();
+    if (!manualStockOpen || !siteEntityId || search.length < 2) return;
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      setStorageSearchLoading(true);
+      setStorageSearchError("");
+      try {
+        const query = new URLSearchParams({
+          siteEntityId,
+          search,
+          limit: "50",
+        });
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/storage-nodes?${query.toString()}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error || "Unable to search storage locations.");
+        if (!controller.signal.aborted) {
+          setStorageOptions(Array.isArray(payload?.nodes) ? payload.nodes
+            .filter((item: { is_active?: boolean; fields?: Record<string, unknown> }) => item.is_active !== false && Boolean(item.fields?.site_entity_id))
+            .map((item: { id: string; fields?: Record<string, unknown>; label: string }) => ({
+              id: item.id,
+              label: String(item.fields?.path ?? item.label),
+              entityId: String(item.fields?.site_entity_id ?? ""),
+            })) : []);
+          setHasMoreStorageOptions(payload?.hasMore === true);
+        }
+      } catch (searchError) {
+        if (!controller.signal.aborted) {
+          setStorageSearchError(searchError instanceof Error ? searchError.message : "Unable to search storage Bins.");
+          setStorageOptions([]);
+          setHasMoreStorageOptions(false);
+        }
+      } finally {
+        if (!controller.signal.aborted) setStorageSearchLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [manualStockOpen, organizationId, selectedStockLocation?.entityId, storageSearch, storageSearchRetry]);
+
+  async function loadManualStockOptions() {
+    const requestId = ++manualOptionsRequestId.current;
+    setManualOptionsLoading(true);
+    setManualOptionsError("");
+    try {
+      const [materialsResponse, locationsResponse] = await Promise.all([
+        fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/raw-material?includeInactive=false&limit=200`, { cache: "no-store" }),
+        fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/location?includeInactive=false&limit=200`, { cache: "no-store" }),
+      ]);
+      const [materialsPayload, locationsPayload] = await Promise.all([
+        materialsResponse.json(),
+        locationsResponse.json(),
+      ]);
+      if (!materialsResponse.ok) throw new Error(materialsPayload?.error || "Unable to load raw materials.");
+      if (!locationsResponse.ok) throw new Error(locationsPayload?.error || "Unable to load locations.");
+      if (requestId !== manualOptionsRequestId.current) return;
+      const materials = Array.isArray(materialsPayload) ? materialsPayload : [];
+      setRawMaterialOptions(materials
+        .map((item: { id: string; label: string; fields?: Record<string, unknown> }) => ({
+          id: item.id,
+          label: item.label,
+          isAsset: item.fields?.Asset_Purchase === true || item.fields?.is_asset === true,
+        }))
+        .filter((item: StockMasterOption) => item.isAsset === (stage === "assets-stock")));
+      setLocationOptions(Array.isArray(locationsPayload) ? locationsPayload
+        .map((item: { id: string; label: string; fields?: Record<string, unknown> }) => ({
+          id: item.id,
+          label: item.label,
+          entityId: String(item.fields?.entity_id ?? ""),
+        }))
+        .filter((item: StockLocationOption) => item.entityId) : []);
+    } catch (loadError) {
+      if (requestId === manualOptionsRequestId.current) {
+        setManualOptionsError(loadError instanceof Error ? loadError.message : "Unable to load stock form options.");
+      }
+    } finally {
+      if (requestId === manualOptionsRequestId.current) setManualOptionsLoading(false);
+    }
+  }
+
+  async function openManualStockForm() {
+    setManualStockForm(emptyManualStockForm());
+    setManualStockError("");
+    setManualOptionsError("");
+    setRawMaterialOptions([]);
+    setLocationOptions([]);
+    setStorageOptions([]);
+    setStorageSearch("");
+    setStorageSearchError("");
+    setHasMoreStorageOptions(false);
+    setManualStockOpen(true);
+    await loadManualStockOptions();
+  }
+
+  function closeManualStockForm() {
+    manualOptionsRequestId.current += 1;
+    setManualStockOpen(false);
+    setStorageSearch("");
+    setStorageOptions([]);
+    setHasMoreStorageOptions(false);
+  }
+
+  async function submitManualStock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setManualStockSaving(true);
+    setManualStockError("");
+    try {
+      const response = await fetch("/api/inventory/stock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, ...manualStockForm, isAssetStock: stage === "assets-stock" }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Unable to add stock.");
+
+      setManualStockOpen(false);
+      try {
+        const stockType = stage === "assets-stock" ? "ASSET" : "RM";
+        const stockResponse = await fetch(`/api/inventory/stock?organizationId=${encodeURIComponent(organizationId)}&type=${stockType}`, { cache: "no-store" });
+        const stockPayload = await stockResponse.json();
+        if (!stockResponse.ok) throw new Error(stockPayload?.error || "Unable to refresh inventory.");
+        setStock(stockPayload.stock ?? []);
+      } catch (refreshError) {
+        const detail = refreshError instanceof Error ? ` ${refreshError.message}` : "";
+        setError(`Stock was added, but the inventory list could not be refreshed.${detail}`);
+      }
+    } catch (saveError) {
+      setManualStockError(saveError instanceof Error ? saveError.message : "Unable to add stock.");
+    } finally {
+      setManualStockSaving(false);
+    }
+  }
 
   return (
     <main className="mx-auto max-w-[1500px] space-y-5">
       {stage === "fg-stock" ? (
-        <div className="grid gap-3 sm:grid-cols-3">
-          {[
-            { label: "Carton Box", href: `${basePath}/stock/fg-stock/carton-box` },
-            { label: "SKU", href: `${basePath}/stock/fg-stock/sku` },
-            { label: "Tags", href: `${basePath}/stock/fg-stock/tags` },
-          ].map((card) => (
-            <Link key={card.label} href={card.href} className="erp-surface block p-6 transition hover:border-emerald-400 hover:shadow-md">
-              <h2 className="text-lg font-bold text-slate-950">{card.label}</h2>
-            </Link>
-          ))}
-        </div>
+        <>
+          <header className="border-b border-[var(--erp-border)] pb-4">
+            <p className="erp-eyebrow">{details.eyebrow}</p>
+            <h1 className="erp-page-heading mt-1">{details.title}</h1>
+            <p className="erp-page-subheading mt-1">{details.description}</p>
+          </header>
+          <section aria-label="Finished goods stock views" className="grid gap-4 sm:grid-cols-2">
+            {[
+              {
+                label: "General Stock",
+                description: "View all finished-goods stock records, quantities, and locations.",
+                href: `${basePath}/stock/fg-stock/general-stock`,
+                Icon: Boxes,
+              },
+              {
+                label: "Allocated Stock",
+                description: "View finished-goods stock linked to an order.",
+                href: `${basePath}/stock/fg-stock/allocated-stock`,
+                Icon: ClipboardList,
+              },
+            ].map(({ label, description, href, Icon }) => (
+              <Link key={label} href={href} className="group block rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--erp-brand)]">
+                <Card className="flex min-h-48 h-full flex-col justify-between transition group-hover:border-[var(--erp-brand)] group-hover:shadow-md">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]">
+                    <Icon aria-hidden="true" className="h-5 w-5" />
+                  </span>
+                  <span className="mt-8 block">
+                    <span className="flex items-center justify-between gap-3 text-lg font-bold text-[var(--erp-text)]">
+                      {label}
+                      <ArrowRight aria-hidden="true" className="h-5 w-5 shrink-0 text-[var(--erp-muted)] transition group-hover:translate-x-1 group-hover:text-[var(--erp-brand)]" />
+                    </span>
+                    <span className="mt-2 block max-w-md text-sm leading-6 text-[var(--erp-muted)]">{description}</span>
+                  </span>
+                </Card>
+              </Link>
+            ))}
+          </section>
+        </>
       ) : null}
 
       {stage !== "fg-stock" ? (
         <>
-      <header className="border-b border-slate-200 pb-4">
-        <p className="erp-eyebrow">{details.eyebrow}</p>
-        <h1 className="erp-page-heading mt-1">{details.title}</h1>
-        <p className="mt-1 max-w-3xl text-xs text-slate-500">{details.description}</p>
-      </header>
+      {stage !== "rm-stock" ? (
+        <header className="border-b border-slate-200 pb-4">
+          <p className="erp-eyebrow">{details.eyebrow}</p>
+          <h1 className="erp-page-heading mt-1">{details.title}</h1>
+          <p className="mt-1 max-w-3xl text-xs text-slate-500">{details.description}</p>
+        </header>
+      ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        {[
-          ["Documents", stage === "purchase-order" ? metrics.documents : "0"],
-          ["Approved / Available", stage === "purchase-order" ? metrics.approved : "0"],
-          ["Traceable Lines", stage === "purchase-order" ? metrics.lines : "0"],
-        ].map(([label, value]) => (
-          <section key={label} className="erp-surface p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
-            <p className="mt-2 text-2xl font-bold text-slate-950">{value}</p>
-          </section>
-        ))}
-      </div>
+      {stage !== "rm-stock" ? (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            ["Documents", stage === "purchase-order" ? metrics.documents : "0"],
+            ["Approved / Available", stage === "purchase-order" ? metrics.approved : "0"],
+            ["Traceable Lines", stage === "purchase-order" ? metrics.lines : "0"],
+          ].map(([label, value]) => (
+            <section key={label} className="erp-surface p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+              <p className="mt-2 text-2xl font-bold text-slate-950">{value}</p>
+            </section>
+          ))}
+        </div>
+      ) : null}
 
-      {details.next ? (
+      {details.next && stage !== "rm-stock" ? (
         <Link href={`${basePath}/${details.next.path}`} className="inline-flex rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800">
           {details.next.label} →
         </Link>
@@ -163,8 +511,130 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
               {purchaseOrders.length === 0 ? <p className="p-8 text-center text-xs text-slate-500">No GRNs are available for inward processing.</p> : null}
             </div>
       ) : stage.endsWith("stock") ? (
-        loading ? <div className="erp-surface p-8 text-center text-xs text-slate-500">Loading stock...</div> : error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> :
-          <div className="erp-surface overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Raw Material</th><th className="px-3 py-3">Size</th><th className="px-3 py-3">Warehouse</th><th className="px-3 py-3 text-right">On Hand</th><th className="px-3 py-3 text-right">Reserved</th><th className="px-3 py-3 text-right">Available</th></tr></thead><tbody className="divide-y divide-slate-100">{stock.map((row) => { const onHand = Number(row.quantity_on_hand); const reserved = Number(row.quantity_reserved); return <tr key={row.id} className="bg-white"><td className="px-3 py-3 font-semibold text-slate-900">{row.raw_material ?? row.style_name}</td><td className="px-3 py-3">{row.size ?? "-"}</td><td className="px-3 py-3">{row.warehouse}</td><td className="px-3 py-3 text-right">{onHand.toLocaleString("en-IN")}</td><td className="px-3 py-3 text-right">{reserved.toLocaleString("en-IN")}</td><td className="px-3 py-3 text-right font-bold text-emerald-700">{(onHand - reserved).toLocaleString("en-IN")}</td></tr>; })}</tbody></table></div>{stock.length === 0 ? <p className="p-8 text-center text-xs text-slate-500">No stock has been posted for this ledger yet.</p> : null}</div>
+        <>
+          {stage === "rm-stock" && (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-0 flex-1">
+                <Tabs
+                  ariaLabel="RM stock views"
+                  tabs={[{ label: "General Inventory", value: "general" }, { label: "Booked Stock", value: "booked" }]}
+                  value={stockTab}
+                  onChange={setStockTab}
+                />
+              </div>
+              {stockTab === "general" && <Button type="button" onClick={() => { void openManualStockForm(); }} disabled={manualStockOpen}><Plus className="h-4 w-4" />Create New</Button>}
+            </div>
+          )}
+          {stage === "assets-stock" && (
+            <div className="flex justify-end">
+              <Button type="button" onClick={() => { void openManualStockForm(); }} disabled={manualStockOpen}><Plus className="h-4 w-4" />Create New</Button>
+            </div>
+          )}
+          {stage === "rm-stock" && stockTab === "booked" ? (
+            bookedLoading ? <div className="erp-surface p-8 text-center text-xs text-slate-500">Loading booked stock...</div>
+              : bookedError ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{bookedError}</div>
+                : <BookedStockReport records={bookedStock} />
+          ) : loading ? <div className="erp-surface p-8 text-center text-xs text-slate-500">Loading stock...</div> : error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : stage === "assets-stock" ? selectedAssetCategory ? (
+            <section className="space-y-4">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedAssetCategory(null)}>
+                <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+                Asset categories
+              </Button>
+              <AssetCategoryStockReport
+                key={selectedAssetCategory}
+                category={selectedAssetCategory}
+                organizationId={organizationId}
+                records={selectedAssetStockRows}
+              />
+            </section>
+          ) : assetCategoryCards.length === 0 ? (
+            <Card className="text-center">
+              <p className="text-sm font-semibold text-[var(--erp-text)]">No asset inventory categories yet</p>
+              <p className="mt-2 text-sm text-[var(--erp-muted)]">Asset categories will appear here when stock is available.</p>
+            </Card>
+          ) : (
+            <section aria-label="Asset inventory categories" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {assetCategoryCards.map(({ category, count, onHand, available }) => (
+                <Button
+                  key={category}
+                  type="button"
+                  variant="card"
+                  className="min-h-44 h-full p-6"
+                  onClick={() => setSelectedAssetCategory(category)}
+                  aria-label={`View ${category} asset inventory report`}
+                >
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]">
+                    <Boxes aria-hidden="true" className="h-5 w-5" />
+                  </span>
+                  <span className="mt-6 flex w-full items-center justify-between gap-3 text-left">
+                    <span>
+                      <span className="block text-base font-bold text-[var(--erp-text)]">{category}</span>
+                      <span className="mt-1 block text-xs text-[var(--erp-muted)]">{count} stock entries</span>
+                    </span>
+                    <ArrowRight aria-hidden="true" className="h-5 w-5 shrink-0 text-[var(--erp-muted)]" />
+                  </span>
+                  <span className="mt-4 grid w-full grid-cols-2 gap-3 border-t border-[var(--erp-border)] pt-3 text-left">
+                    <span>
+                      <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--erp-muted)]">On hand</span>
+                      <span className="mt-1 block text-sm font-bold text-[var(--erp-text)]">{onHand.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+                    </span>
+                    <span>
+                      <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--erp-muted)]">Available</span>
+                      <span className="mt-1 block text-sm font-bold text-[var(--erp-text)]">{available.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+                    </span>
+                  </span>
+                </Button>
+              ))}
+            </section>
+          ) : (
+            <div className="erp-surface overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1450px] text-left text-xs">
+                  <thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-3">Raw Material</th>
+                      <th className="px-3 py-3">Size</th>
+                      <th className="px-3 py-3">Legacy Location</th>
+                      <th className="px-3 py-3">Storage Path</th>
+                      <th className="px-3 py-3">Source</th>
+                      <th className="px-3 py-3">GRN No.</th>
+                      <th className="px-3 py-3">Entry Date</th>
+                      <th className="px-3 py-3 text-right">On Hand</th>
+                      <th className="px-3 py-3 text-right">Fresh Excess</th>
+                      <th className="px-3 py-3 text-right">Rejected Qty</th>
+                      <th className="px-3 py-3 text-right">Total Excess</th>
+                      <th className="px-3 py-3 text-right">Reserved</th>
+                      <th className="px-3 py-3 text-right">Available</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {stock.map((row) => {
+                      const onHand = Number(row.quantity_on_hand);
+                      const reserved = Number(row.quantity_reserved);
+                      return (
+                        <tr key={row.id} className="bg-white">
+                          <td className="px-3 py-3 font-semibold text-slate-900">{row.raw_material ?? row.style_name}</td>
+                          <td className="px-3 py-3">{row.size ?? "-"}</td>
+                          <td className="px-3 py-3">{row.location.location_name}</td>
+                          <td className="px-3 py-3">{row.storage_path ?? "Legacy / not assigned"}</td>
+                          <td className="px-3 py-3">{row.source_type === "GRN" ? "GRN" : row.source_type === "MANUAL" ? "Manual Entry" : "Legacy Balance"}</td>
+                          <td className="px-3 py-3">{row.receipt_no ?? "-"}</td>
+                          <td className="px-3 py-3">{row.received_at || row.created_at ? new Date(row.received_at ?? row.created_at!).toLocaleDateString("en-IN") : "-"}</td>
+                          <td className="px-3 py-3 text-right">{onHand.toLocaleString("en-IN")}</td>
+                          <td className="px-3 py-3 text-right">{Number(row.fresh_excess ?? 0).toLocaleString("en-IN")}</td>
+                          <td className="px-3 py-3 text-right">{Number(row.rejected_quantity ?? 0).toLocaleString("en-IN")}</td>
+                          <td className="px-3 py-3 text-right">{Number(row.total_excess ?? 0).toLocaleString("en-IN")}</td>
+                          <td className="px-3 py-3 text-right">{reserved.toLocaleString("en-IN")}</td>
+                          <td className="px-3 py-3 text-right font-bold text-emerald-700">{(onHand - reserved).toLocaleString("en-IN")}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {stock.length === 0 ? <p className="p-8 text-center text-xs text-slate-500">No stock has been posted for this ledger yet.</p> : null}
+            </div>)}
+        </>
       ) : (
         <section className="erp-surface p-8">
           <p className="text-sm font-semibold text-slate-900">{details.title} workspace ready</p>
@@ -173,6 +643,196 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
       )}
         </>
       ) : null}
+
+      <Modal
+        open={manualStockOpen}
+        onClose={() => { if (!manualStockSaving) closeManualStockForm(); }}
+        ariaLabelledBy="manual-stock-dialog-title"
+        size="square"
+      >
+        <div className="border-b border-slate-200 px-6 py-4">
+          <h2 id="manual-stock-dialog-title" className="text-base font-bold text-slate-950">{stage === "assets-stock" ? "Add Asset Stock" : "Add Raw Material Stock"}</h2>
+          <p className="mt-1 text-xs text-slate-500">Select a stock location. Storage placement is optional and may be at any configured hierarchy level.</p>
+        </div>
+        <form onSubmit={submitManualStock} className="grid gap-4 p-6 sm:grid-cols-2">
+          <>
+              <Select
+                label={stage === "assets-stock" ? "Asset Raw Material" : "Raw Material"}
+                value={manualStockForm.rawMaterialId}
+                onChange={(event) => setManualStockForm((current) => ({ ...current, rawMaterialId: event.target.value }))}
+                required
+                disabled={manualOptionsLoading || rawMaterialOptions.length === 0}
+              >
+                <option value="">Select a raw material</option>
+                {rawMaterialOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </Select>
+              <Select
+                label="Stock Location"
+                value={manualStockForm.locationId}
+                onChange={(event) => {
+                  setManualStockForm((current) => ({ ...current, locationId: event.target.value, storageNodeId: "" }));
+                  setStorageSearch("");
+                  setStorageOptions([]);
+                  setStorageSearchError("");
+                  setHasMoreStorageOptions(false);
+                }}
+                required
+                disabled={manualOptionsLoading || locationOptions.length === 0}
+              >
+                <option value="">Select a stock location</option>
+                {locationOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </Select>
+              <Input
+                label="Search Storage Locations"
+                value={storageSearch}
+                onChange={(event) => {
+                  setStorageSearch(event.target.value);
+                  setStorageOptions([]);
+                  setStorageSearchError("");
+                  setHasMoreStorageOptions(false);
+                }}
+                placeholder={selectedStockLocation ? "Enter at least 2 characters" : "Select a stock location first"}
+                disabled={manualOptionsLoading || !selectedStockLocation}
+                autoComplete="off"
+              />
+              <Select
+                label="Storage Placement (Optional)"
+                value={manualStockForm.storageNodeId}
+                onChange={(event) => setManualStockForm((current) => ({ ...current, storageNodeId: event.target.value }))}
+                disabled={manualOptionsLoading || storageSearchLoading || !selectedStockLocation || availableStorageOptions.length === 0}
+              >
+                <option value="">
+                  {storageSearchLoading
+                    ? "Searching storage..."
+                    : storageSearch.trim().length < 2
+                      ? "Search storage locations"
+                      : availableStorageOptions.length
+                        ? "Select a matching Bin"
+                        : "No matching active storage"}
+                </option>
+                {availableStorageOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </Select>
+              <Input
+                label="Quantity to Add"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={manualStockForm.quantity}
+                onChange={(event) => setManualStockForm((current) => ({ ...current, quantity: event.target.value }))}
+                required
+              />
+              <Input
+                label="Reason"
+                value={manualStockForm.reason}
+                onChange={(event) => setManualStockForm((current) => ({ ...current, reason: event.target.value }))}
+                maxLength={500}
+                placeholder="For example, opening balance"
+                required
+              />
+          </>
+          {manualOptionsLoading && <p role="status" className="text-sm text-slate-500 sm:col-span-2">Loading materials and locations...</p>}
+          {(manualOptionsError || manualStockError) && (
+            <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 sm:col-span-2">
+              {manualOptionsError || manualStockError}
+            </p>
+          )}
+          {manualOptionsError && !manualOptionsLoading && (
+            <Button type="button" variant="secondary" onClick={() => { void loadManualStockOptions(); }} className="sm:col-span-2">
+              Retry loading options
+            </Button>
+          )}
+          {storageSearchError && (
+            <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 sm:col-span-2">
+              {storageSearchError}
+            </p>
+          )}
+          {storageSearchError && (
+            <Button type="button" variant="secondary" onClick={() => setStorageSearchRetry((value) => value + 1)} className="sm:col-span-2">
+              Retry Bin search
+            </Button>
+          )}
+          {!manualOptionsLoading && (rawMaterialOptions.length === 0 || locationOptions.length === 0) && !manualStockError && (
+            <p className="text-sm text-slate-500 sm:col-span-2">
+              {stage === "assets-stock"
+                ? "An active asset raw material and stock location are required before stock can be added."
+                : "An active raw material and stock location are required before stock can be added."}
+            </p>
+          )}
+          {selectedStockLocation && storageSearch.trim().length < 2 && (
+            <p className="text-sm text-slate-500 sm:col-span-2">
+              Search for at least 2 characters to find active Bins beneath a Site associated with this location&apos;s Entity.
+            </p>
+          )}
+          {selectedStockLocation && hasMoreStorageOptions && (
+            <p className="text-sm text-slate-500 sm:col-span-2">
+              Showing the first 50 matching Bins. Refine your search to narrow the results.
+            </p>
+          )}
+          <div className="flex justify-end gap-2 border-t border-slate-200 pt-4 sm:col-span-2">
+            <Button type="button" variant="secondary" onClick={closeManualStockForm} disabled={manualStockSaving}>Cancel</Button>
+            <Button type="submit" disabled={manualStockSaving || manualOptionsLoading || rawMaterialOptions.length === 0 || locationOptions.length === 0 || availableStorageOptions.length === 0}>
+              {manualStockSaving ? "Adding..." : stage === "assets-stock" ? "Add Asset Stock" : "Add Stock"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </main>
+  );
+}
+
+function BookedStockReport({ records }: { records: BookedStockRow[] }) {
+  const params = useParams<{ workspaceId: string; organizationId: string }>();
+  const router = useRouter();
+  const [visibleFields, setVisibleFields] = useState(bookedStockFields.map((field) => field.key));
+  return <ReportGrid
+    title="Booked Stock Report"
+    records={records}
+    fields={bookedStockFields}
+    visibleFields={visibleFields}
+    onVisibleFieldsChange={setVisibleFields}
+    rowIdSelector={(record) => record.id}
+    selectedIds={[]}
+    selectable={false}
+    onRowClick={(bookingId) => router.push(
+      `/dashboard/${params.workspaceId}/organizations/${params.organizationId}/inventory-management/stock/rm-stock/general-inventory/booked-stock/${encodeURIComponent(bookingId)}`,
+    )}
+    renderCell={(fieldKey, record) => {
+      if (fieldKey === "bookedQuantity") return Number(record.bookedQuantity).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+      if (fieldKey === "bookedAt") return new Date(record.bookedAt).toLocaleString("en-IN");
+      return String(record[fieldKey as keyof BookedStockRow] ?? "-");
+    }}
+    emptyMessage="No booked stock records found."
+  />;
+}
+
+function AssetCategoryStockReport({
+  category,
+  organizationId,
+  records,
+}: {
+  category: string;
+  organizationId: string;
+  records: AssetStockReportRow[];
+}) {
+  const [visibleFields, setVisibleFields] = useState<string[]>(assetStockReportFields.map((field) => field.key));
+  return (
+    <ReportGrid
+      title={`${category} Asset Inventory`}
+      records={records}
+      fields={assetStockReportFields}
+      visibleFields={visibleFields}
+      onVisibleFieldsChange={setVisibleFields}
+      storageKey={`credence-craft-asset-inventory-${organizationId}-${category}`}
+      rowIdSelector={(record) => record.id}
+      selectedIds={[]}
+      selectable={false}
+      renderCell={(fieldKey, record) => {
+        const value = record[fieldKey as keyof AssetStockReportRow];
+        return typeof value === "number"
+          ? value.toLocaleString("en-IN", { maximumFractionDigits: 2 })
+          : String(value ?? "—");
+      }}
+      emptyMessage={`No stock entries are available for ${category}.`}
+    />
   );
 }

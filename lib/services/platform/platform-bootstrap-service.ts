@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/database/prisma-client";
-import { hashPlatformPassword } from "@/lib/auth/platform-password-hasher";
 
 const DEFAULT_PLANS = [
   { plan_name: "Free", description: "Limited features for evaluation.", sort_order: 0 },
@@ -8,8 +7,8 @@ const DEFAULT_PLANS = [
   { plan_name: "Professional", description: "All modules for growing organizations.", sort_order: 2 },
 ];
 
-// Idempotent: creates default plans, a default database connection, and
-// a default platform admin (from env) the first time the platform area is used.
+// Idempotent defaults for authenticated platform setup screens. Platform
+// administrator enrollment is deliberately handled by an explicit operator command.
 export async function ensurePlatformDefaults() {
   const existingPlanCount = await prisma.plan.count();
 
@@ -36,22 +35,6 @@ export async function ensurePlatformDefaults() {
         connection_name: "Neon - Default",
         status: "active",
         is_default: true,
-      },
-    });
-  }
-
-  const existingAdminCount = await prisma.platformAdmin.count();
-
-  if (existingAdminCount === 0) {
-    const email = process.env.PLATFORM_ADMIN_EMAIL || "jassimtkd@gmail.com";
-    const password = process.env.PLATFORM_ADMIN_PASSWORD || "ChangeMe123!";
-
-    await prisma.platformAdmin.create({
-      data: {
-        admin_id: randomUUID(),
-        full_name: "Support Team",
-        email,
-        password_hash: hashPlatformPassword(password),
       },
     });
   }

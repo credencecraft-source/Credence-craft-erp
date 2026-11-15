@@ -1,0 +1,273 @@
+import { prisma } from "@/lib/database/prisma-client";
+import { createMasterValueForOrganization, deleteAllMasterValuesForOrganization, getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
+import { getMasterDefinition } from "@/lib/master-data/master-data-registry";
+import {
+  getOrganizationMasterSetupDefinitions,
+  ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS,
+  ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN,
+  ORGANIZATION_MASTER_SETUP_UPLOAD_LOOKUP_PREFIX,
+  parseOrganizationMasterSetupUploadLookupReference,
+} from "@/lib/master-data/organization-master-setup-stages";
+
+export { ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS } from "@/lib/master-data/organization-master-setup-stages";
+
+export type OrganizationMasterSetupRecord = {
+  moduleKey: string;
+  label: string;
+  fields: Record<string, string | number | boolean | null | string[]>;
+};
+
+type ActiveMaster = { id: string; is_active: boolean };
+
+async function findOrCreateStarterMaster<T extends ActiveMaster>(
+  find: () => Promise<T | null>,
+  create: () => Promise<T>,
+  isCompatible: (record: T) => boolean,
+  label: string,
+): Promise<{ record: T; created: boolean }> {
+  const existing = await find();
+  if (!existing) return { record: await create(), created: true };
+  if (!existing.is_active) {
+    throw new Error(`${label} already exists but is inactive. Activate it before creating starter masters.`);
+  }
+  if (!isCompatible(existing)) {
+    throw new Error(`${label} already exists with a different parent or brand.`);
+  }
+  return { record: existing, created: false };
+}
+
+export async function createOrganizationMerchandisingStarterMasters(organizationId: string) {
+  if (!organizationId) throw new Error("Organization is required.");
+
+  return prisma.$transaction(async (transaction) => {
+    const product = await transaction.masterProduct.findFirst({
+      where: {
+        organization_id: organizationId,
+        product_master_name: { equals: "Finished Goods", mode: "insensitive" },
+        is_active: true,
+      },
+      select: { id: true },
+    });
+    if (!product) {
+      throw new Error("An active Finished Goods product type is required. Complete organization master setup first.");
+    }
+
+    let createdCount = 0;
+    const save = async <T extends ActiveMaster>(result: Promise<{ record: T; created: boolean }>) => {
+      const saved = await result;
+      if (saved.created) createdCount += 1;
+      return saved.record;
+    };
+    const createRecord = async <T extends ActiveMaster>(
+      find: () => Promise<T | null>,
+      create: () => Promise<T>,
+      isCompatible: (record: T) => boolean,
+      label: string,
+    ) => save(findOrCreateStarterMaster(find, create, isCompatible, label));
+
+    const brands = new Map<string, string>();
+    for (const [index, name] of [
+      "Louis Philippe", "Peter England", "Allen Solly", "Andamen", "Benetton",
+      "Royal Enfield", "Blackberry", "Snitch", "Polar Bear",
+    ].entries()) {
+      const brand = await createRecord(
+        () => transaction.masterBrand.findFirst({
+          where: { organization_id: organizationId, brand: { equals: name, mode: "insensitive" } },
+        }),
+        () => transaction.masterBrand.create({
+          data: { organization_id: organizationId, brand: name, is_active: true, sort_order: index },
+        }),
+        () => true,
+        `Brand "${name}"`,
+      );
+      brands.set(name, brand.id);
+    }
+
+    for (const [index, name] of ["Madurai Fashion", "Lifestyle Fashion"].entries()) {
+      await createRecord(
+        () => transaction.masterBuyer.findFirst({
+          where: { organization_id: organizationId, buyer_name: { equals: name, mode: "insensitive" } },
+        }),
+        () => transaction.masterBuyer.create({
+          data: { organization_id: organizationId, buyer_name: name, is_active: true, sort_order: index },
+        }),
+        () => true,
+        `Buyer "${name}"`,
+      );
+    }
+
+    const sizeIds = new Map<string, string>();
+    for (const [index, name] of ["S", "M", "L", "XL", "XXL", "32", "34", "36", "38", "40"].entries()) {
+      const size = await createRecord(
+        () => transaction.masterSize.findFirst({
+          where: { organization_id: organizationId, size: { equals: name, mode: "insensitive" } },
+        }),
+        () => transaction.masterSize.create({
+          data: { organization_id: organizationId, size: name, is_active: true, sort_order: index },
+        }),
+        () => true,
+        `Size "${name}"`,
+      );
+      sizeIds.set(name, size.id);
+    }
+
+    for (const [index, group] of [
+      { name: "Shirt S-XXL", sizes: ["S", "M", "L", "XL", "XXL"] },
+      { name: "Pant 32-40", sizes: ["32", "34", "36", "38", "40"] },
+    ].entries()) {
+      const brandId = brands.get("Louis Philippe");
+      if (!brandId) throw new Error("The Louis Philippe brand could not be resolved.");
+      const sizeGroup = await createRecord(
+        () => transaction.masterSizeGroup.findFirst({
+          where: { organization_id: organizationId, size_group: { equals: group.name, mode: "insensitive" } },
+        }),
+        () => transaction.masterSizeGroup.create({
+          data: { organization_id: organizationId, brand_id: brandId, size_group: group.name, is_active: true, sort_order: index },
+        }),
+        (record) => record.brand_id === brandId,
+        `Size group "${group.name}"`,
+      );
+      for (const sizeName of group.sizes) {
+        const sizeId = sizeIds.get(sizeName);
+        if (!sizeId) throw new Error(`Size "${sizeName}" could not be resolved.`);
+        const existingLink = await transaction.masterSizeGroupSize.findFirst({
+          where: { organization_id: organizationId, size_group_id: sizeGroup.id, size_id: sizeId },
+          select: { id: true },
+        });
+        if (!existingLink) {
+          await transaction.masterSizeGroupSize.create({
+            data: { organization_id: organizationId, size_group_id: sizeGroup.id, size_id: sizeId },
+          });
+          createdCount += 1;
+        }
+      }
+    }
+
+    const categories = new Map<string, string>();
+    for (const [index, name] of ["Shirt", "Pant", "Kurta", "Suits"].entries()) {
+      const category = await createRecord(
+        () => transaction.masterCategory.findFirst({
+          where: { organization_id: organizationId, category_name: { equals: name, mode: "insensitive" } },
+        }),
+        () => transaction.masterCategory.create({
+          data: { organization_id: organizationId, product_master_id: product.id, category_name: name, is_active: true, sort_order: index },
+        }),
+        (record) => record.product_master_id === product.id,
+        `Category "${name}"`,
+      );
+      categories.set(name, category.id);
+    }
+
+    const shirtCategoryId = categories.get("Shirt");
+    if (!shirtCategoryId) throw new Error("The Shirt category could not be resolved.");
+    await createRecord(
+      () => transaction.masterSubCategory.findFirst({
+        where: { organization_id: organizationId, sub_category: { equals: "Full Sleeve", mode: "insensitive" } },
+      }),
+      () => transaction.masterSubCategory.create({
+        data: { organization_id: organizationId, category_id: shirtCategoryId, sub_category: "Full Sleeve", is_active: true, sort_order: 0 },
+      }),
+      (record) => record.category_id === shirtCategoryId,
+      "Subcategory \"Full Sleeve\"",
+    );
+
+    return { createdCount };
+  });
+}
+
+export async function createOrganizationMasterSetupStage(
+  organizationId: string,
+  records: OrganizationMasterSetupRecord[],
+) {
+  const childRelations = new Map<string, { parentModuleKey: string; parentFieldKey: string }>(
+    Object.entries(ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN).map(([parentModuleKey, relation]) => [
+      relation.childModuleKey,
+      { parentModuleKey, parentFieldKey: relation.childParentFieldKey },
+    ]),
+  );
+  const createdParents = new Map<string, string>();
+  const orderedRecords = records
+    .map((record, index) => ({ record, index }))
+    .sort((left, right) => Number(childRelations.has(left.record.moduleKey))
+      - Number(childRelations.has(right.record.moduleKey)) || left.index - right.index);
+
+  for (const { record } of orderedRecords) {
+    const definition = getMasterDefinition(record.moduleKey);
+    if (!definition || definition.hidden || ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS.has(record.moduleKey)) {
+      throw new Error("One of the selected master types is not available.");
+    }
+
+    const label = record.label.trim();
+    if (!label) continue;
+
+    const fields = { ...record.fields };
+    for (const [fieldKey, value] of Object.entries(fields)) {
+      if (typeof value !== "string" || !value.startsWith(ORGANIZATION_MASTER_SETUP_UPLOAD_LOOKUP_PREFIX)) {
+        continue;
+      }
+      const relation = childRelations.get(record.moduleKey);
+      const reference = parseOrganizationMasterSetupUploadLookupReference(value);
+      if (!relation || fieldKey !== relation.parentFieldKey || reference?.moduleKey !== relation.parentModuleKey) {
+        throw new Error("The workbook contains an invalid inline subcategory relationship.");
+      }
+      const parentId = createdParents.get(`${reference.moduleKey}:${reference.normalizedLabel}`);
+      if (!parentId) {
+        throw new Error(`Create the "${reference.moduleKey === "category" ? "Finished Goods" : "Raw Material"} Category" in this workbook before its subcategories.`);
+      }
+      fields[fieldKey] = parentId;
+    }
+
+    const created = await createMasterValueForOrganization(organizationId, record.moduleKey, {
+      label,
+      fields,
+    });
+    if (Object.hasOwn(ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN, record.moduleKey)) {
+      if (typeof created.id !== "string" || !created.id) {
+        throw new Error("The category created for the workbook could not be resolved.");
+      }
+      createdParents.set(`${record.moduleKey}:${label.toLocaleLowerCase()}`, created.id);
+    }
+    if (record.moduleKey === "process-template") {
+      const processIds = Array.isArray(record.fields.Process) ? record.fields.Process.map(String).filter(Boolean) : [];
+      const processOptions = await getMasterValuesForOrganization(organizationId, "process-master", true);
+      const processLabels = new Map(processOptions.map((option) => [option.id, option.label]));
+      for (const [index, processId] of processIds.entries()) {
+        await createMasterValueForOrganization(organizationId, "process-template-step", {
+          label: processLabels.get(processId) ?? processId,
+          parentValueId: created.id,
+          fields: { Process: processId, Sl_No: index + 1 },
+        });
+      }
+    }
+
+  }
+}
+
+export async function createOrganizationMasterSetupSection(
+  organizationId: string,
+  records: OrganizationMasterSetupRecord[],
+  moduleKey: string,
+) {
+  const sectionRecords = records.filter((record) => record.moduleKey === moduleKey);
+  if (sectionRecords.length === 0) {
+    throw new Error("Enter at least one value for this master.");
+  }
+  return createOrganizationMasterSetupStage(organizationId, sectionRecords);
+}
+
+export async function deleteOrganizationMasterSetupSection(
+  organizationId: string,
+  userId: string,
+  moduleKey: string,
+) {
+  if (!organizationId || !userId) throw new Error("Organization and user are required.");
+  const setupKeys = new Set(
+    (["independent", "related", "third"] as const)
+      .flatMap((stage) => getOrganizationMasterSetupDefinitions(stage))
+      .map((definition) => definition.key),
+  );
+  if (!setupKeys.has(moduleKey)) {
+    throw new Error("This master section is not available for bulk deletion.");
+  }
+  return deleteAllMasterValuesForOrganization(organizationId, userId, moduleKey);
+}

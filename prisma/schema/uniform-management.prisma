@@ -1,0 +1,246 @@
+enum UniformOrderStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+model UniformParticipant {
+  id              String       @id @default(cuid())
+  organization_id String
+  participant_code String      @db.VarChar(64)
+  full_name       String       @db.VarChar(255)
+  group_label     String?      @db.VarChar(160)
+  is_active       Boolean      @default(true)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  assignments     UniformOrderAssignment[]
+  employeeMeasurements UniformEmployeeMeasurement[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, participant_code])
+  @@index([organization_id, is_active, full_name])
+  @@map("uniform_participants")
+}
+
+model UniformOrderCounter {
+  organization_id String       @id
+  current_value   Int          @default(0)
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@map("uniform_order_counters")
+}
+
+model UniformOrder {
+  id                 String             @id @default(cuid())
+  organization_id    String
+  order_no           String             @db.VarChar(64)
+  title              String             @db.VarChar(255)
+  status             UniformOrderStatus @default(DRAFT)
+  due_date           DateTime?
+  notes              String?            @db.VarChar(1000)
+  created_by_user_id String?
+  created_at         DateTime           @default(now())
+  updated_at         DateTime           @updatedAt
+  organization       Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  created_by         WorkspaceUser?     @relation("UniformOrderCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  assignments        UniformOrderAssignment[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, order_no])
+  @@index([organization_id, status, created_at(sort: Desc)])
+  @@map("uniform_orders")
+}
+
+model UniformStyleMeasurementField {
+  id              String       @id @default(cuid())
+  organization_id String
+  style_id        String
+  field_key       String       @db.VarChar(64)
+  label           String       @db.VarChar(120)
+  unit            String       @db.VarChar(12)
+  is_required     Boolean      @default(true)
+  is_active       Boolean      @default(true)
+  sort_order      Int          @default(0)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  style           MasterArticle @relation(fields: [organization_id, style_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, style_id, field_key])
+  @@index([organization_id, style_id, is_active, sort_order])
+  @@map("uniform_style_measurement_fields")
+}
+
+model UniformOrderAssignment {
+  id              String       @id @default(cuid())
+  organization_id String
+  order_id        String
+  participant_id  String
+  style_id        String
+  variant_id      String
+  size_id         String
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  order           UniformOrder @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Cascade)
+  participant     UniformParticipant @relation(fields: [organization_id, participant_id], references: [organization_id, id], onDelete: Restrict)
+  style           MasterArticle @relation(fields: [organization_id, style_id], references: [organization_id, id], onDelete: Restrict)
+  variant         MasterArticleVariant @relation(fields: [organization_id, variant_id], references: [organization_id, id], onDelete: Restrict)
+  size            MasterSize @relation(fields: [organization_id, size_id], references: [organization_id, id], onDelete: Restrict)
+  measurements    UniformAssignmentMeasurement[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, order_id, participant_id, style_id])
+  @@index([organization_id, order_id, style_id, variant_id, size_id])
+  @@index([organization_id, participant_id, created_at(sort: Desc)])
+  @@map("uniform_order_assignments")
+}
+
+model UniformAssignmentMeasurement {
+  id              String                 @id @default(cuid())
+  organization_id String
+  assignment_id   String
+  field_key       String                 @db.VarChar(64)
+  field_label     String                 @db.VarChar(120)
+  unit            String                 @db.VarChar(12)
+  value           Decimal                @db.Decimal(10, 2)
+  created_at      DateTime               @default(now())
+  updated_at      DateTime               @updatedAt
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  assignment      UniformOrderAssignment @relation(fields: [organization_id, assignment_id], references: [organization_id, id], onDelete: Cascade)
+
+  @@unique([organization_id, assignment_id, field_key])
+  @@index([organization_id, assignment_id])
+  @@map("uniform_assignment_measurements")
+}
+
+model UniformEmployeeMeasurementCounter {
+  organization_id String       @id
+  current_value   Int          @default(0)
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@map("uniform_employee_measurement_counters")
+}
+
+model MasterMeasurementGroup {
+  id              String       @id @default(cuid())
+  value_id        String       @unique @default(uuid())
+  organization_id String
+  group_name      String       @db.VarChar(255)
+  legacy_metadata Json?
+  is_active       Boolean      @default(true)
+  sort_order      Int          @default(0)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  measurements    UniformEmployeeMeasurement[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, group_name])
+  @@index([organization_id, is_active, sort_order])
+  @@map("master_measurement_groups")
+}
+
+model MasterMeasurementArea {
+  id                   String       @id @default(cuid())
+  value_id             String       @unique @default(uuid())
+  organization_id      String
+  measurement_area_name String      @db.VarChar(255)
+  legacy_metadata Json?
+  is_active            Boolean      @default(true)
+  sort_order           Int          @default(0)
+  created_at           DateTime     @default(now())
+  updated_at           DateTime     @updatedAt
+  organization         Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  measurements         UniformEmployeeMeasurementDetail[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, measurement_area_name])
+  @@index([organization_id, is_active, sort_order])
+  @@map("master_measurement_areas")
+}
+
+model MasterMeasurementChartDetail {
+  id                   String                @id @default(cuid())
+  value_id             String                @unique @default(uuid())
+  organization_id      String
+  measurement_chart_id String
+  measurement_area_name String               @db.VarChar(255)
+  minimum_value        Decimal?              @db.Decimal(10, 2)
+  maximum_value        Decimal?              @db.Decimal(10, 2)
+  size_id              String?
+  is_active            Boolean               @default(true)
+  sort_order           Int                   @default(0)
+  legacy_metadata      Json?
+  created_at           DateTime              @default(now())
+  updated_at           DateTime              @updatedAt
+  organization         Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  measurement_chart    MasterMeasurementChart @relation(fields: [organization_id, measurement_chart_id], references: [organization_id, id], onDelete: Cascade)
+  size                 MasterSize?           @relation(fields: [organization_id, size_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, measurement_chart_id, measurement_area_name])
+  @@index([organization_id, measurement_chart_id, is_active, sort_order])
+  @@map("master_measurement_chart_details")
+}
+
+model UniformEmployeeMeasurement {
+  id                  String       @id @default(cuid())
+  organization_id     String
+  measurement_no      String       @db.VarChar(64)
+  participant_id      String
+  group_id            String?
+  category_id         String
+  sub_category_id     String
+  style_id            String
+  status              String       @default("Approved") @db.VarChar(100)
+  measurement_chart_id String
+  size_id             String?
+  fit_status          String       @db.VarChar(100)
+  created_by_user_id  String?
+  created_at          DateTime     @default(now())
+  updated_at          DateTime     @updatedAt
+  organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  participant         UniformParticipant @relation(fields: [organization_id, participant_id], references: [organization_id, id], onDelete: Restrict)
+  group               MasterMeasurementGroup? @relation(fields: [organization_id, group_id], references: [organization_id, id], onDelete: Restrict)
+  category            MasterCategory @relation(fields: [organization_id, category_id], references: [organization_id, id], onDelete: Restrict)
+  sub_category        MasterSubCategory @relation(fields: [organization_id, sub_category_id], references: [organization_id, id], onDelete: Restrict)
+  style               MasterArticle @relation(fields: [organization_id, style_id], references: [organization_id, id], onDelete: Restrict)
+  measurement_chart   MasterMeasurementChart @relation(fields: [organization_id, measurement_chart_id], references: [organization_id, id], onDelete: Restrict)
+  size                MasterSize? @relation("UniformEmployeeMeasurementSize", fields: [organization_id, size_id], references: [organization_id, id], onDelete: Restrict)
+  details             UniformEmployeeMeasurementDetail[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, measurement_no])
+  @@index([organization_id, participant_id, created_at(sort: Desc)])
+  @@index([organization_id, style_id, created_at(sort: Desc)])
+  @@map("uniform_employee_measurements")
+}
+
+model UniformEmployeeMeasurementDetail {
+  id                   String       @id @default(cuid())
+  organization_id      String
+  employee_measurement_id String
+  measurement_area_id  String?
+  measurement_area_name String?
+  input_value          Decimal      @db.Decimal(10, 2)
+  minimum_value        Decimal?     @db.Decimal(10, 2)
+  maximum_value        Decimal?     @db.Decimal(10, 2)
+  predicted_size_id    String?
+  created_at           DateTime     @default(now())
+  updated_at           DateTime     @updatedAt
+  organization         Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  employee_measurement UniformEmployeeMeasurement @relation(fields: [organization_id, employee_measurement_id], references: [organization_id, id], onDelete: Cascade)
+  measurement_area    MasterMeasurementArea? @relation(fields: [organization_id, measurement_area_id], references: [organization_id, id], onDelete: Restrict)
+  predicted_size      MasterSize? @relation("UniformEmployeeMeasurementPredictedSize", fields: [organization_id, predicted_size_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, employee_measurement_id, measurement_area_id])
+  @@index([organization_id, employee_measurement_id])
+  @@map("uniform_employee_measurement_details")
+}

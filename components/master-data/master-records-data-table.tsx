@@ -1,10 +1,43 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useFormStatus } from "react-dom";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Plus, Settings2 } from "lucide-react";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
-import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
+import Page from "@/components/ui/Page";
+import Section from "@/components/ui/Section";
+import Select from "@/components/ui/Select";
+import { ReportGrid } from "@/components/reports/report-grid-display";
+import type { MasterRecordsImportAction } from "@/components/master-data/master-records-excel-actions";
+import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
+import {
+  clearDependentMasterFields,
+  filterMasterOptionsByParent,
+  getMasterSelectionLabel,
+} from "@/lib/master-data/master-data-selection";
+import { getMasterRecordSearchValue } from "@/lib/master-data/master-record-search";
+import {
+  loadQuickCreateLookupOptions,
+  type QuickCreateLookupOption,
+} from "@/lib/master-data/quick-create-lookup-options";
+
+const Modal = dynamic(() => import("@/components/ui/Modal"), { ssr: false });
+
+type MasterLookupOption = QuickCreateLookupOption;
+type MasterSelectOption = { value: string; label: string };
+type QuickMasterTarget = { fieldKey: string; variantIndex?: number; childFieldKey?: string };
+type QuickMasterSnapshot = {
+  moduleKey: string;
+  fields: Record<string, unknown>;
+  lookupOptions: Record<string, MasterLookupOption[]>;
+  target: QuickMasterTarget;
+};
 
 type MasterRecord = {
   id: string;
@@ -16,7 +49,9 @@ type MasterRecord = {
   metadata?: unknown;
 };
 
-type ChildRecord = { parentId: string | null; label: string; fields?: Record<string, unknown> };
+const getMasterRecordId = (record: MasterRecord) => record.id;
+
+type ChildRecord = { id?: string; parentId: string | null; label: string; fields?: Record<string, unknown> };
 
 type MasterRecordsTableProps = {
   records: MasterRecord[];
@@ -27,10 +62,250 @@ type MasterRecordsTableProps = {
   createAction: (formData: FormData) => Promise<void>;
   updateAction: (formData: FormData) => Promise<void>;
   deleteAction: (formData: FormData) => Promise<void>;
+  deleteSelectedAction: (formData: FormData) => Promise<void>;
+  importAction: MasterRecordsImportAction;
   fields: MasterFieldDefinition[];
-  lookupOptions: Record<string, Array<{ id: string; value_id?: string; label: string; parent_id?: string | null }>>;
+  lookupOptions: Record<string, MasterLookupOption[]>;
+  initialHasMore?: boolean;
+  initialNextCursor?: string | null;
   childRecords?: ChildRecord[];
+  formMode?: "create" | "edit" | "view";
+  initialRecord?: MasterRecord;
+  formError?: string;
+  saved?: string;
 };
+
+const rawMaterialShowAllFieldKeys = new Set([
+  "Category_Type",
+  "Workdrive_Image_ID",
+  "Size_Wise_Concemption",
+  "Size_Wise_Consemption_Master",
+  "Is_this_Specific_for_a_Brand",
+  "Create_open_stock",
+  "Vendor_Wise_Price_List",
+  "Item_Code",
+  "Open_Stock",
+  "Open_Stock_Price",
+  "Brand1",
+  "Buyer_Item_Code",
+]);
+const rawMaterialAssetOnlyFieldKeys = new Set([
+  "Asset_Class",
+  "Manufacturer",
+  "Model_Number",
+  "Useful_Life_Months",
+  "Warranty_Expiry",
+]);
+const rawMaterialAssetIrrelevantFieldKeys = new Set([
+  "Is_this_Specific_for_a_Brand",
+  "Size_Wise_Concemption",
+  "Size_Wise_Consemption_Master",
+  "Brand1",
+  "Show_All1",
+  "Workdrive_Image_ID",
+  "Buyer_Item_Code",
+  "Colour",
+  "Create_open_stock",
+  "Open_Stock",
+  "Open_Stock_Price",
+  "Vendor_Wise_Price_List",
+]);
+const rawMaterialFieldOrder = ["Category", "Subcategory", "Raw_Material_Name", "Stock_Uom1", "Colour", "Image_Url", "Show_All1"];
+const emptyMasterLookupOptions: MasterLookupOption[] = [];
+
+function getAssetClassification(fields?: Record<string, unknown>) {
+  const value = fields?.Asset_Classification ?? fields?.is_asset;
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+const masterSelectOptionsCache = new WeakMap<object, Map<string, MasterSelectOption[]>>();
+
+type ArticleSizePrice = { size: string; price: string | null };
+type MasterFormValues = Record<string, unknown>;
+type SetMasterFormValues = Dispatch<SetStateAction<MasterFormValues>>;
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function getStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return isStringArray(value) ? value : value.map(String);
+}
+
+function withArticleSizePrices(
+  values: Record<string, unknown>,
+  sizes: string[],
+  sizePrices: ArticleSizePrice[],
+) {
+  const priceBySize = new Map(sizePrices.map(({ size, price }) => [size.toLocaleLowerCase(), price]));
+  const selectedPrices = sizes.map((size) => ({
+    size,
+    price: priceBySize.get(size.toLocaleLowerCase()) ?? null,
+  }));
+  const enteredPrices = selectedPrices
+    .map(({ price }) => price?.trim() ?? "")
+    .filter(Boolean);
+  const updatedValues: Record<string, unknown> = { ...values, Sizes: sizes, Size_Prices: selectedPrices };
+
+  if (enteredPrices.length > 0) {
+    const normalizePrice = (price: string) => {
+      const [integer, fraction = ""] = price.split(".");
+      const normalizedInteger = integer.replace(/^0+(?=\d)/, "");
+      const normalizedFraction = fraction.replace(/0+$/, "");
+      return normalizedFraction ? `${normalizedInteger}.${normalizedFraction}` : normalizedInteger;
+    };
+    const normalizedPrices = enteredPrices.map(normalizePrice);
+    const allSizesPriced = selectedPrices.length > 0 && enteredPrices.length === selectedPrices.length;
+    const isUniform = allSizesPriced && normalizedPrices.every((price) => price === normalizedPrices[0]);
+    updatedValues.default_price = isUniform ? enteredPrices[0] : null;
+  }
+
+  return updatedValues;
+}
+
+function SubmitButton({ children, disabled = false }: { children: string; disabled?: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="primary" size="sm" disabled={pending || disabled}>
+      {pending ? "Saving..." : children}
+    </Button>
+  );
+}
+
+function DeleteConfirmButton({ children }: { children: ReactNode }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="destructive" disabled={pending}>
+      {pending ? "Deleting..." : children}
+    </Button>
+  );
+}
+
+function getMasterSelectOptions(options: readonly MasterLookupOption[], placeholder?: string) {
+  let byPlaceholder = masterSelectOptionsCache.get(options);
+  if (!byPlaceholder) {
+    byPlaceholder = new Map();
+    masterSelectOptionsCache.set(options, byPlaceholder);
+  }
+  const cacheKey = placeholder ?? "";
+  const cached = byPlaceholder.get(cacheKey);
+  if (cached) return cached;
+
+  const selectOptions = [
+    ...(placeholder ? [{ value: "", label: placeholder }] : []),
+    ...options.map(({ label }) => ({ value: label, label })),
+  ];
+  byPlaceholder.set(cacheKey, selectOptions);
+  return selectOptions;
+}
+
+function getFormLookupKeys(fields: readonly MasterFieldDefinition[]) {
+  return [...new Set(fields
+    .filter((field) => !field.dependsOn)
+    .flatMap((field) => [
+      ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
+      ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
+    ]))];
+}
+
+const MasterLookupSelect = memo(function MasterLookupSelect({
+  articleLookupOptions,
+  className,
+  disabled,
+  field,
+  fields,
+  moduleKey,
+  name,
+  options,
+  setValues,
+  value,
+}: {
+  articleLookupOptions: Record<string, MasterLookupOption[]>;
+  className?: string;
+  disabled: boolean;
+  field: MasterFieldDefinition;
+  fields: MasterFieldDefinition[];
+  moduleKey: string;
+  name: string;
+  options: MasterSelectOption[];
+  setValues: SetMasterFormValues;
+  value: string;
+}) {
+  const handleChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    const nextValue = event.target.value;
+    setValues((current) => {
+      const nextValues = clearDependentMasterFields(current, fields, field.key);
+      nextValues[field.key] = nextValue;
+      if (moduleKey === "article" && field.key === "Size_Group") {
+        nextValues.Size_Prices = [];
+      }
+      if (moduleKey === "raw-material" && field.key === "Category") {
+        const selectedCategory = (articleLookupOptions["raw-material-category"] ?? emptyMasterLookupOptions)
+          .find((option) => option.label === nextValue);
+        const matchingType = (articleLookupOptions["raw-material-type"] ?? emptyMasterLookupOptions)
+          .find((option) => [option.id, option.value_id, option.label].some((candidate) =>
+            String(candidate ?? "") === String(selectedCategory?.parent_id ?? "")));
+        nextValues.Category_Type = matchingType?.label ?? "";
+        nextValues.Asset_Purchase = getAssetClassification(matchingType?.fields)
+          ?? getAssetClassification(selectedCategory?.fields)
+          ?? false;
+      }
+      return nextValues;
+    });
+  }, [articleLookupOptions, field.key, fields, moduleKey, setValues]);
+
+  return (
+    <Select
+      label={field.label}
+      required={field.required}
+      name={name}
+      value={value}
+      disabled={disabled}
+      onChange={handleChange}
+      options={options}
+      className={className}
+    />
+  );
+});
+
+const QuickMasterLookupSelect = memo(function QuickMasterLookupSelect({
+  definitionFields,
+  field,
+  options,
+  setFields,
+  value,
+}: {
+  definitionFields: MasterFieldDefinition[];
+  field: MasterFieldDefinition;
+  options: MasterSelectOption[];
+  setFields: Dispatch<SetStateAction<Record<string, unknown>>>;
+  value: string | string[];
+}) {
+  const handleChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    const nextValue = field.multiple
+      ? Array.from(event.target.selectedOptions, (option) => option.value)
+      : event.target.value;
+    setFields((current) => {
+      const next = clearDependentMasterFields(current, definitionFields, field.key);
+      next[field.key] = nextValue;
+      return next;
+    });
+  }, [definitionFields, field.key, field.multiple, setFields]);
+
+  return (
+    <Select
+      label={field.label}
+      required={field.required}
+      multiple={field.multiple}
+      value={value}
+      onChange={handleChange}
+      options={options}
+    />
+  );
+});
 
 export function MasterRecordsTable({
   records,
@@ -41,286 +316,1316 @@ export function MasterRecordsTable({
   createAction,
   updateAction,
   deleteAction,
+  deleteSelectedAction,
   fields,
   lookupOptions,
+  initialHasMore = false,
+  initialNextCursor = null,
   childRecords = [],
+  formMode,
+  initialRecord,
+  formError,
+  saved,
 }: MasterRecordsTableProps) {
   const router = useRouter();
-  const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createFields, setCreateFields] = useState<Record<string, unknown>>({});
-  const [editFields, setEditFields] = useState<Record<string, unknown>>({});
-  const [searchTerm, setSearchTerm] = useState("");
+  const [reportRecords, setReportRecords] = useState(records);
+  const [reportHasMore, setReportHasMore] = useState(initialHasMore);
+  const [reportNextCursor, setReportNextCursor] = useState(initialNextCursor);
+  const [reportSearchQuery, setReportSearchQuery] = useState("");
+  const [debouncedReportSearchQuery, setDebouncedReportSearchQuery] = useState("");
+  const [reportColumnFilters, setReportColumnFilters] = useState<Record<string, { operator: string; value: string }>>({});
+  const [reportSearchRetry, setReportSearchRetry] = useState(0);
+  const [isLoadingReportPage, setIsLoadingReportPage] = useState(false);
+  const [reportLoadError, setReportLoadError] = useState("");
+  const reportRequestController = useRef<AbortController | null>(null);
+  const reportSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
+  const [deleteDialog, setDeleteDialog] = useState<{ kind: "single"; record: MasterRecord } | { kind: "selected" } | null>(null);
+  const [createFields, setCreateFields] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map((field) => [
+    field.key,
+    field.initialValue ?? (field.type === "checkbox" ? false : field.multiple ? [] : ""),
+  ])));
+  const [editFields, setEditFields] = useState<Record<string, unknown>>(() => {
+    if (formMode !== "edit" || !initialRecord?.metadata || typeof initialRecord.metadata !== "object") return {};
+    const metadata = initialRecord.metadata as Record<string, unknown>;
+    const recordFields = metadata.fields && typeof metadata.fields === "object"
+      ? { ...(metadata.fields as Record<string, unknown>) }
+      : { ...metadata };
+    for (const field of fields) {
+      if (recordFields[field.key] !== undefined) continue;
+      if (field.key === "label" || field === fields[0]) recordFields[field.key] = initialRecord.label;
+      else if (field.key === "code") recordFields[field.key] = initialRecord.code;
+      else if (field.key === "description") recordFields[field.key] = initialRecord.description;
+      else if (field.initialValue !== undefined) recordFields[field.key] = field.initialValue;
+      else if (field.type === "checkbox") recordFields[field.key] = false;
+      else if (field.multiple) recordFields[field.key] = [];
+    }
+    return recordFields;
+  });
+  const [currentQuickMaster, setCurrentQuickMaster] = useState<string | null>(null);
+  const [quickMasterFields, setQuickMasterFields] = useState<Record<string, unknown>>({});
+  const [quickMasterLookupOptions, setQuickMasterLookupOptions] = useState<Record<string, MasterLookupOption[]>>({});
+  const [quickMasterTarget, setQuickMasterTarget] = useState<QuickMasterTarget | null>(null);
+  const [quickMasterStack, setQuickMasterStack] = useState<QuickMasterSnapshot[]>([]);
+  const [quickMasterError, setQuickMasterError] = useState("");
+  const [isSavingQuickMaster, setIsSavingQuickMaster] = useState(false);
+  const [isLoadingQuickMasterOptions, setIsLoadingQuickMasterOptions] = useState(false);
+  const [articleLookupOptions, setArticleLookupOptions] = useState(lookupOptions);
+  const [loadingMasterLookupKeys, setLoadingMasterLookupKeys] = useState<Set<string>>(
+    () => new Set(formMode === "create" || formMode === "edit" ? getFormLookupKeys(fields) : []),
+  );
+  const [masterLookupLoadError, setMasterLookupLoadError] = useState("");
+  const [masterLookupRetry, setMasterLookupRetry] = useState(0);
+  const [visibleReportFields, setVisibleReportFields] = useState<string[]>([]);
+  const quickMasterOptionsRequest = useRef<AbortController | null>(null);
+  const quickMasterSaveInProgress = useRef(false);
+  const requestedDependentLookups = useRef(new Set<string>());
+  const sizeMasterTabOpened = useRef(false);
+  const sizeLookupRefreshInProgress = useRef(false);
 
-  const visibleRecords = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    if (!query) return records;
-    return records.filter((record) =>
-      [record.label, record.code, record.description].some((value) =>
-        value?.toLowerCase().includes(query)
-      )
+  useEffect(() => {
+    startTransition(() => {
+      setReportRecords(records);
+      setReportHasMore(initialHasMore);
+      setReportNextCursor(initialNextCursor);
+      setReportSearchQuery("");
+      setDebouncedReportSearchQuery("");
+      setReportColumnFilters({});
+    });
+  }, [initialHasMore, initialNextCursor, records]);
+
+  useEffect(() => () => {
+    if (reportSearchTimer.current) clearTimeout(reportSearchTimer.current);
+    reportRequestController.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (reportSearchTimer.current) clearTimeout(reportSearchTimer.current);
+    reportSearchTimer.current = setTimeout(
+      () => setDebouncedReportSearchQuery(reportSearchQuery),
+      300,
     );
-  }, [records, searchTerm]);
+    return () => {
+      if (reportSearchTimer.current) clearTimeout(reportSearchTimer.current);
+    };
+  }, [reportSearchQuery]);
 
-  const openEditor = (record: MasterRecord) => {
-    setEditingRecord(record);
-
-    let extractedFields: Record<string, unknown> = {};
-    if (record.metadata && typeof record.metadata === "object") {
-      const meta = record.metadata as Record<string, unknown>;
-      if (meta.fields && typeof meta.fields === "object") {
-        extractedFields = { ...(meta.fields as Record<string, unknown>) };
-      } else {
-        extractedFields = { ...meta };
-      }
+  useEffect(() => {
+    const activeFilters = Object.keys(reportColumnFilters).length > 0;
+    if (!debouncedReportSearchQuery && !activeFilters) {
+      startTransition(() => {
+        setReportRecords(records);
+        setReportHasMore(initialHasMore);
+        setReportNextCursor(initialNextCursor);
+        setIsLoadingReportPage(false);
+      });
+      return;
     }
 
-    fields.forEach((field) => {
-      if (extractedFields[field.key] === undefined) {
-        if (field.key === "label" || field === fields[0]) {
-          extractedFields[field.key] = record.label;
-        } else if (field.key === "code") {
-          extractedFields[field.key] = record.code;
-        } else if (field.key === "description") {
-          extractedFields[field.key] = record.description;
-        }
+    reportRequestController.current?.abort();
+    const controller = new AbortController();
+    reportRequestController.current = controller;
+    const query = new URLSearchParams({
+      page: "true",
+      limit: "100",
+      includeInactive: "true",
+      ...(debouncedReportSearchQuery ? { search: debouncedReportSearchQuery } : {}),
+      ...(activeFilters ? { filters: JSON.stringify(reportColumnFilters) } : {}),
+    });
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(moduleKey)}?${query}`,
+      { cache: "no-store", signal: controller.signal },
+    ).then(async (response) => {
+      const result: unknown = await response.json();
+      if (!response.ok || typeof result !== "object" || result === null || !("items" in result) || !Array.isArray(result.items)) {
+        const message = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to search master records.";
+        throw new Error(message);
+      }
+      if (controller.signal.aborted) return;
+      const page = result as { items: Array<Record<string, unknown>>; hasMore?: boolean; nextCursor?: string | null };
+      setReportRecords(page.items.map((item) => ({
+        id: String(item.id),
+        value_id: String(item.value_id),
+        label: String(item.label),
+        code: typeof item.code === "string" ? item.code : null,
+        description: typeof item.description === "string" ? item.description : null,
+        is_active: item.is_active === true,
+        metadata: { fields: item.fields && typeof item.fields === "object" ? item.fields : {} },
+      })));
+      setReportHasMore(page.hasMore === true);
+      setReportNextCursor(page.nextCursor ?? null);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setReportLoadError(error instanceof Error ? error.message : "Unable to search master records.");
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setIsLoadingReportPage(false);
+    });
+    return () => controller.abort();
+  }, [debouncedReportSearchQuery, initialHasMore, initialNextCursor, moduleKey, organizationId, records, reportColumnFilters, reportSearchRetry]);
+
+  const handleReportSearchChange = useCallback((query: string) => {
+    setReportSearchQuery(query);
+    setIsLoadingReportPage(Boolean(query));
+    setReportLoadError("");
+    if (query) {
+      setReportHasMore(false);
+      setReportNextCursor(null);
+    }
+  }, []);
+  const handleReportColumnFiltersChange = useCallback(
+    (filters: Record<string, { operator: string; value: string }>) => {
+      setReportColumnFilters(filters);
+      setReportLoadError("");
+      setReportHasMore(false);
+      setReportNextCursor(null);
+      setIsLoadingReportPage(Boolean(debouncedReportSearchQuery || Object.keys(filters).length > 0));
+    },
+    [debouncedReportSearchQuery],
+  );
+
+  const loadMoreReportRecords = useCallback(async () => {
+    if (!reportHasMore || !reportNextCursor || isLoadingReportPage
+      || reportSearchQuery !== debouncedReportSearchQuery) return;
+    reportRequestController.current?.abort();
+    const controller = new AbortController();
+    reportRequestController.current = controller;
+    setIsLoadingReportPage(true);
+    setReportLoadError("");
+    const query = new URLSearchParams({
+      page: "true",
+      limit: "100",
+      includeInactive: "true",
+      cursor: reportNextCursor,
+      ...(debouncedReportSearchQuery ? { search: debouncedReportSearchQuery } : {}),
+      ...(Object.keys(reportColumnFilters).length > 0 ? { filters: JSON.stringify(reportColumnFilters) } : {}),
+    });
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(moduleKey)}?${query}`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok || typeof result !== "object" || result === null || !("items" in result) || !Array.isArray(result.items)) {
+        const message = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to load more master records.";
+        throw new Error(message);
+      }
+      const page = result as { items: Array<Record<string, unknown>>; hasMore?: boolean; nextCursor?: string | null };
+      setReportRecords((current) => [...current, ...page.items.map((item) => ({
+        id: String(item.id),
+        value_id: String(item.value_id),
+        label: String(item.label),
+        code: typeof item.code === "string" ? item.code : null,
+        description: typeof item.description === "string" ? item.description : null,
+        is_active: item.is_active === true,
+        metadata: { fields: item.fields && typeof item.fields === "object" ? item.fields : {} },
+      }))]);
+      setReportHasMore(page.hasMore === true);
+      setReportNextCursor(page.nextCursor ?? null);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setReportLoadError(error instanceof Error ? error.message : "Unable to load more master records.");
+      }
+    } finally {
+      if (!controller.signal.aborted) setIsLoadingReportPage(false);
+    }
+  }, [debouncedReportSearchQuery, isLoadingReportPage, moduleKey, organizationId, reportColumnFilters, reportHasMore, reportNextCursor, reportSearchQuery]);
+
+  useEffect(() => () => {
+    const request = quickMasterOptionsRequest.current;
+    quickMasterOptionsRequest.current = null;
+    request?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (formMode !== "create" && formMode !== "edit") return;
+    const lookupKeys = getFormLookupKeys(fields);
+    if (lookupKeys.length === 0) return;
+
+    const controller = new AbortController();
+    const lookupKeysByEndpoint = new Map<string, string[]>();
+    for (const lookupKey of lookupKeys) {
+      const endpointKey = lookupKey === "article-size" ? "size-group" : lookupKey;
+      const mappedKeys = lookupKeysByEndpoint.get(endpointKey) ?? [];
+      mappedKeys.push(lookupKey);
+      lookupKeysByEndpoint.set(endpointKey, mappedKeys);
+    }
+    void Promise.all([...lookupKeysByEndpoint.entries()].map(async ([endpointKey, requestedKeys]) => {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(endpointKey)}?includeInactive=true&limit=200`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to load master lookup options.";
+        throw new Error(message);
+      }
+      if (!Array.isArray(result)) throw new Error("The master lookup response was invalid.");
+      const endpointOptions = result as Array<MasterLookupOption & { sizes?: MasterLookupOption[] }>;
+      return requestedKeys.map((lookupKey) => {
+        const options = lookupKey === "article-size"
+          ? endpointOptions.flatMap((group) => (group.sizes ?? []).map((size) => ({
+              ...size,
+              parent_id: group.id,
+            })))
+          : endpointOptions;
+        return [lookupKey, options] as const;
+      });
+    })).then((loadedLookups) => {
+      setArticleLookupOptions((current) => ({
+        ...current,
+        ...Object.fromEntries(loadedLookups.flat()),
+      }));
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setMasterLookupLoadError(error instanceof Error ? error.message : "Unable to load master lookup options.");
+    }).finally(() => {
+      if (!controller.signal.aborted) {
+        setLoadingMasterLookupKeys((current) => new Set([...current].filter((key) => !lookupKeys.includes(key))));
       }
     });
 
-    setEditFields(extractedFields);
+    return () => controller.abort();
+  }, [fields, formMode, masterLookupRetry, organizationId]);
+
+  useEffect(() => {
+    if (moduleKey !== "size-group" || (formMode !== "create" && formMode !== "edit")) return;
+
+    const refreshSizeOptions = async () => {
+      if (!sizeMasterTabOpened.current || sizeLookupRefreshInProgress.current) return;
+      sizeMasterTabOpened.current = false;
+      sizeLookupRefreshInProgress.current = true;
+      try {
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/size?includeInactive=true&limit=200`,
+          { cache: "no-store" },
+        );
+        const result: unknown = await response.json();
+        if (!response.ok || !Array.isArray(result)) {
+          const message = typeof result === "object" && result !== null && "error" in result
+            ? String(result.error)
+            : "Unable to refresh Size options.";
+          throw new Error(message);
+        }
+        setArticleLookupOptions((current) => ({ ...current, size: result as MasterLookupOption[] }));
+      } catch (error) {
+        setMasterLookupLoadError(error instanceof Error ? error.message : "Unable to refresh Size options.");
+      } finally {
+        sizeLookupRefreshInProgress.current = false;
+      }
+    };
+
+    window.addEventListener("focus", refreshSizeOptions);
+    return () => window.removeEventListener("focus", refreshSizeOptions);
+  }, [formMode, moduleKey, organizationId]);
+
+  const activeFormValues = formMode === "edit" ? editFields : createFields;
+  useEffect(() => {
+    if (formMode !== "create" && formMode !== "edit") return;
+    const requestedLookups = requestedDependentLookups.current;
+    const dependentLookups = fields.flatMap((field) => {
+      if (!field.dependsOn || !field.lookupModuleKey) return [];
+      const parentField = fields.find((candidate) => candidate.key === field.dependsOn);
+      if (!parentField?.lookupModuleKey) return [];
+      const parentValue = String(activeFormValues[field.dependsOn] ?? "");
+      if (!parentValue) return [];
+      const parentOption = (articleLookupOptions[parentField.lookupModuleKey] ?? [])
+        .find((option) => [option.id, option.value_id, option.label].some((value) => String(value ?? "") === parentValue));
+      if (!parentOption) return [];
+      const requestKey = `${field.lookupModuleKey}:${parentOption.id}`;
+      if (requestedLookups.has(requestKey)) return [];
+      requestedLookups.add(requestKey);
+      return [{ lookupKey: field.lookupModuleKey, parentId: parentOption.id, requestKey }];
+    });
+    if (dependentLookups.length === 0) return;
+
+    const controller = new AbortController();
+    const lookupKeys = dependentLookups.map(({ lookupKey }) => lookupKey);
+    let completed = false;
+    setLoadingMasterLookupKeys((current) => new Set([...current, ...lookupKeys]));
+    void Promise.all(dependentLookups.map(async ({ lookupKey, parentId }) => {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(lookupKey)}?includeInactive=true&limit=200&parentId=${encodeURIComponent(parentId)}`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to load dependent master options.";
+        throw new Error(message);
+      }
+      if (!Array.isArray(result)) throw new Error("The dependent master lookup response was invalid.");
+      return [lookupKey, result as MasterLookupOption[]] as const;
+    })).then((lookups) => {
+      setArticleLookupOptions((current) => {
+        const next = { ...current };
+        for (const [lookupKey, options] of lookups) {
+          const existing = next[lookupKey] ?? [];
+          next[lookupKey] = [
+            ...existing.filter((option) => !options.some((loaded) => loaded.id === option.id)),
+            ...options,
+          ];
+        }
+        return next;
+      });
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setMasterLookupLoadError(error instanceof Error ? error.message : "Unable to load dependent master options.");
+      }
+    }).finally(() => {
+      completed = true;
+      if (!controller.signal.aborted) {
+        setLoadingMasterLookupKeys((current) => new Set([...current].filter((key) => !lookupKeys.includes(key))));
+      }
+    });
+
+    return () => {
+      controller.abort();
+      if (!completed) {
+        for (const { requestKey } of dependentLookups) requestedLookups.delete(requestKey);
+      }
+    };
+  }, [activeFormValues, articleLookupOptions, fields, formMode, organizationId]);
+
+  const orderedFields = useMemo(() => moduleKey === "raw-material"
+    ? [...fields].sort((first, second) => {
+      const firstOrder = rawMaterialFieldOrder.indexOf(first.key);
+      const secondOrder = rawMaterialFieldOrder.indexOf(second.key);
+      return (firstOrder === -1 ? rawMaterialFieldOrder.length : firstOrder)
+        - (secondOrder === -1 ? rawMaterialFieldOrder.length : secondOrder);
+    })
+    : fields, [fields, moduleKey]);
+  const masterFieldByKey = useMemo(() => new Map(fields.map((field) => [field.key, field])), [fields]);
+  const isAssetCategorySelected = useCallback((values: MasterFormValues) => {
+    const categoryValue = String(values.Category ?? "");
+    if (!categoryValue) return false;
+    const category = (articleLookupOptions["raw-material-category"] ?? emptyMasterLookupOptions)
+      .find((option) => [option.id, option.value_id, option.label].some((candidate) => String(candidate ?? "") === categoryValue));
+    const rawMaterialType = (articleLookupOptions["raw-material-type"] ?? emptyMasterLookupOptions)
+      .find((option) => [option.id, option.value_id, option.label].some((candidate) =>
+        String(candidate ?? "") === String(category?.parent_id ?? "")));
+    return (getAssetClassification(rawMaterialType?.fields)
+      ?? getAssetClassification(category?.fields)) === true;
+  }, [articleLookupOptions]);
+  const isUnclassifiedRawMaterialCategorySelected = useCallback((values: MasterFormValues) => {
+    const categoryValue = String(values.Category ?? "");
+    if (!categoryValue) return false;
+    const category = (articleLookupOptions["raw-material-category"] ?? emptyMasterLookupOptions)
+      .find((option) => [option.id, option.value_id, option.label].some((candidate) => String(candidate ?? "") === categoryValue));
+    const rawMaterialType = (articleLookupOptions["raw-material-type"] ?? emptyMasterLookupOptions)
+      .find((option) => [option.id, option.value_id, option.label].some((candidate) =>
+        String(candidate ?? "") === String(category?.parent_id ?? "")));
+    return getAssetClassification(rawMaterialType?.fields) === undefined
+      && getAssetClassification(category?.fields) === undefined;
+  }, [articleLookupOptions]);
+  const shouldHideRawMaterialField = useCallback((fieldKey: string, values: MasterFormValues) => {
+    if (moduleKey !== "raw-material") return false;
+    const isAsset = isAssetCategorySelected(values);
+    if (isAsset) {
+      return (rawMaterialShowAllFieldKeys.has(fieldKey) && fieldKey !== "Item_Code")
+        || rawMaterialAssetIrrelevantFieldKeys.has(fieldKey);
+    }
+    return rawMaterialAssetOnlyFieldKeys.has(fieldKey);
+  }, [isAssetCategorySelected, moduleKey]);
+
+  const openRecordDetail = useCallback((record: MasterRecord) => {
+    if (moduleKey === "article") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(record.code || record.value_id)}`);
+      return;
+    }
+    if (moduleKey === "price-list") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(record.id)}`);
+      return;
+    }
+    if (moduleKey === "size-group") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(record.id)}`);
+      return;
+    }
+    if (moduleKey === "entity") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/entity/${encodeURIComponent(record.value_id)}/divisions`);
+      return;
+    }
+    if (moduleKey === "gold-seal") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(record.value_id)}`);
+      return;
+    }
+    router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(record.value_id)}`);
+  }, [moduleKey, organizationId, router, workspaceId]);
+  const openLegacyEditor = useCallback((record: MasterRecord) => {
+    router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(record.value_id)}`);
+  }, [moduleKey, organizationId, router, workspaceId]);
+
+  const openQuickMaster = async (masterKey: string, target: QuickMasterTarget) => {
+    const definition = getMasterDefinition(masterKey);
+    if (!definition) {
+      setQuickMasterError(`The ${masterKey} master is not configured for quick creation.`);
+      return;
+    }
+
+    quickMasterOptionsRequest.current?.abort();
+    const requestController = new AbortController();
+    quickMasterOptionsRequest.current = requestController;
+
+    if (currentQuickMaster) {
+      setQuickMasterStack((current) => [
+        ...current,
+        {
+          moduleKey: currentQuickMaster,
+          fields: quickMasterFields,
+          lookupOptions: quickMasterLookupOptions,
+          target: quickMasterTarget ?? target,
+        },
+      ]);
+    } else {
+      setQuickMasterTarget(target);
+      setQuickMasterStack([]);
+    }
+    setQuickMasterTarget(target);
+    setCurrentQuickMaster(masterKey);
+    setQuickMasterFields(Object.fromEntries(definition.fields.map((field) => [
+      field.key,
+      field.type === "checkbox" ? false : field.multiple ? [] : "",
+    ])));
+    setQuickMasterLookupOptions({});
+    setQuickMasterError("");
+
+    const lookupKeys = [...new Set(definition.fields
+      .filter((field) => field.type === "lookup" && field.lookupModuleKey)
+      .map((field) => field.lookupModuleKey as string))];
+    setIsLoadingQuickMasterOptions(true);
+    try {
+      const options = await loadQuickCreateLookupOptions(
+        organizationId,
+        lookupKeys,
+        requestController.signal,
+      );
+      if (quickMasterOptionsRequest.current === requestController) {
+        setQuickMasterLookupOptions(options);
+      }
+    } catch (error) {
+      if (!requestController.signal.aborted) {
+        setQuickMasterError(error instanceof Error ? error.message : "Unable to load quick-create options.");
+      }
+    } finally {
+      if (quickMasterOptionsRequest.current === requestController) {
+        quickMasterOptionsRequest.current = null;
+        setIsLoadingQuickMasterOptions(false);
+      }
+    }
   };
 
-  const closeEditor = () => {
-    setEditingRecord(null);
-    setEditFields({});
+  const retryQuickMasterOptions = async () => {
+    const definition = getMasterDefinition(currentQuickMaster ?? "");
+    if (!currentQuickMaster || !definition) return;
+    quickMasterOptionsRequest.current?.abort();
+    const requestController = new AbortController();
+    quickMasterOptionsRequest.current = requestController;
+    setIsLoadingQuickMasterOptions(true);
+    setQuickMasterError("");
+    try {
+      const lookupKeys = [...new Set(definition.fields
+        .filter((field) => field.type === "lookup" && field.lookupModuleKey)
+        .map((field) => field.lookupModuleKey as string))];
+      const options = await loadQuickCreateLookupOptions(
+        organizationId,
+        lookupKeys,
+        requestController.signal,
+      );
+      if (quickMasterOptionsRequest.current === requestController) {
+        setQuickMasterLookupOptions(options);
+      }
+    } catch (error) {
+      if (!requestController.signal.aborted) {
+        setQuickMasterError(error instanceof Error ? error.message : "Unable to load quick-create options.");
+      }
+    } finally {
+      if (quickMasterOptionsRequest.current === requestController) {
+        quickMasterOptionsRequest.current = null;
+        setIsLoadingQuickMasterOptions(false);
+      }
+    }
   };
 
-  const closeCreateModal = () => {
-    setShowCreateModal(false);
-    setCreateFields({});
+  const updateArticleLookupOptions = (masterKey: string, option: MasterLookupOption) => {
+    setArticleLookupOptions((current) => {
+      const next = { ...current };
+      next[masterKey] = [
+        ...(next[masterKey] ?? []).filter((item) => item.label !== option.label),
+        option,
+      ];
+      if (masterKey === "size-group" && Array.isArray(option.sizes)) {
+        next["article-size"] = [
+          ...(next["article-size"] ?? []).filter((item) => item.parent_id !== option.id && item.parent_id !== option.value_id),
+          ...option.sizes.map((size) => ({ ...size, parent_id: option.id })),
+        ];
+      }
+      if (masterKey === "size" && option.parent_id) {
+        const articleSizeOption = { ...option, id: `${option.parent_id}:${option.id}` };
+        next["article-size"] = [
+          ...(next["article-size"] ?? []).filter((item) => !(
+            item.parent_id === option.parent_id && item.label === option.label
+          )),
+          articleSizeOption,
+        ];
+      }
+      return next;
+    });
   };
+
+  const addQuickMasterResult = (
+    target: QuickMasterTarget,
+    option: MasterLookupOption,
+    multiple: boolean,
+  ) => {
+    if (target.variantIndex !== undefined && target.childFieldKey) {
+      const variantIndex = target.variantIndex;
+      const childFieldKey = target.childFieldKey;
+      setCreateFields((current) => {
+        const variants = Array.isArray(current.variants) ? [...current.variants] as Array<Record<string, unknown>> : [];
+        variants[variantIndex] = { ...(variants[variantIndex] ?? {}), [childFieldKey]: option.label };
+        return { ...current, variants };
+      });
+      return;
+    }
+    setCreateFields((current) => {
+      const currentValue = current[target.fieldKey];
+      const nextValue = multiple
+        ? [...new Set([...(Array.isArray(currentValue) ? currentValue.map(String) : currentValue ? [String(currentValue)] : []), option.label])]
+        : option.label;
+      return { ...current, [target.fieldKey]: nextValue };
+    });
+  };
+
+  const saveQuickMaster = async () => {
+    if (!currentQuickMaster || quickMasterSaveInProgress.current) return;
+    const definition = getMasterDefinition(currentQuickMaster);
+    if (!definition) return;
+    const missingField = definition.fields.find((field) => field.required && (
+      Array.isArray(quickMasterFields[field.key])
+        ? (quickMasterFields[field.key] as unknown[]).length === 0
+        : String(quickMasterFields[field.key] ?? "").trim() === ""
+    ));
+    if (missingField) {
+      setQuickMasterError(`${missingField.label} is required.`);
+      return;
+    }
+    const labelKey = definition.labelField ?? definition.fields[0]?.key;
+    const label = labelKey ? String(quickMasterFields[labelKey] ?? "").trim() : "";
+    if (!label) {
+      setQuickMasterError(`Enter ${definition.label.toLowerCase()} name.`);
+      return;
+    }
+
+    quickMasterSaveInProgress.current = true;
+    setIsSavingQuickMaster(true);
+    setQuickMasterError("");
+    try {
+      const body: Record<string, unknown> = { label, fields: quickMasterFields };
+      let sizeGroupForNewSize: MasterLookupOption | undefined;
+      const parentLookupField = definition.fields.find((field) => field.type === "lookup" && field.lookupModuleKey);
+      const parentLookupValue = parentLookupField ? String(quickMasterFields[parentLookupField.key] ?? "") : "";
+      const parentMasterOption = parentLookupField
+        ? (quickMasterLookupOptions[parentLookupField.lookupModuleKey ?? ""] ?? [])
+          .find((item) => [item.label, item.id, item.value_id].some((value) => String(value ?? "") === parentLookupValue))
+        : undefined;
+      if (currentQuickMaster === "size") {
+        const selectedSizeGroup = String(
+          quickMasterFields.Size_Group
+            ?? (quickMasterStack.length === 0 ? createFields.Size_Group : "")
+            ?? "",
+        ).trim();
+        sizeGroupForNewSize = (quickMasterLookupOptions["size-group"] ?? articleLookupOptions["size-group"] ?? [])
+          .find((item) => [item.label, item.id, item.value_id].some((value) => String(value ?? "") === selectedSizeGroup));
+        if (sizeGroupForNewSize) body.sizeGroupId = sizeGroupForNewSize.id;
+      }
+      const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(currentQuickMaster)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to create master value.");
+      }
+
+      let createdOption: MasterLookupOption = {
+        id: typeof result === "object" && result !== null && "id" in result ? String(result.id) : label,
+        value_id: typeof result === "object" && result !== null && "value_id" in result ? String(result.value_id) : undefined,
+        label,
+        ...(parentMasterOption ? { parent_id: parentMasterOption.id } : {}),
+        ...(sizeGroupForNewSize ? { parent_id: sizeGroupForNewSize.id } : {}),
+      };
+
+      if (currentQuickMaster === "size-group") {
+        const refreshed = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/size-group`, { cache: "no-store" });
+        const groups: unknown = await refreshed.json();
+        if (!refreshed.ok || !Array.isArray(groups)) {
+          throw new Error("Size Group was created, but its linked sizes could not be refreshed. Reload the Article form before continuing.");
+        }
+        const group = (groups as MasterLookupOption[]).find((item) => item.id === createdOption.id);
+        if (group) createdOption = { ...createdOption, ...group };
+      }
+      updateArticleLookupOptions(currentQuickMaster, createdOption);
+
+      const parent = quickMasterStack.at(-1);
+      if (parent) {
+        const parentDefinition = getMasterDefinition(parent.moduleKey);
+        const parentField = parentDefinition?.fields.find((field) => field.key === quickMasterTarget?.fieldKey);
+        const parentTarget = quickMasterTarget;
+        if (!parentTarget || !parentField) {
+          throw new Error("Unable to return the new master to its parent form.");
+        }
+        const selectedValue = parentField.multiple
+          ? [...new Set([...(Array.isArray(parent.fields[parentField.key]) ? (parent.fields[parentField.key] as unknown[]).map(String) : []), label])]
+          : label;
+        const parentOptions = {
+          ...parent.lookupOptions,
+          [parentField.lookupModuleKey ?? ""]: [
+            ...(parent.lookupOptions[parentField.lookupModuleKey ?? ""] ?? []).filter((item) => item.label !== label),
+            createdOption,
+          ],
+        };
+        setQuickMasterStack((current) => current.slice(0, -1));
+        setCurrentQuickMaster(parent.moduleKey);
+        setQuickMasterFields({ ...parent.fields, [parentField.key]: selectedValue });
+        setQuickMasterLookupOptions(parentOptions);
+        setQuickMasterTarget(parent.target);
+        return;
+      }
+
+      if (!quickMasterTarget) {
+        throw new Error("Unable to return the new master to the Article form.");
+      }
+      const targetDefinitionField = fields.find((field) => field.key === quickMasterTarget.fieldKey);
+      addQuickMasterResult(quickMasterTarget, createdOption, Boolean(targetDefinitionField?.multiple));
+      setCurrentQuickMaster(null);
+      setQuickMasterTarget(null);
+      setQuickMasterStack([]);
+    } catch (error) {
+      setQuickMasterError(error instanceof Error ? error.message : "Unable to create master value.");
+    } finally {
+      quickMasterSaveInProgress.current = false;
+      setIsSavingQuickMaster(false);
+    }
+  };
+
+  const closeQuickMaster = () => {
+    quickMasterOptionsRequest.current?.abort();
+    quickMasterOptionsRequest.current = null;
+    setIsLoadingQuickMasterOptions(false);
+    setCurrentQuickMaster(null);
+    setQuickMasterTarget(null);
+    setQuickMasterStack([]);
+    setQuickMasterError("");
+  };
+
+  const getQuickMasterOptions = (field: MasterFieldDefinition) => {
+    const options = quickMasterLookupOptions[field.lookupModuleKey ?? ""] ?? emptyMasterLookupOptions;
+    if (!field.dependsOn) return options;
+    const parentDefinition = getMasterDefinition(currentQuickMaster ?? "");
+    const parentField = parentDefinition?.fields.find((candidate) => candidate.key === field.dependsOn);
+    const parentValue = String(quickMasterFields[field.dependsOn] ?? "");
+    const parentOptions = quickMasterLookupOptions[parentField?.lookupModuleKey ?? ""] ?? emptyMasterLookupOptions;
+    return filterMasterOptionsByParent(options, parentOptions, parentValue);
+  };
+
+  const renderQuickMasterField = (field: MasterFieldDefinition) => {
+    if (field.readOnly || field.type === "child-list" || field.type === "image") return null;
+    const value = quickMasterFields[field.key] ?? (field.type === "checkbox" ? false : field.multiple ? [] : "");
+    const options = field.type === "lookup" ? getQuickMasterOptions(field) : [];
+    const openNested = () => {
+      if (field.lookupModuleKey) void openQuickMaster(field.lookupModuleKey, { fieldKey: field.key });
+    };
+    return (
+      <div key={field.key} className="space-y-1">
+        {field.type === "lookup" && field.lookupModuleKey && (
+          <div className="flex justify-end">
+            <Button type="button" size="sm" variant="secondary" onClick={openNested}>
+              + Add New
+            </Button>
+          </div>
+        )}
+        {field.type === "lookup" ? (
+          <QuickMasterLookupSelect
+            definitionFields={definitionFields}
+            field={field}
+            options={getMasterSelectOptions(options, field.multiple ? undefined : `Select ${field.label}`)}
+            setFields={setQuickMasterFields}
+            value={field.multiple ? getStringArray(value) : String(value ?? "")}
+          />
+        ) : field.type === "checkbox" ? (
+          <Checkbox
+            label={field.label}
+            checked={value === true}
+            onChange={(event) => setQuickMasterFields((current) => ({ ...current, [field.key]: event.target.checked }))}
+          />
+        ) : field.type === "picklist" ? (
+          <Select
+            label={field.label}
+            required={field.required}
+            value={String(value ?? "")}
+            onChange={(event) => setQuickMasterFields((current) => ({ ...current, [field.key]: event.target.value }))}
+            options={[
+              { value: "", label: `Select ${field.label}` },
+              ...(field.options ?? []).map((option) => ({ value: option, label: option })),
+            ]}
+          />
+        ) : (
+          <Input
+            label={field.label}
+            required={field.required}
+            type={field.type === "date" ? "date" : ["number", "percentage", "decimal"].includes(field.type) ? "number" : "text"}
+            step={field.type === "decimal" ? "0.0001" : field.type === "percentage" ? "0.01" : undefined}
+            value={String(value ?? "")}
+            onChange={(event) => setQuickMasterFields((current) => ({ ...current, [field.key]: event.target.value }))}
+          />
+        )}
+      </div>
+    );
+  };
+
+  const definitionFields = getMasterDefinition(currentQuickMaster ?? "")?.fields ?? [];
 
   const getLookupOptions = (field: MasterFieldDefinition, values: Record<string, unknown>) => {
-    const options = lookupOptions[field.lookupModuleKey ?? ""] ?? [];
+    const options = articleLookupOptions[field.lookupModuleKey ?? ""] ?? emptyMasterLookupOptions;
+    if (moduleKey === "storage-node" && field.key === "master_location_id") {
+      const entityValue = String(values.entity_id ?? "").trim();
+      if (!entityValue) return [];
+      const entityOption = (articleLookupOptions.entity ?? emptyMasterLookupOptions)
+        .find((option) => option.id === entityValue || option.value_id === entityValue);
+      const entityIds = new Set([entityValue, entityOption?.id, entityOption?.value_id].filter(Boolean));
+      return options.filter((option) => entityIds.has(String(option.fields?.entity_id ?? "")));
+    }
     if (!field.dependsOn) return options;
 
-    const parentField = fields.find((candidate) => candidate.key === field.dependsOn);
-    const parentOptions = lookupOptions[parentField?.lookupModuleKey ?? ""] ?? [];
-    const parentValue = String(values[field.dependsOn] ?? "");
-    const parentOption = parentOptions.find((option) => option.label === parentValue);
-    if (!parentValue) return options;
-    if (!parentOption) return [];
-
-    const parentIds = new Set(
-      [parentOption.id, parentOption.value_id]
-        .filter(Boolean)
-        .map((value) => String(value)),
-    );
-    return options.filter((option) => option.parent_id && parentIds.has(String(option.parent_id)));
+    const parentField = masterFieldByKey.get(field.dependsOn);
+    const parentOptions = articleLookupOptions[parentField?.lookupModuleKey ?? ""] ?? emptyMasterLookupOptions;
+    const parentValue = values[field.dependsOn];
+    if (moduleKey === "article" && field.key === "Sizes" && !parentValue) return [];
+    return filterMasterOptionsByParent(options, parentOptions, parentValue);
   };
 
   const renderField = (
     field: MasterFieldDefinition,
-    values: Record<string, unknown>,
-    setValues: (values: Record<string, unknown>) => void
+    values: MasterFormValues,
+    setValues: SetMasterFormValues,
+    allowQuickCreate = false,
   ) => {
+    const storageNodeLevel = String(values.node_type ?? "");
+    const storageParentTypes: Record<string, string[]> = {
+      WAREHOUSE: ["LOCATION_SITE"],
+      SUB_STORE: ["LOCATION_SITE", "WAREHOUSE"],
+      RACK: ["LOCATION_SITE", "WAREHOUSE", "SUB_STORE"],
+      BIN: ["LOCATION_SITE", "WAREHOUSE", "SUB_STORE", "RACK"],
+    };
+    if (moduleKey === "storage-node" && formMode === "create"
+      && ((field.key === "entity_id" && storageNodeLevel !== "LOCATION_SITE")
+        || (field.key === "master_location_id" && storageNodeLevel !== "LOCATION_SITE")
+        || (field.key === "parent_node_id" && storageNodeLevel === "LOCATION_SITE"))) {
+      return <input key={field.key} type="hidden" name={`field_${field.key}`} value="" />;
+    }
+    if (moduleKey === "storage-node" && formMode !== "create"
+      && ["node_type", "entity_id", "parent_node_id"].includes(field.key)) {
+      const currentValue = String(values[field.key] ?? "");
+      const fieldOptions = field.type === "lookup" ? getLookupOptions(field, values) : [];
+      const displayValue = field.type === "lookup"
+        ? getMasterSelectionLabel(fieldOptions, currentValue) || currentValue || "—"
+        : currentValue.replaceAll("_", " ");
+      return (
+        <div key={field.key} className="min-w-0 space-y-1">
+          <p className="text-sm font-medium text-slate-700">{field.label}</p>
+          <p className="min-h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{displayValue}</p>
+          <input type="hidden" name={`field_${field.key}`} value={currentValue} />
+        </div>
+      );
+    }
+    if (field.readOnly && !(moduleKey === "raw-material" && field.key === "Asset_Purchase")) return null;
+
+    if (moduleKey === "raw-material" && field.key === "Asset_Purchase") {
+      const isAsset = isAssetCategorySelected(values);
+      return (
+        <div key={field.key} className="space-y-1">
+          <p className="text-sm font-medium text-slate-700">Asset classification</p>
+          <p className="text-sm text-slate-600">
+            {isUnclassifiedRawMaterialCategorySelected(values)
+              ? "This Raw Material Type has mixed legacy classifications. Set its asset status on the type master first."
+              : isAsset
+                ? "Asset — inherited from the selected Raw Material Type."
+                : values.Category
+                  ? "Raw material — inherited from the selected Raw Material Type."
+                  : "Select a category to see its type's asset classification."}
+          </p>
+        </div>
+      );
+    }
+
     const value = values[field.key] ?? field.initialValue;
     if (field.type === "checkbox")
       return (
-        <label key={field.key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-          <input
-            type="checkbox"
+        <div key={field.key} className={moduleKey === "raw-material" ? "pt-5" : undefined}>
+          <Checkbox
+            label={`${field.label}${field.required ? " *" : ""}`}
             checked={value === true}
             onChange={(event) => {
               if (field.readOnly) return;
-              setValues({ ...values, [field.key]: event.target.checked });
+              const checked = event.target.checked;
+              setValues((current) => ({ ...current, [field.key]: checked }));
             }}
             name={`field_${field.key}`}
             disabled={field.readOnly}
             className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:cursor-not-allowed"
           />
-          {field.label}
-        </label>
+        </div>
+      );
+    if (field.type === "image")
+      return (
+        <Input
+          key={field.key}
+          label={field.label}
+          type="file"
+          accept="image/*"
+          name={`field_${field.key}`}
+          hint="PNG, JPG, GIF, or WebP up to 2 MB."
+          onChange={() => undefined}
+        />
       );
     if (field.type === "picklist")
       return (
-        <label key={field.key} className="block space-y-1">
-          <span className="text-xs font-semibold text-slate-700">{field.label}</span>
-          <select
+        <Select
+          key={field.key}
+          label={field.label}
+          required={field.required}
             name={`field_${field.key}`}
             value={String(value ?? "")}
             onChange={(event) => {
               if (field.readOnly) return;
-              setValues({ ...values, [field.key]: event.target.value });
+              const nextValue = event.target.value;
+              setValues((current) => ({
+                ...current,
+                [field.key]: nextValue,
+                ...(moduleKey === "storage-node" && field.key === "node_type"
+                  ? { parent_node_id: "", entity_id: "" }
+                  : {}),
+              }));
             }}
             disabled={field.readOnly}
-            className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
-          >
-            <option value="">Select {field.label}</option>
-            {field.options?.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
+            options={[
+              { value: "", label: `Select ${field.label}` },
+              ...(field.options?.map((option) => ({ value: option, label: option })) ?? []),
+            ]}
+            className="rounded-lg p-2 text-sm disabled:bg-slate-100"
+          />
       );
     if (field.type === "lookup") {
-      const selectedValue = field.multiple && value === undefined && editingRecord
-        ? childRecords.filter((item) => item.parentId === editingRecord.value_id).map((item) => item.label)
+      const selectedValue = field.multiple && value === undefined && initialRecord
+        ? childRecords.filter((item) => item.parentId === initialRecord.id || item.parentId === initialRecord.value_id).map((item) => item.label)
         : value;
-      const options = getLookupOptions(field, values);
+      let options = getLookupOptions(field, values);
+      if (moduleKey === "storage-node" && field.key === "parent_node_id") {
+        const validParentTypes = storageParentTypes[storageNodeLevel] ?? [];
+        options = options.filter((option) =>
+          validParentTypes.includes(String(option.fields?.node_type ?? "")));
+      }
       if (field.multiple) {
-        const selectedValues = Array.isArray(selectedValue)
+        const rawSelectedValues = Array.isArray(selectedValue)
           ? selectedValue.map(String)
           : selectedValue
             ? [String(selectedValue)]
             : [];
+        const selectedValues = rawSelectedValues.map((selected) => getMasterSelectionLabel(options, selected));
+
+        if (moduleKey === "size-group" && field.key === "Size") {
+          const sizeRows = selectedValues.length > 0 ? selectedValues : [""];
+          return (
+            <fieldset key={field.key} className="col-span-full min-w-0 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <legend className="px-1 text-sm font-semibold text-slate-800">{field.label}{field.required ? " *" : ""}</legend>
+              {loadingMasterLookupKeys.has(field.lookupModuleKey ?? "") ? <p role="status" className="text-sm text-[var(--erp-muted)]">Loading {field.label.toLowerCase()} options...</p> : null}
+              <div className="flex items-center justify-end border-b border-slate-200 pb-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-0 px-1.5 py-1.5"
+                  aria-label="Create Size master in a new tab"
+                  title="Create Size master in a new tab"
+                  onClick={() => {
+                    sizeMasterTabOpened.current = true;
+                    window.open(
+                      `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/master-data/size/create`,
+                      "_blank",
+                      "noopener,noreferrer",
+                    );
+                  }}
+                >
+                  <Plus aria-hidden="true" className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setValues((current) => ({
+                    ...current,
+                    [field.key]: [...(Array.isArray(current[field.key]) ? current[field.key] as string[] : sizeRows), ""],
+                  }))}
+                >
+                  Add row
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {sizeRows.map((size, index) => {
+                  const otherSelectedSizes = new Set(selectedValues.filter((_, rowIndex) => rowIndex !== index));
+                  const rowOptions = options.filter((option) => option.label === size || !otherSelectedSizes.has(option.label));
+                  return (
+                    <div key={`${field.key}-${index}`} className="grid min-w-0 items-end gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-[5rem_minmax(0,1fr)_auto]">
+                      <div className="space-y-1">
+                        <span className="block text-xs font-semibold text-slate-600">Sl No</span>
+                        <span className="flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-sm font-semibold tabular-nums text-slate-600">{index + 1}</span>
+                      </div>
+                      <Select
+                        label="Size"
+                        value={size}
+                        onChange={(event) => {
+                          const selectedSize = event.target.value;
+                          setValues((current) => {
+                            const currentRows = Array.isArray(current[field.key]) ? current[field.key] as string[] : sizeRows;
+                            const nextValues = [...currentRows];
+                            nextValues[index] = selectedSize;
+                            return { ...current, [field.key]: nextValues };
+                          });
+                        }}
+                        options={[
+                          { value: "", label: "Select Size" },
+                          ...rowOptions.map((option) => ({ value: option.label, label: option.label })),
+                        ]}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setValues((current) => {
+                            const currentRows = Array.isArray(current[field.key]) ? current[field.key] as string[] : sizeRows;
+                            const nextValues = currentRows.filter((_, rowIndex) => rowIndex !== index);
+                            return { ...current, [field.key]: nextValues.length > 0 ? nextValues : [""] };
+                          });
+                        }}
+                        className="justify-self-end text-red-600 sm:mb-0.5"
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+              {selectedValues.filter(Boolean).map((size, index) => (
+                <input key={`${field.key}-value-${index}`} type="hidden" name={`field_${field.key}`} value={size} />
+              ))}
+              {field.required && <p className="text-[11px] text-slate-500">Add at least one size.</p>}
+            </fieldset>
+          );
+        }
 
         return (
-          <fieldset key={field.key} className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <fieldset key={field.key} className="col-span-full min-w-0 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
             <legend className="px-1 text-xs font-semibold text-slate-700">
               {field.label}
               {field.required ? " *" : ""}
             </legend>
+            {allowQuickCreate && moduleKey === "article" && field.lookupModuleKey === "article-size" && (
+              <div className="flex justify-end">
+                <Button type="button" size="sm" variant="secondary" onClick={() => void openQuickMaster("size", { fieldKey: field.key })}>
+                  + Add New Size
+                </Button>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {options.map((option) => {
                 const checked = selectedValues.includes(option.label);
                 return (
-                  <label
+                  <div
                     key={option.id}
-                    className={`flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-sm transition-colors ${
+                    className={`flex min-h-10 cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-sm transition-colors ${
                       checked
                         ? "border-emerald-500 bg-emerald-50 text-emerald-900"
                         : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     }`}
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
+                      label={option.label}
                       name={`field_${field.key}`}
                       value={option.label}
                       checked={checked}
                       onChange={(event) => {
-                        const nextValue = event.target.checked
-                          ? [...selectedValues, option.label]
-                          : selectedValues.filter((item) => item !== option.label);
-                        const nextValues = { ...values, [field.key]: nextValue };
-                        for (const dependentField of fields.filter((candidate) => candidate.dependsOn === field.key)) {
-                          nextValues[dependentField.key] = dependentField.multiple ? [] : "";
-                        }
-                        setValues(nextValues);
+                        const isChecked = event.target.checked;
+                        setValues((current) => {
+                          const currentRawValues = Array.isArray(current[field.key])
+                            ? (current[field.key] as unknown[]).map(String)
+                            : [];
+                          const currentSelectedValues = currentRawValues.map((selected) => getMasterSelectionLabel(options, selected));
+                          const nextValue = isChecked
+                            ? [...new Set([...currentSelectedValues, option.label])]
+                            : currentSelectedValues.filter((item) => item !== option.label);
+                          const nextValues = moduleKey === "article" && field.key === "Sizes"
+                            ? withArticleSizePrices(
+                                current,
+                                nextValue,
+                                Array.isArray(current.Size_Prices)
+                                  ? current.Size_Prices.filter((item): item is ArticleSizePrice =>
+                                      typeof item === "object" && item !== null
+                                      && "size" in item && typeof item.size === "string"
+                                      && "price" in item && (typeof item.price === "string" || item.price === null))
+                                  : [],
+                              )
+                            : { ...current, [field.key]: nextValue };
+                          const resetValues = clearDependentMasterFields(nextValues, fields, field.key);
+                          resetValues[field.key] = nextValue;
+                          return resetValues;
+                        });
                       }}
                       className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                     />
-                    <span>{option.label}</span>
-                  </label>
+                  </div>
                 );
               })}
             </div>
+            {moduleKey === "article" && field.key === "Sizes" && selectedValues.length > 0 && (
+              <div className="space-y-3 border-t border-slate-200 pt-3">
+                <p className="text-xs font-semibold text-slate-700">Price by size</p>
+                {selectedValues.map((size) => {
+                  const sizePrices = Array.isArray(values.Size_Prices)
+                    ? values.Size_Prices.filter((item): item is ArticleSizePrice =>
+                        typeof item === "object" && item !== null
+                        && "size" in item && typeof item.size === "string"
+                        && "price" in item && (typeof item.price === "string" || item.price === null))
+                    : [];
+                  const price = sizePrices.find((item) => item.size.toLocaleLowerCase() === size.toLocaleLowerCase())?.price ?? "";
+                  return (
+                    <Input
+                      key={`size-price-${size}`}
+                      label={`Price for size ${size}`}
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      textCase="preserve"
+                      value={price}
+                      onChange={(event) => {
+                        const nextPrice = event.target.value || null;
+                        setValues((current) => {
+                          const currentPrices = Array.isArray(current.Size_Prices)
+                            ? current.Size_Prices.filter((item): item is ArticleSizePrice =>
+                                typeof item === "object" && item !== null
+                                && "size" in item && typeof item.size === "string"
+                                && "price" in item && (typeof item.price === "string" || item.price === null))
+                            : [];
+                          const nextPrices = currentPrices.filter((item) => item.size.toLocaleLowerCase() !== size.toLocaleLowerCase());
+                          nextPrices.push({ size, price: nextPrice });
+                          return withArticleSizePrices(current, selectedValues, nextPrices);
+                        });
+                      }}
+                    />
+                  );
+                })}
+                <input
+                  type="hidden"
+                  name="articleSizePrices"
+                  value={JSON.stringify(Array.isArray(values.Size_Prices) ? values.Size_Prices : [])}
+                />
+              </div>
+            )}
             {options.length === 0 && <p className="text-xs text-slate-500">No {field.label.toLowerCase()} options available.</p>}
             {field.required && <p className="text-[11px] text-slate-500">Select at least one.</p>}
           </fieldset>
         );
       }
+      const selectedCategory = moduleKey === "raw-material" && field.key === "Category_Type"
+        ? (articleLookupOptions["raw-material-category"] ?? emptyMasterLookupOptions).find((option) => option.label === String(values.Category ?? ""))
+        : undefined;
+      const linkedTypeValue = String(selectedCategory?.fields?.Raw_Material_Type1 ?? "");
+      const linkedType = options.find((option) => [option.label, option.id, option.value_id].some((candidate) => String(candidate ?? "") === linkedTypeValue));
+      const autoSelectedType = linkedType?.label;
+      const isLoadingLookup = loadingMasterLookupKeys.has(field.lookupModuleKey ?? "");
+      const lookupField = moduleKey === "storage-node"
+        && ((field.key === "entity_id" && storageNodeLevel === "LOCATION_SITE")
+          || (field.key === "parent_node_id" && storageNodeLevel !== "LOCATION_SITE"))
+        ? { ...field, required: true }
+        : field;
+
       return (
-        <label key={field.key} className="block space-y-1">
-          <span className="text-xs font-semibold text-slate-700">
-            {field.label}
-            {field.required ? " *" : ""}
-          </span>
-          <select
-            required={field.required}
+        <div key={field.key}>
+          {isLoadingLookup ? <p role="status" className="mb-1 text-xs text-[var(--erp-muted)]">Loading {field.label.toLowerCase()} options...</p> : null}
+          {!isLoadingLookup && options.length === 0 ? <p role="status" className="mb-1 text-xs text-[var(--erp-muted)]">No {field.label.toLowerCase()} options available.</p> : null}
+          {allowQuickCreate && moduleKey === "article" && field.type === "lookup" && (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => void openQuickMaster(field.lookupModuleKey === "article-size" ? "size" : field.lookupModuleKey ?? "", { fieldKey: field.key })}
+              >
+                + Add New
+              </Button>
+            </div>
+          )}
+          {autoSelectedType && <input type="hidden" name={`field_${field.key}`} value={autoSelectedType} />}
+          <MasterLookupSelect
+            articleLookupOptions={articleLookupOptions}
+            className="rounded-lg p-2 text-sm"
+            disabled={field.readOnly || Boolean(autoSelectedType) || isLoadingLookup}
+            field={lookupField}
+            fields={fields}
+            moduleKey={moduleKey}
             name={`field_${field.key}`}
-            value={String(selectedValue ?? "")}
-            onChange={(event) => {
-              const nextValue = event.target.value;
-              const nextValues = { ...values, [field.key]: nextValue };
-              for (const dependentField of fields.filter((candidate) => candidate.dependsOn === field.key)) {
-                nextValues[dependentField.key] = dependentField.multiple ? [] : "";
-              }
-              setValues(nextValues);
-            }}
-            className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white"
-          >
-            <option value="">Select {field.label}</option>
-            {options.map((option) => (
-              <option key={option.id} value={option.label}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            options={getMasterSelectOptions(options, `Select ${field.label}`)}
+            setValues={setValues}
+            value={autoSelectedType ?? getMasterSelectionLabel(options, selectedValue)}
+          />
+        </div>
       );
     }
     if (field.type === "child-list") {
       const childFields = field.childFields ?? [];
-      const childValues = Array.isArray(value) && value.length > 0
+      const childValues = Array.isArray(value)
         ? value.map((item) => typeof item === "object" && item !== null ? item : { [childFields[0]?.key ?? "value"]: String(item ?? "") })
-        : editingRecord
-          ? childRecords.filter((item) => item.parentId === editingRecord.id || item.parentId === editingRecord.value_id).map((item) => item.fields ?? { [childFields[0]?.key ?? "value"]: item.label })
+        : initialRecord
+          ? childRecords.filter((item) => item.parentId === initialRecord.id || item.parentId === initialRecord.value_id).map((item) => ({ ...(item.fields ?? { [childFields[0]?.key ?? "value"]: item.label }), ...(item.id ? { id: item.id } : {}) }))
           : [{}];
       const normalizedValues = childValues.length > 0 ? childValues as Array<Record<string, unknown>> : [{}];
       return (
-        <div key={field.key} className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-700">{field.label}</span>
-            <button
-              type="button"
-               onClick={() => setValues({ ...values, [field.key]: [...normalizedValues, {}] })}
-              className="rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white"
-            >
-                Add row
-              </button>
-            </div>
-            <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter((row) => Object.values(row).some((item) => String(item ?? "").trim() !== "")))} />
-            {normalizedValues.map((childValue, index) => (
-              <div key={`${field.key}-${index}`} className="grid gap-2 rounded-md border border-slate-200 bg-white p-2 sm:grid-cols-[56px_1fr_auto]">
-                <span className="flex items-center justify-center text-xs font-semibold text-slate-500">{index + 1}</span>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {childFields.map((childField) => {
+        <div key={field.key} className={`col-span-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 ${moduleKey === "article" ? "space-y-2 p-3" : "space-y-3 p-4"}`}>
+          <div className={`flex min-w-0 items-center justify-between gap-3 border-b border-slate-200 ${moduleKey === "article" ? "pb-2" : "pb-3"}`}>
+              <div className="min-w-0">
+                <span className={moduleKey === "article" ? "text-xs font-bold uppercase tracking-wide text-slate-700" : "text-sm font-semibold text-slate-800"}>{moduleKey === "article" ? "Color variants" : field.label}</span>
+                {moduleKey === "article" ? <p className="mt-0.5 text-xs text-slate-500">Add a color, SKU, and optional price override for each variant.</p> : null}
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="shrink-0"
+                onClick={() => setValues((current) => ({
+                  ...current,
+                  [field.key]: [
+                    ...(Array.isArray(current[field.key]) ? current[field.key] as Array<Record<string, unknown>> : normalizedValues),
+                    {},
+                  ],
+                }))}
+              >
+                {moduleKey === "article" ? "Add color" : "Add row"}
+              </Button>
+          </div>
+          <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter((row) => Object.values(row).some((item) => String(item ?? "").trim() !== "")))} />
+          <div className="space-y-2">
+              {normalizedValues.map((childValue, index) => (
+                <div key={`${field.key}-${index}`} className={`grid min-w-0 rounded-lg border border-slate-200 bg-white ${moduleKey === "measurement-chart" ? "sm:grid-cols-[2rem_minmax(0,1fr)_auto] items-end gap-2 p-2" : "sm:grid-cols-[2.5rem_minmax(0,1fr)_auto]"} ${moduleKey === "article" ? "items-center gap-2 p-2" : moduleKey === "measurement-chart" ? "" : "items-end gap-3 p-3"}`}>
+                  <span className={`flex items-center justify-center text-sm font-semibold tabular-nums text-slate-500 ${moduleKey === "article" ? "h-8 self-center" : "h-10 self-end"}`}>{index + 1}</span>
+                  <div className={`grid min-w-0 ${moduleKey === "article" ? "gap-2 sm:grid-cols-2 xl:grid-cols-3" : moduleKey === "measurement-chart" ? "gap-2 xl:grid-cols-4" : "gap-3 sm:grid-cols-2"}`}>
+                    {childFields.map((childField) => {
                     const childValueForField = childValue[childField.key] ?? "";
+                    if (moduleKey === "article" && childField.key === "variant_code") return null;
+                    const onChange = (nextValue: string) => {
+                      setValues((current) => {
+                        const currentRows = Array.isArray(current[field.key])
+                          ? current[field.key] as Array<Record<string, unknown>>
+                          : normalizedValues;
+                        const nextValues = [...currentRows];
+                        nextValues[index] = { ...nextValues[index], [childField.key]: nextValue };
+                        return { ...current, [field.key]: nextValues };
+                      });
+                    };
                     if (childField.type === "lookup") {
-                      return <label key={childField.key} className="space-y-1 text-xs font-semibold text-slate-700"><span>{childField.label}{childField.required ? " *" : ""}</span><select required={childField.required} value={String(childValueForField)} onChange={(event) => { const nextValues = [...normalizedValues]; nextValues[index] = { ...nextValues[index], [childField.key]: event.target.value }; setValues({ ...values, [field.key]: nextValues }); }} className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm"><option value="">Select {childField.label}</option>{(lookupOptions[childField.lookupModuleKey ?? ""] ?? []).map((option) => <option key={option.id} value={option.label}>{option.label}</option>)}</select></label>;
+                      return (
+                        <div key={childField.key} className={allowQuickCreate && moduleKey === "article" && childField.lookupModuleKey ? "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2" : "min-w-0"}>
+                          {loadingMasterLookupKeys.has(childField.lookupModuleKey ?? "") ? <p role="status" className="text-xs text-[var(--erp-muted)]">Loading {childField.label.toLowerCase()} options...</p> : null}
+                          <Select
+                            label={childField.label}
+                            required={childField.required}
+                            value={getMasterSelectionLabel(
+                              articleLookupOptions[childField.lookupModuleKey ?? ""] ?? [],
+                              childValueForField,
+                            )}
+                            disabled={loadingMasterLookupKeys.has(childField.lookupModuleKey ?? "")}
+                            onChange={(event) => onChange(event.target.value)}
+                            options={[
+                              { value: "", label: `Select ${childField.label}` },
+                              ...(articleLookupOptions[childField.lookupModuleKey ?? ""] ?? []).map((option) => ({ value: option.label, label: option.label })),
+                            ]}
+                            className={moduleKey === "article" || moduleKey === "measurement-chart" ? "h-9 px-2 py-1.5 text-sm" : undefined}
+                          />
+                          {allowQuickCreate && moduleKey === "article" && childField.lookupModuleKey && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="mb-0.5 shrink-0 px-2"
+                              onClick={() => void openQuickMaster(childField.lookupModuleKey as string, {
+                                fieldKey: field.key,
+                                variantIndex: index,
+                                childFieldKey: childField.key,
+                              })}
+                            >
+                              + Add
+                            </Button>
+                          )}
+                        </div>
+                      );
                     }
-                    return <label key={childField.key} className="space-y-1 text-xs font-semibold text-slate-700"><span>{childField.label}{childField.required ? " *" : ""}</span><Input required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} step={childField.type === "percentage" || childField.type === "decimal" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => { const nextValues = [...normalizedValues]; nextValues[index] = { ...nextValues[index], [childField.key]: event.target.value }; setValues({ ...values, [field.key]: nextValues }); }} /></label>;
+                    return <Input key={childField.key} label={childField.label} required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} min={moduleKey === "measurement-chart" && childField.type === "decimal" ? "0" : undefined} max={moduleKey === "measurement-chart" && childField.type === "decimal" ? "9999.99" : undefined} step={childField.type === "decimal" ? moduleKey === "measurement-chart" ? "0.01" : "0.0001" : childField.type === "percentage" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => onChange(event.target.value)} className={moduleKey === "article" || moduleKey === "measurement-chart" ? "h-9 px-2 py-1.5 text-sm" : undefined} />;
                   })}
                 </div>
-               <button
+                <Button
                   type="button"
-                  onClick={() => setValues({ ...values, [field.key]: normalizedValues.filter((_, itemIndex) => itemIndex !== index) })}
-                className="px-2 py-1 text-xs font-medium text-red-600"
-              >
-                Remove
-              </button>
-            </div>
-          ))}
+                  variant={moduleKey === "article" ? "destructive" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    if (moduleKey !== "article" || window.confirm("Remove this article color variant?")) {
+                      setValues((current) => {
+                        const currentRows = Array.isArray(current[field.key])
+                          ? current[field.key] as Array<Record<string, unknown>>
+                          : normalizedValues;
+                        return { ...current, [field.key]: currentRows.filter((_, itemIndex) => itemIndex !== index) };
+                      });
+                    }
+                  }}
+                  className={`justify-self-end sm:mb-0.5 ${moduleKey === "article" ? "" : "text-red-600"}`}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
         </div>
       );
     }
     return (
-      <label key={field.key} className="block space-y-1">
-        <span className="text-xs font-semibold text-slate-700">
-          {field.label}
-          {field.required ? " *" : ""}
-        </span>
+      <div key={field.key}>
         <Input
+          label={field.label}
           required={field.required}
           type={field.type === "date" ? "date" : field.type === "percentage" || field.type === "number" || field.type === "decimal" ? "number" : "text"}
-          step={field.type === "percentage" || field.type === "decimal" ? "0.01" : undefined}
+          step={field.type === "decimal" ? "0.0001" : field.type === "percentage" ? "0.01" : undefined}
           name={`field_${field.key}`}
           value={String(value ?? "")}
           readOnly={field.readOnly}
           disabled={field.readOnly}
           onChange={(event) => {
             if (field.readOnly) return;
-            setValues({ ...values, [field.key]: event.target.value });
+            const nextValue = event.target.value;
+            setValues((current) => ({ ...current, [field.key]: nextValue }));
           }}
         />
-      </label>
+      </div>
     );
   };
 
-  const getFieldValue = (record: MasterRecord, field: MasterFieldDefinition) => {
+  const getFieldValue = useCallback((record: MasterRecord, field: MasterFieldDefinition) => {
     const metadata =
       record.metadata && typeof record.metadata === "object"
         ? (record.metadata as { fields?: Record<string, unknown> })
@@ -328,232 +1633,439 @@ export function MasterRecordsTable({
     const value = metadata.fields?.[field.key];
     if (value === null || value === undefined || value === "") return "—";
     if (typeof value === "boolean") return value ? "Yes" : "No";
-    if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
+    if (Array.isArray(value)) {
+      return value.length
+        ? value.map((item) => typeof item === "object" && item !== null
+          ? String((item as Record<string, unknown>).color ?? (item as Record<string, unknown>).variant ?? "Variant")
+          : String(item)).join(", ")
+        : "—";
+    }
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
-  };
+  }, []);
 
-  const openRecordDetail = (record: MasterRecord) => {
-    if (moduleKey === "article") {
-      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/articles/${encodeURIComponent(record.value_id)}`);
+  const reportFields = useMemo(() => (moduleKey === "price-list"
+    ? [
+        { key: "label", label: "Channel Name" },
+        ...fields
+          .filter((field) => !["Channel_Name", "Channel_Code"].includes(field.key))
+          .map((field) => ({ key: field.key, label: field.label })),
+        { key: "Channel_Code", label: "Channel Code" },
+        { key: "status", label: "Status" },
+        { key: "actions", label: "Actions" },
+      ]
+    : [
+        ...(moduleKey === "article" ? [] : [{ key: "label", label: "Name" }]),
+        ...(moduleKey === "article" ? [] : [{ key: "code", label: "Code" }]),
+        ...fields.map((field) => ({ key: field.key, label: field.label })),
+        { key: "description", label: "Description" },
+        { key: "status", label: "Status" },
+        { key: "actions", label: "Actions" },
+      ]).filter((field, index, allFields) => allFields.findIndex((item) => item.key === field.key) === index), [fields, moduleKey]);
+
+  const defaultVisibleReportFields = useMemo(() => reportFields
+    .filter((field) => field.key !== "description" || reportRecords.some((record) => record.description))
+    .map((field) => field.key), [reportFields, reportRecords]);
+
+  const activeVisibleReportFields = useMemo(() => visibleReportFields.length > 0
+    ? visibleReportFields
+    : defaultVisibleReportFields, [defaultVisibleReportFields, visibleReportFields]);
+
+  const handleToggleSelectAll = useCallback((checked: boolean, ids: string[]) => {
+    setSelectedRecordIds((current) =>
+      checked ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id)),
+    );
+  }, []);
+  const handleToggleRowSelection = useCallback((id: string, checked: boolean) => {
+    setSelectedRecordIds((current) =>
+      checked ? [...new Set([...current, id])] : current.filter((selectedId) => selectedId !== id),
+    );
+  }, []);
+  const handleBulkDeleteSelected = useCallback(() => setDeleteDialog({ kind: "selected" }), []);
+  const handleRecordClick = useCallback((record: MasterRecord) => {
+    openRecordDetail(record);
+  }, [openRecordDetail]);
+  const getMetadataSearchValue = useCallback((key: string, record: MasterRecord) => {
+    const field = masterFieldByKey.get(key);
+    return field ? getFieldValue(record, field) : "\u2014";
+  }, [getFieldValue, masterFieldByKey]);
+  const getReportSearchValue = useCallback((fieldKey: string, record: MasterRecord) =>
+    getMasterRecordSearchValue(fieldKey, record, getMetadataSearchValue), [getMetadataSearchValue]);
+  const handleNewOrder = useCallback(() => {
+    const target = moduleKey === "article" ? "article/create" : `${moduleKey}/create`;
+    router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${target}`);
+  }, [moduleKey, organizationId, router, workspaceId]);
+  const renderReportCell = useCallback((fieldKey: string, record: MasterRecord): ReactNode => {
+    if (fieldKey === "label" && moduleKey === "article") {
+      return (
+        <Link
+          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(record.code || record.value_id)}`}
+          className="font-medium text-[var(--erp-brand)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+        >
+          {record.label}
+        </Link>
+      );
     }
-    if (moduleKey === "gold-seal") {
-      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(record.value_id)}`);
+    if (fieldKey === "label") return record.label;
+    if (fieldKey === "code") return record.code || "—";
+    if (fieldKey === "description") return record.description || "—";
+    if (fieldKey === "status") return record.is_active ? "Active" : "Pending";
+    if (fieldKey === "actions") {
+      if (moduleKey === "price-list") {
+        return (
+          <Link
+            href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/price-list/SETTINGS`}
+            aria-label="Price List settings"
+            title="Price List settings"
+            onClick={(event) => event.stopPropagation()}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-muted)] transition hover:border-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)] hover:text-[var(--erp-brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+          >
+            <Settings2 className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        );
+      }
+      return (
+        <div className="flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
+          <Button type="button" size="sm" variant="secondary" onClick={() => openRecordDetail(record)}>
+            Open
+          </Button>
+          {moduleKey === "gold-seal" ? (
+            <Button type="button" size="sm" variant="secondary" onClick={() => openLegacyEditor(record)}>
+              Edit
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant={moduleKey === "storage-node" && !record.is_active ? "secondary" : "destructive"}
+            onClick={() => setDeleteDialog({ kind: "single", record })}
+          >
+            {moduleKey === "storage-node" ? record.is_active ? "Deactivate" : "Activate" : "Delete"}
+          </Button>
+        </div>
+      );
     }
-  };
+    const field = masterFieldByKey.get(fieldKey);
+    return field ? getFieldValue(record, field) : "—";
+  }, [getFieldValue, masterFieldByKey, moduleKey, openLegacyEditor, openRecordDetail, organizationId, workspaceId]);
+
+  if (formMode) {
+    if (formMode === "view" && initialRecord) {
+      const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`;
+      const editPath = `${recordPath}/${encodeURIComponent(initialRecord.value_id)}?mode=edit`;
+      const childField = fields.find((field) => field.type === "child-list")
+        ?? fields.find((field) => field.type === "lookup" && field.multiple);
+      const formatValue = (value: unknown) => {
+        if (value === null || value === undefined || value === "") return "—";
+        if (typeof value === "boolean") return value ? "Yes" : "No";
+        if (Array.isArray(value)) return value.map((item) => String(item)).join(", ") || "—";
+        if (typeof value === "object") return JSON.stringify(value);
+        return String(value);
+      };
+
+      return (
+        <Page as="div">
+          <Section className="space-y-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <Link href={recordPath} className="text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline">
+                  ← Back to {moduleLabel}
+                </Link>
+                <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--erp-brand)]">Master data</p>
+                <h1 className="mt-1 break-words text-2xl font-bold text-[var(--erp-text)]">{initialRecord.label}</h1>
+                <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                  {[initialRecord.code, initialRecord.is_active ? "Active" : "Inactive"].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+              <Button type="button" onClick={() => router.push(editPath)}>Edit</Button>
+            </div>
+            {formError ? (
+              <p role="alert" className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]">
+                {formError}
+              </p>
+            ) : null}
+            {saved ? (
+              <p role="status" className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-4 py-3 text-sm text-[var(--erp-brand)]">
+                {`${moduleLabel} ${saved === "create" ? "created" : "updated"} successfully.`}
+              </p>
+            ) : null}
+            <Card className="space-y-5 p-6">
+              <h2 className="text-base font-semibold text-[var(--erp-text)]">{moduleLabel} details</h2>
+              <dl className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {fields.filter((field) => field.type !== "child-list").map((field) => {
+                  const value = field.type === "image"
+                    ? (getFieldValue(initialRecord, field) === "—" ? "—" : "Image attached")
+                    : getFieldValue(initialRecord, field);
+                  return (
+                    <div key={field.key} className="min-w-0 space-y-1">
+                      <dt className="text-xs font-medium text-[var(--erp-muted)]">{field.label}</dt>
+                      <dd className="break-words text-sm text-[var(--erp-text)]">{formatValue(value)}</dd>
+                    </div>
+                  );
+                })}
+                <div className="min-w-0 space-y-1">
+                  <dt className="text-xs font-medium text-[var(--erp-muted)]">Description</dt>
+                  <dd className="break-words text-sm text-[var(--erp-text)]">{initialRecord.description || "—"}</dd>
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <dt className="text-xs font-medium text-[var(--erp-muted)]">Status</dt>
+                  <dd className="text-sm text-[var(--erp-text)]">{initialRecord.is_active ? "Active" : "Inactive"}</dd>
+                </div>
+              </dl>
+              {childField ? (
+                <section className="space-y-3 border-t border-[var(--erp-border)] pt-4">
+                  <h3 className="text-sm font-semibold text-[var(--erp-text)]">{childField.label}</h3>
+                  {childRecords.length ? (
+                    <div className="space-y-2">
+                      {childRecords.map((child, index) => (
+                        <div key={child.id ?? `${child.label}-${index}`} className="rounded-lg border border-[var(--erp-border)] p-3">
+                          <p className="text-sm font-medium text-[var(--erp-text)]">{child.label}</p>
+                          {child.fields ? (
+                            <dl className="mt-2 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                              {Object.entries(child.fields).map(([key, value]) => (
+                                <div key={key} className="min-w-0 space-y-1">
+                                  <dt className="text-xs font-medium text-[var(--erp-muted)]">{key.replaceAll("_", " ")}</dt>
+                                  <dd className="break-words text-sm text-[var(--erp-text)]">{formatValue(value)}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="text-sm text-[var(--erp-muted)]">No {childField.label.toLowerCase()} recorded.</p>}
+                </section>
+              ) : null}
+            </Card>
+          </Section>
+        </Page>
+      );
+    }
+    const formValues = formMode === "edit" ? editFields : createFields;
+    const setFormValues = formMode === "edit" ? setEditFields : setCreateFields;
+    const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`;
+    const returnPath = formMode === "edit" && initialRecord
+      ? `${recordPath}/${encodeURIComponent(initialRecord.value_id)}`
+      : recordPath;
+    return (
+      <Page as="div">
+        <Section>
+          <Link href={returnPath} className="text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline">
+            ← Back to {formMode === "edit" ? initialRecord?.label ?? moduleLabel : moduleLabel}
+          </Link>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-brand)]">Master data</p>
+            <h1 className="mt-1 text-2xl font-bold text-[var(--erp-text)]">
+              {formMode === "create" ? `Create ${moduleLabel}` : `Edit ${initialRecord?.label ?? moduleLabel}`}
+            </h1>
+            <p className="mt-1 text-sm text-[var(--erp-muted)]">{moduleLabel} record</p>
+          </div>
+          {formError ? <p role="alert" className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]">{formError}</p> : null}
+          {saved ? <p role="status" className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-4 py-3 text-sm text-[var(--erp-brand)]">{`${moduleLabel} ${saved === "create" ? "created" : "updated"} successfully.`}</p> : null}
+          {loadingMasterLookupKeys.size > 0 ? <p role="status" className="text-sm text-[var(--erp-muted)]">Loading lookup options. You can continue entering other fields.</p> : null}
+          {masterLookupLoadError ? (
+            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3">
+              <p className="text-sm text-[var(--erp-danger)]">{masterLookupLoadError}</p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setMasterLookupLoadError("");
+                  requestedDependentLookups.current.clear();
+                  setLoadingMasterLookupKeys(new Set(getFormLookupKeys(fields)));
+                  setMasterLookupRetry((current) => current + 1);
+                }}
+              >
+                Retry lookups
+              </Button>
+            </div>
+          ) : null}
+          <Card className="p-6">
+            <form
+              action={formMode === "create" ? createAction : updateAction}
+              encType="multipart/form-data"
+              className="space-y-6"
+            >
+              <input type="hidden" name="workspaceId" value={workspaceId} />
+              <input type="hidden" name="organizationId" value={organizationId} />
+              <input type="hidden" name="moduleKey" value={moduleKey} />
+              <input type="hidden" name="returnToMasterRecord" value="true" />
+              {formMode === "edit" && initialRecord ? (
+                <>
+                  <input type="hidden" name="valueId" value={initialRecord.value_id} />
+                  <input type="hidden" name="masterRecordCode" value={initialRecord.code || initialRecord.value_id} />
+                </>
+              ) : null}
+              <input type="hidden" name="code" value={String(formValues.code ?? initialRecord?.code ?? "")} />
+              <input type="hidden" name="description" value={String(formValues.description ?? initialRecord?.description ?? "")} />
+              <div className={`grid min-w-0 grid-cols-1 content-start gap-x-6 gap-y-4 ${moduleKey === "raw-material" ? "sm:grid-cols-2" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
+                {orderedFields.map((field) => shouldHideRawMaterialField(field.key, formValues)
+                  ? null
+                  : moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && formValues.Show_All1 !== true
+                    ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(formValues[field.key] ?? "")} />
+                    : renderField(field, formValues, setFormValues))}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
+                <Button type="button" variant="secondary" onClick={() => router.push(returnPath)}>Cancel</Button>
+                <SubmitButton disabled={loadingMasterLookupKeys.size > 0}>{formMode === "create" ? "Create record" : "Save changes"}</SubmitButton>
+              </div>
+            </form>
+          </Card>
+        </Section>
+      </Page>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h3 className="text-base font-bold text-slate-900">Report View</h3>
-          <span className="text-xs text-slate-500">{visibleRecords.length} records</span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Input
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search records..."
-            className="w-64"
-          />
-          <Button variant="primary" size="md" onClick={() => setShowCreateModal(true)}>
-            + Add Record
+      <ReportGrid
+        title={`${moduleLabel} Report`}
+        records={reportRecords}
+        fields={reportFields}
+        visibleFields={activeVisibleReportFields}
+        onVisibleFieldsChange={setVisibleReportFields}
+        storageKey={`master-report-columns-${moduleKey}`}
+        rowIdSelector={getMasterRecordId}
+        selectedIds={selectedRecordIds}
+        selectable={!["price-list", "storage-node"].includes(moduleKey)}
+        onToggleSelectAll={["price-list", "storage-node"].includes(moduleKey) ? undefined : handleToggleSelectAll}
+        onToggleRowSelection={["price-list", "storage-node"].includes(moduleKey) ? undefined : handleToggleRowSelection}
+        onBulkDeleteSelected={["price-list", "storage-node"].includes(moduleKey) ? undefined : handleBulkDeleteSelected}
+        bulkDeleteSelectedLabel={`Delete selected ${moduleLabel} records`}
+        onRecordClick={handleRecordClick}
+        onNewOrder={handleNewOrder}
+        newActionLabel="+ Add Record"
+        renderCell={renderReportCell}
+        getSearchValue={getReportSearchValue}
+        searchMinLength={3}
+        serverSideSearch
+        serverSideFilters
+        onSearchQueryChange={handleReportSearchChange}
+        onColumnFiltersChange={handleReportColumnFiltersChange}
+        displayMode={moduleKey === "price-list" ? "cards" : "table"}
+        emptyMessage={`No ${moduleLabel.toLowerCase()} records found.`}
+      />
+      {reportLoadError ? (
+        <div className="flex items-center justify-between gap-3 rounded border border-[var(--erp-error-border)] bg-[var(--erp-error-bg)] px-3 py-2 text-sm text-[var(--erp-error-text)]" role="alert">
+          <p>{reportLoadError}</p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => debouncedReportSearchQuery
+              ? setReportSearchRetry((attempt) => attempt + 1)
+              : void loadMoreReportRecords()}
+            disabled={isLoadingReportPage}
+          >
+            Retry
           </Button>
         </div>
-      </div>
-
-      {visibleRecords.length === 0 ? (
-        <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-500 shadow-sm">
-          No records found.
+      ) : null}
+      {isLoadingReportPage && !reportHasMore ? (
+        <p className="text-center text-sm text-[var(--erp-muted)]" role="status">Loading master records...</p>
+      ) : null}
+      {reportHasMore ? (
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" size="sm" onClick={loadMoreReportRecords} disabled={isLoadingReportPage || reportSearchQuery !== debouncedReportSearchQuery}>
+            {isLoadingReportPage ? "Loading records..." : "Load more records"}
+          </Button>
         </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {visibleRecords.map((item) => {
-            const formattedCode = item.code || "—";
-            return (
-              <article
-                key={item.id}
-                onClick={() => openRecordDetail(item)}
-                className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-500 hover:shadow-md"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-base font-bold text-emerald-700">
-                      {moduleLabel.slice(0, 1).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">{moduleLabel}</p>
-                      <h4 className="mt-0.5 text-base font-bold text-slate-900">{item.label}</h4>
-                    </div>
-                  </div>
-                  <span
-                    className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${
-                      item.is_active
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-amber-100 text-amber-700"
-                    }`}
-                  >
-                    {item.is_active ? "Active" : "Pending"}
-                  </span>
-                </div>
+      ) : null}
 
-                <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50 px-2.5 py-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Code</span>
-                  <span className="text-sm font-semibold text-slate-800">{formattedCode}</span>
-                </div>
-
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {fields
-                    .filter((field) => !["article", "article_code", "description", "design_by", "designed_date"].includes(field.key))
-                    .slice(0, 4)
-                    .map((field) => {
-                      const value = getFieldValue(item, field);
-                      if (value === "—") return null;
-                      return (
-                        <div key={field.key} className="rounded-xl border border-slate-100 bg-slate-50 px-2.5 py-2">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{field.label}</p>
-                          <p className="mt-1 text-sm font-medium text-slate-700 break-words">{value}</p>
-                        </div>
-                      );
-                    })}
-                </div>
-
-                {item.description ? (
-                  <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-2.5 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Description</p>
-                    <p className="mt-1 text-sm text-slate-600">{item.description}</p>
-                  </div>
-                ) : null}
-
-                <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                  {moduleKey === "article" || moduleKey === "gold-seal" ? (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openRecordDetail(item);
-                      }}
-                      className="px-2.5 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg text-xs font-medium transition-colors"
-                    >
-                      Open
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openEditor(item);
-                    }}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
-                  >
-                    Edit
-                  </button>
-                  <form action={deleteAction}>
-                    <input type="hidden" name="workspaceId" value={workspaceId} />
-                    <input type="hidden" name="organizationId" value={organizationId} />
-                    <input type="hidden" name="moduleKey" value={moduleKey} />
-                    <input type="hidden" name="valueId" value={item.value_id} />
-                    <button
-                      type="submit"
-                      onClick={(event) => event.stopPropagation()}
-                      className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-medium transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </form>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-
-      {/* CREATE MODAL */}
-      {showCreateModal && (
-        <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel w-full max-w-lg space-y-4 p-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">Add New {moduleLabel}</h3>
-              <button
-                type="button"
-                onClick={closeCreateModal}
-                className="text-slate-400 hover:text-slate-600 font-bold text-base"
-              >
-                ✕
-              </button>
-            </div>
-            <form action={createAction} className="space-y-4">
+      {deleteDialog ? <Modal
+        open
+        onClose={() => setDeleteDialog(null)}
+        ariaLabelledBy="master-delete-confirmation-title"
+        ariaDescribedBy="master-delete-confirmation-description"
+        variant="danger"
+        size="sm"
+      >
+        <div className="space-y-4 p-6">
+          <div>
+            <h2 id="master-delete-confirmation-title" className="text-lg font-semibold text-[var(--erp-text)]">
+              {deleteDialog?.kind === "selected"
+                ? `Delete ${selectedRecordIds.length} selected ${moduleLabel} records?`
+                : moduleKey === "storage-node"
+                  ? `${deleteDialog.record.is_active ? "Deactivate" : "Activate"} this ${moduleLabel.toLowerCase()} record?`
+                  : `Delete this ${moduleLabel.toLowerCase()} record?`}
+            </h2>
+            <p id="master-delete-confirmation-description" className="mt-2 text-sm text-[var(--erp-muted)]">
+              {moduleKey === "storage-node"
+                ? deleteDialog?.kind === "single" && deleteDialog.record.is_active
+                  ? "The node and its history will be retained. Active child nodes must be deactivated first."
+                  : "The node can receive new stock only when all of its ancestors are active."
+                : "This cannot be undone. Records referenced by other data, or protected demo records, cannot be deleted."}
+              {deleteDialog?.kind === "selected" ? " The selected batch is all-or-nothing." : ""}
+            </p>
+          </div>
+          {deleteDialog?.kind === "single" ? (
+            <form action={deleteAction} className="flex justify-end gap-2">
               <input type="hidden" name="workspaceId" value={workspaceId} />
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
-
-              <div className="max-h-96 overflow-y-auto space-y-3 pr-1">
-                {fields.map((field) => renderField(field, createFields, setCreateFields))}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={closeCreateModal}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-medium transition-colors"
-                >
-                  Save Record
-                </button>
-              </div>
+              <input type="hidden" name="valueId" value={deleteDialog.record.value_id} />
+              {moduleKey === "storage-node" ? (
+                <input type="hidden" name="setActive" value={String(!deleteDialog.record.is_active)} />
+              ) : null}
+              <Button type="button" variant="secondary" onClick={() => setDeleteDialog(null)}>Cancel</Button>
+              {moduleKey === "storage-node" ? (
+                <Button type="submit" variant={deleteDialog.record.is_active ? "destructive" : "primary"}>
+                  {deleteDialog.record.is_active ? "Deactivate node" : "Activate node"}
+                </Button>
+              ) : <DeleteConfirmButton>Delete record</DeleteConfirmButton>}
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* EDIT MODAL */}
-      {editingRecord && (
-        <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel w-full max-w-lg space-y-4 p-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">Edit: {editingRecord.label}</h3>
-              <button
-                type="button"
-                onClick={closeEditor}
-                className="text-slate-400 hover:text-slate-600 font-bold text-base"
-              >
-                ✕
-              </button>
-            </div>
-            <form action={updateAction} className="space-y-4">
+          ) : deleteDialog?.kind === "selected" ? (
+            <form action={deleteSelectedAction} className="flex justify-end gap-2">
               <input type="hidden" name="workspaceId" value={workspaceId} />
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
-              <input type="hidden" name="valueId" value={editingRecord.value_id} />
-
-              <div className="max-h-96 overflow-y-auto space-y-3 pr-1">
-                {fields.map((field) => renderField(field, editFields, setEditFields))}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={closeEditor}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-medium transition-colors"
-                >
-                  Save Changes
-                </button>
-              </div>
+              {selectedRecordIds.map((id) => <input key={id} type="hidden" name="recordId" value={id} />)}
+              <Button type="button" variant="secondary" onClick={() => setDeleteDialog(null)}>Cancel</Button>
+              <DeleteConfirmButton>Delete {selectedRecordIds.length} records</DeleteConfirmButton>
             </form>
-          </div>
+          ) : null}
         </div>
+      </Modal> : null}
+
+      {currentQuickMaster && (
+        <Modal
+          open
+          onClose={closeQuickMaster}
+          ariaLabelledBy="master-quick-create-title"
+          size="rectangle"
+        >
+          <div className="space-y-4 p-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h2 id="master-quick-create-title" className="text-lg font-semibold text-[var(--erp-text)]">
+                Add New {getMasterDefinition(currentQuickMaster)?.label ?? "Master"}
+              </h2>
+              <Button type="button" variant="ghost" size="sm" onClick={closeQuickMaster}>✕</Button>
+            </div>
+            {isLoadingQuickMasterOptions ? (
+              <p role="status" className="text-sm text-[var(--erp-muted)]">Loading lookup choices. You can enter the other fields now.</p>
+            ) : null}
+            <div className="grid min-h-0 grid-cols-1 gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
+              {definitionFields.map(renderQuickMasterField)}
+            </div>
+            {quickMasterError && (
+              <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
+                <p>{quickMasterError}</p>
+                <Button type="button" variant="secondary" size="sm" onClick={() => void retryQuickMasterOptions()} disabled={isLoadingQuickMasterOptions}>
+                  Retry lookups
+                </Button>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+              <Button type="button" variant="secondary" size="sm" onClick={closeQuickMaster} disabled={isSavingQuickMaster}>
+                Cancel
+              </Button>
+              <Button type="button" variant="primary" size="sm" onClick={() => void saveQuickMaster()} disabled={isSavingQuickMaster || isLoadingQuickMasterOptions}>
+                {isSavingQuickMaster ? "Saving..." : "Save and Select"}
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

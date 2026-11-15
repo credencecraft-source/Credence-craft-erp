@@ -1,11 +1,21 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { acceptOrderShare, listPendingOrderShares, rejectOrderShare } from "@/lib/services/orders/order-share-service";
+import { acceptOrderShare, countPendingOrderShares, listPendingOrderShares, rejectOrderShare } from "@/lib/services/orders/order-share-service";
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await requireSessionUser();
-  return NextResponse.json({ shares: await listPendingOrderShares(user.id) });
+  const searchParams = new URL(request.url).searchParams;
+  const cursor = searchParams.get("cursor") || undefined;
+  try {
+    const [page, totalCount] = await Promise.all([
+      listPendingOrderShares(user.id, cursor),
+      cursor ? Promise.resolve(undefined) : countPendingOrderShares(user.id),
+    ]);
+    return NextResponse.json({ ...page, totalCount });
+  } catch {
+    return NextResponse.json({ error: "Unable to load pending order shares." }, { status: 400 });
+  }
 }
 
 export async function POST(request: Request) {

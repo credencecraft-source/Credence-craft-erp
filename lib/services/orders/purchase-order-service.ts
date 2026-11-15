@@ -3,14 +3,36 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
+import { requireSameOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
+import { getEntityGstRegistrationForDate } from "@/lib/services/organizations/entity-gst-registration-resolver";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
 import { calculateTax } from "./gst-calculation-service";
+import { calculatePurchaseOrderGrandTotal } from "./purchase-order-financial-snapshot";
 
 const purchaseOrderInclude = {
+  entity: { select: { id: true, entity_name: true } },
   vendor: { select: { id: true, vendor: true, legacy_metadata: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
   sources: { select: { master_purchase_order_id: true } },
-  lines: { orderBy: { source_order_no: "asc" as const }, include: { masterPurchaseOrder: { select: { display_no: true, master_po_no: true, lines: { select: { stock_uom: true } }, sourceRecords: { select: { groupedPurchaseOrder: { select: { buying_uom: true } } } } } } } },
+  lines: { orderBy: { source_order_no: "asc" as const }, include: { masterPurchaseOrder: { select: { display_no: true, master_po_no: true, lines: { select: { stock_uom: true } }, sourceRecords: { select: { groupedPurchaseOrder: { select: { buying_uom: true } } } } } }, generalPurchaseOrderGroup: { select: { display_no: true } } } },
 } as const;
+
+const purchaseOrderReportSelect = {
+  id: true,
+  entity_id: true,
+  entity_name_snapshot: true,
+  grand_total: true,
+  entity: { select: { id: true, entity_name: true } },
+  display_no: true,
+  purchase_order_no: true,
+  status: true,
+  procurement_type: true,
+  is_asset_purchase: true,
+  po_date: true,
+  delivery_date: true,
+  created_at: true,
+  vendor: { select: { id: true, vendor: true, legacy_metadata: true } },
+} satisfies Prisma.PurchaseOrderSelect;
 
 const numberValue = (value: Prisma.Decimal | number | string | null | undefined) => value == null ? null : Number(value);
 const vendorEmail = (metadata: unknown) => {
@@ -21,18 +43,22 @@ const vendorEmail = (metadata: unknown) => {
 };
 
 function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include: typeof purchaseOrderInclude }>) {
-  const total = order.lines.reduce((sum, line) => sum + Number(line.total ?? (Number(line.quantity) * Number(line.price ?? 0))), 0);
+  const total = order.grand_total ?? calculatePurchaseOrderGrandTotal(order.lines);
   return {
     id: order.id,
+    entityId: order.entity?.id ?? order.entity_id,
+    entityName: order.entity_name_snapshot ?? order.entity?.entity_name ?? "Missing Entity",
     purchaseOrderNo: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
     purchaseOrderInternalNo: order.purchase_order_no,
     status: order.status,
+    procurementType: order.procurement_type,
+    isAssetPurchase: order.is_asset_purchase,
     poDate: order.po_date,
     deliveryDate: order.delivery_date,
     createdAt: order.created_at,
     vendor: { id: order.vendor.id, name: order.vendor.vendor, email: vendorEmail(order.vendor.legacy_metadata) },
     sourceMasterPurchaseOrderIds: order.sources.map((source) => source.master_purchase_order_id),
-    total,
+    total: total.toNumber(),
     lines: order.lines.map((line) => ({
       id: line.id,
       rawMaterial: line.raw_material,
@@ -40,7 +66,7 @@ function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include:
       subCategory: line.sub_category,
       sourceOrderNo: line.source_order_no,
       styleName: line.style_name,
-      stockUom: line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
+      stockUom: line.stock_uom ?? line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
       buyingUom: line.masterPurchaseOrder?.sourceRecords[0]?.groupedPurchaseOrder.buying_uom ?? null,
       quantity: numberValue(line.quantity),
       price: numberValue(line.price),
@@ -55,6 +81,9 @@ function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include:
       hsnCode: line.hsn_code,
       total: numberValue(line.total),
       masterGroupId: line.masterPurchaseOrder?.display_no ? `MGP-${line.masterPurchaseOrder.display_no}` : line.master_purchase_order_id,
+      generalGroupId: line.generalPurchaseOrderGroup?.display_no
+        ? `GMG-${line.generalPurchaseOrderGroup.display_no}`
+        : line.general_purchase_order_group_id,
     })),
   };
 }
@@ -72,19 +101,35 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
     const masters = await transaction.masterPurchaseOrder.findMany({
       where: { id: { in: uniqueIds }, organization_id: organizationId },
       include: {
+        entity: { select: { id: true, entity_name: true, is_active: true } },
         vendor: { select: { id: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
         lines: true,
-        sourceRecords: { include: { groupedPurchaseOrder: { select: { gst: true, hsn_code: true } } } },
+        sourceRecords: { include: { groupedPurchaseOrder: { select: { source_type: true, gst: true, hsn_code: true } } } },
         purchaseOrderSources: { select: { purchase_order_id: true } },
       },
     });
     if (masters.length !== uniqueIds.length) throw new Error("One or more Master Groups are unavailable.");
+    if (masters.some((master) => master.sourceRecords.some((source) => source.groupedPurchaseOrder.source_type === "STOCK"))) {
+      throw new Error("Stock Master Groups must be completed through store verification, not vendor Purchase Order generation.");
+    }
     const existingSource = masters.flatMap((master) => master.purchaseOrderSources);
     if (existingSource.length > 0) throw new Error("One or more selected Master Groups already have a Purchase Order.");
+    const entityId = requireSameOrganizationEntity(
+      masters.map((master) => master.entity_id),
+      "Select Master Groups belonging to the same Entity.",
+    );
+    if (masters.some((master) => !master.entity?.is_active)) {
+      throw new Error("Select Master Groups belonging to an active Entity.");
+    }
     const vendorId = masters[0].vendor_id;
     if (masters.some((master) => master.vendor_id !== vendorId)) throw new Error("Select Master Groups from the same vendor.");
     const organization = await transaction.organization.findUnique({ where: { id: organizationId }, select: { gst_number: true, state: true, country: true } });
     if (!organization) throw new Error("Organization not found.");
+    const entityGstRegistration = await getEntityGstRegistrationForDate(
+      transaction,
+      organizationId,
+      entityId,
+    );
     const vendor = masters[0].vendor;
     let defaultTaxProfile: { tax_regime: string; cgst_rate: Prisma.Decimal | null; sgst_rate: Prisma.Decimal | null; igst_rate: Prisma.Decimal | null; vat_rate: Prisma.Decimal | null; sales_tax_rate: Prisma.Decimal | null; } | null = null;
     try {
@@ -109,12 +154,15 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
       const gst = sourceValues.find((value) => value !== null && typeof value !== "string") as Prisma.Decimal | null | undefined;
       const hsnCode = sourceValues.find((value) => typeof value === "string") as string | undefined;
       const price = master.lines.find((line) => line.vendor_price !== null)?.vendor_price ?? null;
-      const quantity = master.lines.reduce((sum, line) => sum + Number(line.grouped_qty), 0);
-      const total = master.lines.reduce((sum, line) => sum + Number(line.total_spend ?? (Number(line.grouped_qty) * Number(line.vendor_price ?? 0))), 0);
+      const quantity = master.lines.reduce((sum, line) => sum.plus(line.grouped_qty), new Prisma.Decimal(0));
+      const taxableAmount = master.lines.reduce(
+        (sum, line) => sum.plus(line.total_spend ?? line.grouped_qty.mul(line.vendor_price ?? 0)),
+        new Prisma.Decimal(0),
+      );
       const totalRate = Number(sourceValues.find((value) => value !== null && typeof value !== "string") ?? 0);
       const configuredRate = gstRates.find((rate) => Number(rate.gst) === totalRate);
       const tax = calculateTax({
-        taxableAmount: total,
+        taxableAmount: 0,
         totalRate,
         taxRegime,
         country: organization.country ?? "IN",
@@ -123,11 +171,12 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         igstRate: numberValue(configuredRate?.igst_rate) ?? numberValue(defaultTaxProfile?.igst_rate),
         vatRate: numberValue(defaultTaxProfile?.vat_rate),
         salesTaxRate: numberValue(defaultTaxProfile?.sales_tax_rate),
-        organizationState: organization.state,
-        organizationGstin: organization.gst_number,
+        organizationState: entityGstRegistration?.registration_state ?? organization.state,
+        organizationGstin: entityGstRegistration?.gstin ?? organization.gst_number,
         vendorState: vendor.registeredState?.state ?? vendor.registered_state,
         vendorGstin: vendor.gst_number,
       });
+      const amountForRate = (rate: number) => taxableAmount.mul(new Prisma.Decimal(rate)).div(100);
       return {
         source_master_line_id: master.lines[0]?.id ?? master.id,
         master_purchase_order_id: master.id,
@@ -136,23 +185,27 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         sub_category: master.sub_category,
         source_order_no: null,
         style_name: null,
-        quantity: new Prisma.Decimal(quantity),
+        quantity,
         price,
         gst,
         tax_type: tax.taxType,
         cgst_rate: new Prisma.Decimal(tax.cgstRate),
         sgst_rate: new Prisma.Decimal(tax.sgstRate),
         igst_rate: new Prisma.Decimal(tax.igstRate),
-        cgst_amount: new Prisma.Decimal(tax.cgstAmount),
-        sgst_amount: new Prisma.Decimal(tax.sgstAmount),
-        igst_amount: new Prisma.Decimal(tax.igstAmount),
+        cgst_amount: tax.taxType === "CGST_SGST" ? amountForRate(tax.cgstRate) : new Prisma.Decimal(0),
+        sgst_amount: tax.taxType === "CGST_SGST" ? amountForRate(tax.sgstRate) : new Prisma.Decimal(0),
+        igst_amount: tax.taxType === "IGST" ? amountForRate(tax.igstRate) : new Prisma.Decimal(0),
         hsn_code: hsnCode,
-        total: new Prisma.Decimal(total),
+        total: taxableAmount,
       };
     });
+    const grandTotal = calculatePurchaseOrderGrandTotal(lines);
     return transaction.purchaseOrder.create({
       data: {
         organization_id: organizationId,
+        entity_id: entityId,
+        entity_name_snapshot: masters[0].entity?.entity_name ?? null,
+        grand_total: grandTotal,
         vendor_id: vendorId,
         purchase_order_no: `PO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
         display_no: displayNo,
@@ -162,16 +215,144 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         sources: { create: masters.map((master) => ({ master_purchase_order_id: master.id })) },
         lines: { create: lines },
       },
-      include: purchaseOrderInclude,
     });
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-  return serializePurchaseOrder(order);
+  const createdOrder = await prisma.purchaseOrder.findUnique({
+    where: { id: order.id },
+    include: purchaseOrderInclude,
+  });
+  if (!createdOrder) throw new Error("Purchase Order was created but could not be loaded.");
+
+  return serializePurchaseOrder(createdOrder);
 }
 
-export async function listPurchaseOrders(organizationId: string) {
-  const orders = await prisma.purchaseOrder.findMany({ where: { organization_id: organizationId }, include: purchaseOrderInclude, orderBy: { created_at: "desc" } });
+export async function listPurchaseOrders(
+  organizationId: string,
+  { assetOnly = false }: { assetOnly?: boolean } = {},
+) {
+  const orders = await prisma.purchaseOrder.findMany({
+    where: {
+      organization_id: organizationId,
+      ...(assetOnly ? { procurement_type: "GENERAL", is_asset_purchase: true } : {}),
+    },
+    include: purchaseOrderInclude,
+    orderBy: { created_at: "desc" },
+  });
   return orders.map(serializePurchaseOrder);
+}
+
+export async function listPurchaseOrderReportPage(
+  organizationId: string,
+  input: { cursor?: string; limit?: number; search?: string; assetOnly?: boolean } = {},
+) {
+  const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
+  const search = String(input.search ?? "").trim().slice(0, 100);
+  const rows = await prisma.purchaseOrder.findMany({
+    where: {
+      organization_id: organizationId,
+      ...(input.assetOnly ? { procurement_type: "GENERAL", is_asset_purchase: true } : {}),
+      ...(search ? {
+        OR: [
+          { purchase_order_no: { contains: search, mode: "insensitive" } },
+          { status: { contains: search, mode: "insensitive" } },
+          { vendor: { vendor: { contains: search, mode: "insensitive" } } },
+          { entity_name_snapshot: { contains: search, mode: "insensitive" } },
+          {
+            AND: [
+              { entity_name_snapshot: null },
+              { entity: { entity_name: { contains: search, mode: "insensitive" } } },
+            ],
+          },
+          { lines: { some: { hsn_code: { contains: search, mode: "insensitive" } } } },
+        ],
+      } : {}),
+    },
+    select: purchaseOrderReportSelect,
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+  });
+  const hasNextPage = rows.length > limit;
+  const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  const lineSummaries = pageRows.length === 0
+    ? []
+    : await prisma.$queryRaw<Array<{
+        purchase_order_id: string;
+        total: string;
+        gst_values: string[];
+        hsn_codes: string[];
+        buying_uoms: string[];
+      }>>`
+        WITH page_orders AS (
+          SELECT id
+          FROM purchase_orders
+          WHERE organization_id = ${organizationId}
+            AND id IN (${Prisma.join(pageRows.map((order) => order.id))})
+        ),
+        line_aggregates AS (
+          SELECT
+            line.purchase_order_id,
+            ROUND(COALESCE(SUM(
+              COALESCE(line.total, line.quantity * COALESCE(line.price, 0))
+              + COALESCE(line.cgst_amount, 0)
+              + COALESCE(line.sgst_amount, 0)
+              + COALESCE(line.igst_amount, 0)
+            ), 0), 2)::text AS total,
+            COALESCE(ARRAY_AGG(DISTINCT line.gst::text) FILTER (WHERE line.gst IS NOT NULL), ARRAY[]::text[]) AS gst_values,
+            COALESCE(ARRAY_AGG(DISTINCT line.hsn_code) FILTER (WHERE line.hsn_code IS NOT NULL), ARRAY[]::text[]) AS hsn_codes
+          FROM purchase_order_lines AS line
+          INNER JOIN page_orders ON page_orders.id = line.purchase_order_id
+          GROUP BY line.purchase_order_id
+        ),
+        buying_uom_aggregates AS (
+          SELECT
+            line.purchase_order_id,
+            ARRAY_AGG(DISTINCT grouped.buying_uom) FILTER (WHERE grouped.buying_uom IS NOT NULL) AS buying_uoms
+          FROM purchase_order_lines AS line
+          INNER JOIN page_orders ON page_orders.id = line.purchase_order_id
+          INNER JOIN master_purchase_order_sources AS source
+            ON source.master_purchase_order_id = line.master_purchase_order_id
+          INNER JOIN grouped_purchase_orders AS grouped
+            ON grouped.id = source.grouped_purchase_order_id
+          WHERE grouped.organization_id = ${organizationId}
+          GROUP BY line.purchase_order_id
+        )
+        SELECT
+          page_orders.id AS purchase_order_id,
+          COALESCE(line_aggregates.total, '0') AS total,
+          COALESCE(line_aggregates.gst_values, ARRAY[]::text[]) AS gst_values,
+          COALESCE(line_aggregates.hsn_codes, ARRAY[]::text[]) AS hsn_codes,
+          COALESCE(buying_uom_aggregates.buying_uoms, ARRAY[]::text[]) AS buying_uoms
+        FROM page_orders
+        LEFT JOIN line_aggregates ON line_aggregates.purchase_order_id = page_orders.id
+        LEFT JOIN buying_uom_aggregates ON buying_uom_aggregates.purchase_order_id = page_orders.id
+      `;
+  const lineSummaryByOrder = new Map(lineSummaries.map((summary) => [summary.purchase_order_id, summary]));
+  const purchaseOrders = pageRows.map((order) => ({
+    id: order.id,
+    entityId: order.entity?.id ?? order.entity_id,
+    entityName: order.entity_name_snapshot ?? order.entity?.entity_name ?? "Missing Entity",
+    purchaseOrderNo: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
+    status: order.status,
+    procurementType: order.procurement_type,
+    isAssetPurchase: order.is_asset_purchase,
+    poDate: order.po_date,
+    deliveryDate: order.delivery_date,
+    createdAt: order.created_at,
+    vendor: { id: order.vendor.id, name: order.vendor.vendor, email: vendorEmail(order.vendor.legacy_metadata) },
+    total: order.grand_total?.toNumber() ?? Number(lineSummaryByOrder.get(order.id)?.total ?? 0),
+    gstValues: (lineSummaryByOrder.get(order.id)?.gst_values ?? [])
+      .map(Number)
+      .filter(Number.isFinite),
+    hsnCodes: lineSummaryByOrder.get(order.id)?.hsn_codes ?? [],
+    buyingUoms: lineSummaryByOrder.get(order.id)?.buying_uoms ?? [],
+  }));
+
+  return {
+    purchaseOrders,
+    nextCursor: hasNextPage ? pageRows[pageRows.length - 1]?.id ?? null : null,
+  };
 }
 
 export async function getPurchaseOrder(organizationId: string, id: string) {
@@ -180,16 +361,26 @@ export async function getPurchaseOrder(organizationId: string, id: string) {
   return serializePurchaseOrder(order);
 }
 
-export async function deletePurchaseOrder(organizationId: string, id: string) {
+export async function deletePurchaseOrder(organizationId: string, id: string, actorUserId?: string) {
   const order = await prisma.purchaseOrder.findFirst({
     where: { id, organization_id: organizationId },
     select: {
       id: true,
+      status: true,
+      generalPurchaseOrderRequests: {
+        where: { organization_id: organizationId },
+        select: { id: true, status: true },
+      },
+      lines: { select: { general_purchase_order_group_id: true } },
       inventoryReceipts: { select: { id: true, receipt_no: true } },
       gateEntries: { select: { id: true, entry_no: true } },
     },
   });
   if (!order) throw new Error("Purchase Order not found.");
+  if (order.generalPurchaseOrderRequests.length > 0
+    && !["DRAFT", "OPEN", "REJECTED"].includes(order.status)) {
+    throw new Error("A General Purchase Order cannot be deleted after it has been submitted for approval.");
+  }
   if (order.inventoryReceipts.length > 0) {
     const linkedReceipts = order.inventoryReceipts.map((receipt) => ({ id: receipt.id, receiptNo: receipt.receipt_no }));
     const detail = linkedReceipts.map((receipt) => receipt.receiptNo).join(", ");
@@ -205,16 +396,148 @@ export async function deletePurchaseOrder(organizationId: string, id: string) {
     });
   }
 
-  await prisma.purchaseOrder.delete({ where: { id: order.id } });
+  await prisma.$transaction(async (transaction) => {
+    if (order.generalPurchaseOrderRequests.length > 0) {
+      const requestIds = order.generalPurchaseOrderRequests.map((request) => request.id);
+      const restored = await transaction.generalPurchaseOrderRequest.updateMany({
+        where: {
+          id: { in: requestIds },
+          organization_id: organizationId,
+          purchase_order_id: order.id,
+          status: "PO_CREATED",
+        },
+        data: { status: "PRICE_APPROVED", purchase_order_id: null },
+      });
+      if (restored.count !== requestIds.length) {
+        throw new Error("General PO requests changed before the Purchase Order could be deleted.");
+      }
+      await createAuditEvent({
+        organizationId,
+        userId: actorUserId,
+        module: "Procurement",
+        action: "RESTORE_GENERAL_PO_REQUESTS",
+        entityType: "PurchaseOrder",
+        entityId: order.id,
+        details: { request_count: restored.count },
+      }, transaction);
+    }
+    const generalGroupIds = order.lines
+      .map((line) => line.general_purchase_order_group_id)
+      .filter((groupId): groupId is string => Boolean(groupId));
+    if (generalGroupIds.length > 0) {
+      const restoredGroups = await transaction.generalPurchaseOrderGroup.updateMany({
+        where: {
+          id: { in: generalGroupIds },
+          organization_id: organizationId,
+          status: "PO_CREATED",
+        },
+        data: { status: "MASTER_GROUPED" },
+      });
+      if (restoredGroups.count !== generalGroupIds.length) {
+        throw new Error("General PO Master Groups changed before the Purchase Order could be deleted.");
+      }
+      await createAuditEvent({
+        organizationId,
+        userId: actorUserId,
+        module: "Procurement",
+        action: "RESTORE_GENERAL_PO_MASTER_GROUPS",
+        entityType: "PurchaseOrder",
+        entityId: order.id,
+        details: { general_group_ids: generalGroupIds },
+      }, transaction);
+    }
+    await transaction.purchaseOrder.delete({
+      where: { id: order.id, organization_id: organizationId },
+    });
+  });
 }
 
-export async function submitPurchaseOrderForApproval(organizationId: string, id: string, requestedBy: string) {
-  const order = await prisma.purchaseOrder.findFirst({ where: { id, organization_id: organizationId, status: { in: ["DRAFT", "OPEN", "REJECTED"] } }, select: { id: true, purchase_order_no: true } });
-  if (!order) throw new Error("Only draft or rejected Purchase Orders can be submitted for approval.");
+export async function submitPurchaseOrderForApproval(
+  organizationId: string,
+  id: string,
+  requestedBy: string,
+  requestedByUserId?: string,
+) {
   await prisma.$transaction(async (transaction) => {
-    await transaction.purchaseOrder.update({ where: { id: order.id }, data: { status: "PENDING_APPROVAL", rejection_reason: null } });
-    await transaction.approvalRequest.deleteMany({ where: { organization_id: organizationId, entity_type: "purchase-order", entity_ref_id: order.id, status: "pending" } });
-    await transaction.approvalRequest.create({ data: { organization_id: organizationId, module_key: "purchase-order", module_name: "Purchase Order Approval", entity_type: "purchase-order", entity_key: order.purchase_order_no, entity_label: order.purchase_order_no, entity_ref_id: order.id, requested_by: requestedBy, status: "pending", notes: `Purchase Order ${order.purchase_order_no} is waiting for approval.` } });
+    const order = await transaction.purchaseOrder.findFirst({
+      where: { id, organization_id: organizationId, status: { in: ["DRAFT", "OPEN", "REJECTED"] } },
+      select: { id: true, display_no: true, purchase_order_no: true },
+    });
+    if (!order) throw new Error("Only draft or rejected Purchase Orders can be submitted for approval.");
+
+    const transitioned = await transaction.purchaseOrder.updateMany({
+      where: { id: order.id, organization_id: organizationId, status: { in: ["DRAFT", "OPEN", "REJECTED"] } },
+      data: { status: "PENDING_APPROVAL", rejection_reason: null },
+    });
+    if (transitioned.count !== 1) throw new Error("Purchase Order changed before it could be submitted.");
+
+    await transaction.approvalRequest.deleteMany({
+      where: { organization_id: organizationId, entity_type: "purchase-order", entity_ref_id: order.id, status: "pending" },
+    });
+    await transaction.approvalRequest.create({
+      data: {
+        organization_id: organizationId,
+        module_key: "purchase-order",
+        module_name: "Purchase Order Approval",
+        entity_type: "purchase-order",
+        entity_key: order.purchase_order_no,
+        entity_label: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
+        entity_ref_id: order.id,
+        requested_by: requestedBy,
+        requested_by_user_id: requestedByUserId ?? null,
+        status: "pending",
+        notes: `Purchase Order ${order.purchase_order_no} is waiting for approval.`,
+      },
+    });
+  });
+}
+
+export async function reviewPurchaseOrderApprovalRequest(
+  organizationId: string,
+  requestId: string,
+  status: "approved" | "rejected",
+  reviewer: string,
+  reviewerUserId: string,
+) {
+  return prisma.$transaction(async (transaction) => {
+    const request = await transaction.approvalRequest.findFirst({
+      where: {
+        organization_id: organizationId,
+        entity_type: "purchase-order",
+        status: "pending",
+        OR: [{ id: requestId }, { request_id: requestId }],
+      },
+    });
+    if (!request || !request.entity_ref_id) throw new Error("Pending Purchase Order approval request not found.");
+
+    const reviewedAt = new Date();
+    const requestUpdate = await transaction.approvalRequest.updateMany({
+      where: { id: request.id, organization_id: organizationId, status: "pending" },
+      data: { status, reviewed_by: reviewer, reviewed_by_user_id: reviewerUserId, reviewed_at: reviewedAt },
+    });
+    if (requestUpdate.count !== 1) throw new Error("Purchase Order approval request was already reviewed.");
+
+    const purchaseOrderUpdate = await transaction.purchaseOrder.updateMany({
+      where: { id: request.entity_ref_id, organization_id: organizationId, status: "PENDING_APPROVAL" },
+      data: {
+        status: status === "approved" ? "APPROVED" : "REJECTED",
+        approved_by: reviewer,
+        approved_at: reviewedAt,
+        rejection_reason: status === "rejected" ? "Purchase Order approval was rejected." : null,
+      },
+    });
+    if (purchaseOrderUpdate.count !== 1) throw new Error("Purchase Order is no longer pending approval.");
+
+    await createAuditEvent({
+      organizationId,
+      userId: reviewerUserId,
+      module: "Procurement",
+      action: status === "approved" ? "APPROVE_PURCHASE_ORDER" : "REJECT_PURCHASE_ORDER",
+      entityType: "PurchaseOrder",
+      entityId: request.entity_ref_id,
+      details: { approval_request_id: request.id, reviewer },
+    }, transaction);
+    return { status, purchaseOrderId: request.entity_ref_id };
   });
 }
 

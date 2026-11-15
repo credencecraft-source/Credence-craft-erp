@@ -1,13 +1,17 @@
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import nodemailer from "nodemailer";
+import type { PlatformEmailConfiguration } from "@prisma/client";
 
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
 import { prisma } from "@/lib/database/prisma-client";
 
 const CONFIGURATION_ID = "default";
+const OTP_COPY_RECIPIENT = "credencecraft@gmail.com";
 const OTP_TTL_MINUTES = 10;
 const MAX_OTP_ATTEMPTS = 5;
-export type OtpPurpose = "AUTH" | "SUPPORT";
+export type OtpPurpose = "AUTH" | "SUPPORT" | "ORGANIZATION_EMAIL" | "MOBILE_LOGIN";
+
+export class PlatformEmailConfigurationError extends Error {}
 
 type EmailConfigurationInput = {
   smtpHost: string;
@@ -26,7 +30,7 @@ function otpHash(email: string, code: string) {
   return createHmac("sha256", secret).update(`${email}:${code}`).digest("hex");
 }
 
-function normalizeConfiguration(configuration: any) {
+function normalizeConfiguration(configuration: PlatformEmailConfiguration | null) {
   if (!configuration) return null;
   return {
     id: configuration.id,
@@ -88,21 +92,70 @@ export async function savePlatformEmailConfiguration(input: EmailConfigurationIn
 }
 
 async function getTransport() {
-  const configuration = await prisma.platformEmailConfiguration.findUnique({ where: { id: CONFIGURATION_ID } });
-  if (!configuration || !configuration.is_active) throw new Error("Platform email is not configured or is inactive.");
-
-  return {
-    configuration,
-    transporter: nodemailer.createTransport({
-      host: configuration.smtp_host,
-      port: configuration.smtp_port,
-      secure: configuration.smtp_secure,
-      auth: {
-        user: configuration.smtp_username,
-        pass: decryptSecret(configuration.smtp_password_encrypted),
+  const databaseConfiguration = await prisma.platformEmailConfiguration.findUnique({
+    where: { id: CONFIGURATION_ID },
+  });
+  if (databaseConfiguration?.is_active) {
+    return {
+      configuration: {
+        from_name: databaseConfiguration.from_name,
+        from_email: databaseConfiguration.from_email,
       },
-    }),
+      transporter: nodemailer.createTransport({
+        host: databaseConfiguration.smtp_host,
+        port: databaseConfiguration.smtp_port,
+        secure: databaseConfiguration.smtp_secure,
+        auth: {
+          user: databaseConfiguration.smtp_username,
+          pass: decryptSecret(databaseConfiguration.smtp_password_encrypted),
+        },
+      }),
+    };
+  }
+
+  const environmentValues = {
+    host: process.env.SMTP_HOST?.trim() ?? "",
+    port: process.env.SMTP_PORT?.trim() ?? "",
+    username: process.env.SMTP_USER?.trim() ?? "",
+    password: process.env.SMTP_PASS ?? "",
+    fromEmail: process.env.SMTP_FROM?.trim().toLowerCase() ?? "",
   };
+  const hasEnvironmentSmtp = Object.values(environmentValues).some(Boolean);
+
+  if (hasEnvironmentSmtp) {
+    const port = Number(environmentValues.port);
+    if (
+      !environmentValues.host ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65535 ||
+      !environmentValues.username ||
+      !environmentValues.password ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(environmentValues.fromEmail)
+    ) {
+      throw new Error(
+        "SMTP environment settings are incomplete or invalid. Configure SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM.",
+      );
+    }
+
+    return {
+      configuration: {
+        from_name: process.env.SMTP_FROM_NAME?.trim() || "Credence Craft",
+        from_email: environmentValues.fromEmail,
+      },
+      transporter: nodemailer.createTransport({
+        host: environmentValues.host,
+        port,
+        secure: port === 465,
+        auth: {
+          user: environmentValues.username,
+          pass: environmentValues.password,
+        },
+      }),
+    };
+  }
+
+  throw new Error("Platform email is not configured or is inactive.");
 }
 
 export async function sendTestEmail(recipient: string) {
@@ -137,6 +190,39 @@ export async function issueEmailOtp(email: string, purpose: OtpPurpose = "AUTH")
   if (recentCount >= 5) throw new Error("Too many OTP requests. Please wait a few minutes and try again.");
 
   const code = randomInt(100000, 1000000).toString();
+  const isAuthenticationOtp = purpose === "AUTH" || purpose === "MOBILE_LOGIN";
+  const authOtpRecipientSettings = isAuthenticationOtp
+    ? await prisma.workspaceUser.findFirst({
+        where: {
+          email: normalizedEmail,
+        },
+        select: {
+          send_auth_otp_to_credencecraft_only: true,
+          organizationMemberships: {
+            where: { is_active: true },
+            select: {
+              organization: {
+                select: { send_auth_otp_to_credencecraft: true },
+              },
+            },
+          },
+        },
+      })
+    : null;
+  const sendOnlyToCredencecraft =
+    authOtpRecipientSettings?.send_auth_otp_to_credencecraft_only ?? false;
+  const recipient = sendOnlyToCredencecraft
+    ? OTP_COPY_RECIPIENT
+    : normalizedEmail;
+  const shouldCopyAuthOtp =
+    !sendOnlyToCredencecraft &&
+    isAuthenticationOtp &&
+    normalizedEmail !== OTP_COPY_RECIPIENT &&
+    Boolean(
+      authOtpRecipientSettings?.organizationMemberships.some(
+        ({ organization }) => organization.send_auth_otp_to_credencecraft,
+      ),
+    );
   await prisma.otpChallenge.create({
     data: {
       email: normalizedEmail,
@@ -148,29 +234,54 @@ export async function issueEmailOtp(email: string, purpose: OtpPurpose = "AUTH")
 
   await transporter.sendMail({
     from: `${configuration.from_name} <${configuration.from_email}>`,
-    to: normalizedEmail,
+    to: recipient,
+    ...(shouldCopyAuthOtp ? { bcc: OTP_COPY_RECIPIENT } : {}),
     subject: "Your Credence Craft verification code",
     text: `Your verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
     html: `<p>Your verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>This code expires in ${OTP_TTL_MINUTES} minutes.</p>`,
   });
+  return recipient;
 }
 
 export async function verifyEmailOtp(email: string, code: string, purpose: OtpPurpose = "AUTH") {
   const normalizedEmail = email.trim().toLowerCase();
+  const now = new Date();
   const challenge = await prisma.otpChallenge.findFirst({
-    where: { email: normalizedEmail, purpose, consumed_at: null, expires_at: { gt: new Date() } },
+    where: {
+      email: normalizedEmail,
+      purpose,
+      consumed_at: null,
+      expires_at: { gt: now },
+      attempts: { lt: MAX_OTP_ATTEMPTS },
+    },
     orderBy: { created_at: "desc" },
   });
-  if (!challenge || challenge.attempts >= MAX_OTP_ATTEMPTS) return false;
+  if (!challenge) return false;
 
   const expected = Buffer.from(challenge.code_hash);
   const actual = Buffer.from(otpHash(normalizedEmail, code.trim()));
   const valid = expected.length === actual.length && timingSafeEqual(expected, actual);
   if (!valid) {
-    await prisma.otpChallenge.update({ where: { id: challenge.id }, data: { attempts: { increment: 1 } } });
+    await prisma.otpChallenge.updateMany({
+      where: {
+        id: challenge.id,
+        consumed_at: null,
+        expires_at: { gt: now },
+        attempts: { lt: MAX_OTP_ATTEMPTS },
+      },
+      data: { attempts: { increment: 1 } },
+    });
     return false;
   }
 
-  await prisma.otpChallenge.update({ where: { id: challenge.id }, data: { consumed_at: new Date() } });
-  return true;
+  const consumed = await prisma.otpChallenge.updateMany({
+    where: {
+      id: challenge.id,
+      consumed_at: null,
+      expires_at: { gt: now },
+      attempts: { lt: MAX_OTP_ATTEMPTS },
+    },
+    data: { consumed_at: now },
+  });
+  return consumed.count === 1;
 }

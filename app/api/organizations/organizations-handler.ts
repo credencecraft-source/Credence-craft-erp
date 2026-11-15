@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { createOrganization, listOrganizationsForUser } from "@/lib/services/organizations/organization-service";
+import { createOrganization, listActiveOrganizationsForUser } from "@/lib/services/organizations/organization-service";
 
 export async function GET() {
   const user = await requireSessionUser();
 
-  const organizations = await listOrganizationsForUser(user.id);
+  const organizations = await listActiveOrganizationsForUser(user.id);
 
   return NextResponse.json({ organizations });
 }

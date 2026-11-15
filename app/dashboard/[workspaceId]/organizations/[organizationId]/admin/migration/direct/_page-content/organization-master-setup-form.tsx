@@ -1,0 +1,900 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { useFormStatus } from "react-dom";
+import Link from "next/link";
+import { Download, LoaderCircle, Trash2, Upload } from "lucide-react";
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import Checkbox from "@/components/ui/Checkbox";
+import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
+import Select from "@/components/ui/Select";
+import {
+  MasterImportCorrection,
+  type MasterImportCorrectionRow,
+} from "@/components/master-data/master-import-correction";
+import type { OrganizationMasterSetupField } from "@/lib/master-data/organization-master-setup-stages";
+import type { OrganizationMasterSetupMode } from "./organization-master-setup-page";
+import {
+  validateOrganizationMasterSetupWorkbookCorrection,
+  type OrganizationMasterSetupWorkbookCorrection,
+} from "./organization-master-setup-workbook";
+
+type Field = OrganizationMasterSetupField;
+type Definition = {
+  key: string;
+  label: string;
+  fields: Field[];
+  labelField?: string;
+  canDelete?: boolean;
+};
+type LookupOption = { id: string; label: string };
+type Stage = {
+  definitions: Definition[];
+  existing: Record<string, string[]>;
+  lookupOptions: Record<string, LookupOption[]>;
+};
+type SetupRecord = {
+  moduleKey: string;
+  label: string;
+  fields: Record<string, string | number | boolean | null | string[]>;
+};
+
+const DEFAULT_SETUP_RECORDS: SetupRecord[] = [
+  ...["Black", "White", "Red", "Blue", "Green", "Yellow", "Orange", "Pink", "Purple", "Brown", "Grey", "Navy Blue"].map((label) => ({ moduleKey: "color", label, fields: {} })),
+  ...["S", "M", "L", "XL", "XXL", "XXXL", "XXXXL", "38", "39", "40", "42", "44", "46", "48"].map((label) => ({ moduleKey: "size", label, fields: { Size: label } })),
+  { moduleKey: "order-volume", label: "Small", fields: { Order_Volume: "Small", From: 0, To: 100 } },
+  { moduleKey: "order-volume", label: "Medium", fields: { Order_Volume: "Medium", From: 100, To: 500 } },
+  { moduleKey: "order-volume", label: "Large", fields: { Order_Volume: "Large", From: 500, To: null } },
+  { moduleKey: "currency-type", label: "INR", fields: { Currency_Type: "INR" } },
+  { moduleKey: "currency-type", label: "USD", fields: { Currency_Type: "USD" } },
+  { moduleKey: "product-master", label: "Finished Goods", fields: { Product_Master_name: "Finished Goods" } },
+  ...["CUTTING", "PARTS", "ASSEMBLY", "EMBROIDERY", "KAKA BUTTONING", "IRONING", "PACKING", "WASHING"].map((label) => ({ moduleKey: "process-master", label, fields: { Process_Name: label } })),
+  { moduleKey: "raw-material-type", label: "ITEM", fields: { Raw_Material_Type: "ITEM" } },
+  { moduleKey: "raw-material-type", label: "SERVICE", fields: { Raw_Material_Type: "SERVICE" } },
+];
+
+function emptyRecord(definition: Definition): SetupRecord {
+  return { moduleKey: definition.key, label: "", fields: {} };
+}
+
+function initialRecords(
+  definitions: Definition[],
+  existing: Record<string, string[]>,
+) {
+  return definitions.flatMap((definition) => {
+    if (
+      definition.key === "size" ||
+      definition.key === "color" ||
+      definition.key === "entity" ||
+      definition.key === "pre-order-checklist" ||
+      definition.key === "merchandiser" ||
+      definition.key === "currency-type" ||
+      definition.key === "product-master" ||
+      definition.key === "process-master" ||
+      definition.key === "raw-material-type"
+    ) return [];
+
+    const existingLabels = new Set(
+      (existing[definition.key] ?? []).map((label) => label.trim().toLowerCase()),
+    );
+    const defaults = DEFAULT_SETUP_RECORDS.filter(
+      (record) =>
+        record.moduleKey === definition.key &&
+        !existingLabels.has(record.label.toLowerCase()),
+    );
+    return defaults.length > 0
+      ? defaults.map((record) => ({ ...record, fields: { ...record.fields } }))
+      : [emptyRecord(definition)];
+  });
+}
+
+function initialBulkInputs(
+  definitions: Definition[],
+  existing: Record<string, string[]>,
+) {
+  return Object.fromEntries(definitions.map((definition) => {
+    const existingLabels = new Set(
+      (existing[definition.key] ?? []).map((label) => label.trim().toLowerCase()),
+    );
+    const starterLabels = DEFAULT_SETUP_RECORDS
+      .filter((record) => record.moduleKey === definition.key && !existingLabels.has(record.label.toLowerCase()))
+      .map((record) => record.label);
+    return [definition.key, starterLabels.join(", ")];
+  }));
+}
+
+function SubmitButton({
+  workbookUploaded,
+}: {
+  workbookUploaded: boolean;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" name="workbookUpload" value="1" size="lg" disabled={!workbookUploaded || pending}>
+      {pending ? "Importing..." : "Proceed"}
+    </Button>
+  );
+}
+
+function SectionSubmitButton({ moduleKey, label, disabled = false }: { moduleKey: string; label: string; disabled?: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button
+      className="ml-auto shrink-0"
+      type="submit"
+      name="setupModule"
+      value={moduleKey}
+      variant="secondary"
+      disabled={pending || disabled}
+    >
+      {pending ? "Saving..." : `Create ${label} Master`}
+    </Button>
+  );
+}
+
+function DeleteSectionSubmitButton({ label, disabled }: { label: string; disabled: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="destructive" disabled={disabled || pending}>
+      <Trash2 size={16} aria-hidden="true" />
+      {pending ? "Deleting..." : `Delete all ${label} values`}
+    </Button>
+  );
+}
+
+function DeleteSectionAction({
+  action,
+  workspaceId,
+  organizationId,
+  stage,
+  moduleKey,
+  label,
+}: {
+  action: (formData: FormData) => void | Promise<void>;
+  workspaceId: string;
+  organizationId: string;
+  stage: "independent" | "related" | "third";
+  moduleKey: string;
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const requiredConfirmation = `DELETE ${label.toLocaleUpperCase()}`;
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="destructive"
+        onClick={() => {
+          setConfirmation("");
+          setOpen(true);
+        }}
+      >
+        <Trash2 size={16} aria-hidden="true" />
+        Delete all values
+      </Button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        ariaLabelledBy={`delete-${moduleKey}-title`}
+        ariaDescribedBy={`delete-${moduleKey}-description`}
+        variant="danger"
+        size="md"
+      >
+        <div className="space-y-4 p-6">
+          <div>
+            <h2 id={`delete-${moduleKey}-title`} className="text-lg font-bold text-slate-900">
+              Delete all {label} values?
+            </h2>
+            <p id={`delete-${moduleKey}-description`} className="mt-2 text-sm text-slate-600">
+              This permanently removes every saved value in this section. Values referenced by other records cannot be deleted, and demo-batch values must be removed with their batch.
+            </p>
+          </div>
+          <form action={action} className="space-y-4">
+            <input type="hidden" name="workspaceId" value={workspaceId} />
+            <input type="hidden" name="organizationId" value={organizationId} />
+            <input type="hidden" name="step" value={stage} />
+            <input type="hidden" name="moduleKey" value={moduleKey} />
+            <Input
+              label={`Type ${requiredConfirmation} to confirm`}
+              name="confirmation"
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              autoComplete="off"
+            />
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <DeleteSectionSubmitButton
+                label={label}
+                disabled={confirmation !== requiredConfirmation}
+              />
+            </div>
+          </form>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function MultiLookupField({
+  field,
+  options,
+  value,
+  onChange,
+}: {
+  field: Field;
+  options: LookupOption[];
+  value: string | number | boolean | null | string[] | undefined;
+  onChange: (values: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = Array.isArray(value)
+    ? value.map(String)
+    : value
+      ? [String(value)]
+      : [];
+  const toggle = (optionId: string) =>
+    onChange(
+      selected.includes(optionId)
+        ? selected.filter((id) => id !== optionId)
+        : [...selected, optionId],
+    );
+  const labels = selected.map(
+    (id) => options.find((option) => option.id === id)?.label ?? id,
+  );
+
+  return (
+    <div className="min-w-0 md:basis-0 md:flex-1">
+      <p className="mb-1 text-xs font-semibold text-slate-600">
+        {field.label}
+        {field.required ? " *" : ""}
+      </p>
+      <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-2 py-1.5">
+        {labels.length > 0 ? (
+          labels.map((label) => (
+            <span
+              key={label}
+              className="rounded-md bg-emerald-50 px-2 py-1 text-xs text-emerald-800"
+            >
+              {label}
+            </span>
+          ))
+        ) : (
+          <span className="px-1 text-xs text-slate-400">
+            No {field.label.toLowerCase()} selected
+          </span>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          className="ml-auto shrink-0 px-2 py-1 text-xs"
+          onClick={() => setOpen(true)}
+        >
+          {selected.length > 0 ? "Change" : `Select ${field.label}`}
+        </Button>
+      </div>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        ariaLabel={`${field.label} selection`}
+        size="md"
+      >
+        <div className="space-y-4 p-5">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">
+              Select {field.label}
+            </h2>
+            <p className="text-sm text-slate-500">Choose one or more values.</p>
+          </div>
+          <div className="grid max-h-72 gap-2 overflow-y-auto sm:grid-cols-2">
+            {open && options.map((option) => (
+              <Checkbox
+                key={option.id}
+                label={option.label}
+                checked={selected.includes(option.id)}
+                onChange={() => toggle(option.id)}
+              />
+            ))}
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => setOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+export default function OrganizationMasterSetupForm({
+  action,
+  deleteSectionAction,
+  workspaceId,
+  organizationId,
+  stage,
+  activeStage,
+  mode,
+}: {
+  action: (formData: FormData) => void | Promise<void>;
+  deleteSectionAction: (formData: FormData) => void | Promise<void>;
+  workspaceId: string;
+  organizationId: string;
+  stage: Stage;
+  activeStage: "independent" | "related" | "third";
+  mode: OrganizationMasterSetupMode;
+}) {
+  const visibleDefinitions = stage.definitions;
+  const [records, setRecords] = useState<SetupRecord[]>(() =>
+    initialRecords(visibleDefinitions, stage.existing),
+  );
+  const [bulkInputs, setBulkInputs] = useState<Record<string, string>>(() =>
+    initialBulkInputs(visibleDefinitions, stage.existing),
+  );
+  const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
+  const [isReadingWorkbook, setIsReadingWorkbook] = useState(false);
+  const [workbookName, setWorkbookName] = useState("");
+  const [workbookError, setWorkbookError] = useState("");
+  const [uploadedRecords, setUploadedRecords] = useState<SetupRecord[] | null>(null);
+  const [workbookCorrections, setWorkbookCorrections] = useState<OrganizationMasterSetupWorkbookCorrection[]>([]);
+  const [isCorrectionOpen, setIsCorrectionOpen] = useState(false);
+  const workbookInputRef = useRef<HTMLInputElement>(null);
+  const dependencyLabels = [...new Set(stage.definitions.flatMap((definition) =>
+    definition.fields
+      .filter((field) => field.type === "lookup" && field.required && field.lookupModuleKey)
+      .filter((field) => field.lookupModuleKey && !(stage.lookupOptions[field.lookupModuleKey] ?? []).length)
+      .map((field) => field.label),
+  ))];
+  const workbookCounts = (uploadedRecords ?? []).reduce<Record<string, number>>((counts, record) => ({
+    ...counts,
+    [record.moduleKey]: (counts[record.moduleKey] ?? 0) + 1,
+  }), {});
+  const setupRecords = uploadedRecords ?? [
+    ...records,
+    ...(activeStage === "independent"
+      ? ["color", "currency-type", "entity", "merchandiser", "pre-order-checklist", "process-master", "product-master", "raw-material-type", "size"].flatMap((moduleKey) =>
+          (bulkInputs[moduleKey] ?? "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean)
+            .map((value) => ({
+              moduleKey,
+              label: value,
+              fields: moduleKey === "size" ? { Size: value } : {},
+            })),
+        )
+      : []),
+  ].filter((record) => record.label.trim());
+  const setupPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/migration/${mode}`;
+  const handleDownloadTemplate = async () => {
+    if (isDownloadingTemplate) return;
+    setWorkbookError("");
+    setIsDownloadingTemplate(true);
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/organization-master-setup-template?step=${activeStage}&workspaceId=${encodeURIComponent(workspaceId)}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
+          ? data.error
+          : "Unable to create the Excel template.";
+        throw new Error(message);
+      }
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `organization-master-setup-${activeStage}.xlsx`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      setWorkbookError(error instanceof Error ? error.message : "Unable to create the Excel template.");
+    } finally {
+      setIsDownloadingTemplate(false);
+    }
+  };
+  const handleWorkbookChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setWorkbookError("");
+    setUploadedRecords(null);
+    setWorkbookCorrections([]);
+    setIsCorrectionOpen(false);
+    setWorkbookName("");
+    setIsReadingWorkbook(true);
+    try {
+      const { parseOrganizationMasterSetupWorkbook } = await import("./organization-master-setup-workbook");
+      const parsedWorkbook = await parseOrganizationMasterSetupWorkbook(
+        file,
+        stage.definitions,
+        stage.lookupOptions,
+        true,
+      );
+      setUploadedRecords(parsedWorkbook.records);
+      setWorkbookCorrections(parsedWorkbook.corrections);
+      setIsCorrectionOpen(parsedWorkbook.corrections.length > 0);
+      setWorkbookName(file.name);
+    } catch (error) {
+      setWorkbookError(error instanceof Error ? error.message : "Unable to read this Excel workbook.");
+    } finally {
+      setIsReadingWorkbook(false);
+    }
+  };
+  const correctionRows: MasterImportCorrectionRow[] = workbookCorrections.map((correction) => {
+    const definition = stage.definitions.find((item) => item.key === correction.moduleKey);
+    return {
+      id: correction.id,
+      identity: `${definition?.label ?? correction.moduleKey}, row ${correction.rowNumber}`,
+      values: correction.values,
+      errors: correction.errors,
+      fields: [
+        ...(definition?.fields.filter((field) => !field.readOnly).map((field) => ({
+          key: field.key,
+          label: field.label,
+        })) ?? []),
+        ...(Object.hasOwn(correction.values, "__inlineChildren")
+          ? [{ key: "__inlineChildren", label: "Subcategories (comma-separated)" }]
+          : []),
+      ],
+    };
+  });
+  const retryCorrectedRows = (rowId?: string) => {
+    const selectedCorrections = rowId
+      ? workbookCorrections.filter((correction) => correction.id === rowId)
+      : workbookCorrections;
+    const untouchedCorrections = rowId
+      ? workbookCorrections.filter((correction) => correction.id !== rowId)
+      : [];
+    const stillInvalid: OrganizationMasterSetupWorkbookCorrection[] = [...untouchedCorrections];
+    const correctedRecords: SetupRecord[] = [];
+    for (const correction of selectedCorrections) {
+      const definition = stage.definitions.find((item) => item.key === correction.moduleKey);
+      if (!definition) {
+        stillInvalid.push({ ...correction, errors: { _row: ["This master section is not available in the selected step."] } });
+        continue;
+      }
+      try {
+        correctedRecords.push(...validateOrganizationMasterSetupWorkbookCorrection(
+          correction,
+          definition,
+          stage.lookupOptions,
+        ));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "This row is invalid.";
+        const matchingField = definition.fields.find((field) => message.toLocaleLowerCase().includes(field.label.toLocaleLowerCase()));
+        stillInvalid.push({
+          ...correction,
+          errors: matchingField ? { [matchingField.key]: [message] } : { _row: [message] },
+        });
+      }
+    }
+    setWorkbookCorrections(stillInvalid);
+    setUploadedRecords((current) => [...(current ?? []), ...correctedRecords]);
+    setIsCorrectionOpen(stillInvalid.length > 0);
+  };
+  const updateRecord = (index: number, update: Partial<SetupRecord>) =>
+    setRecords((current) =>
+      current.map((record, recordIndex) =>
+        recordIndex === index ? { ...record, ...update } : record,
+      ),
+    );
+  const updateField = (
+    index: number,
+    field: Field,
+    value: string | boolean | string[],
+  ) =>
+    setRecords((current) =>
+      current.map((record, recordIndex) =>
+        recordIndex === index
+          ? { ...record, fields: { ...record.fields, [field.key]: value } }
+          : record,
+      ),
+    );
+  const removeRecord = (index: number) =>
+    setRecords((current) =>
+      current.filter((_, recordIndex) => recordIndex !== index),
+    );
+  const addRecord = (definition: Definition) =>
+    setRecords((current) => [...current, emptyRecord(definition)]);
+
+  return (
+    <form action={action} className="space-y-6">
+      <input
+        type="hidden"
+        name="setup"
+        value={JSON.stringify({
+          stage: activeStage,
+          records: setupRecords,
+        })}
+      />
+      <input type="hidden" name="workspaceId" value={workspaceId} />
+      <input type="hidden" name="organizationId" value={organizationId} />
+      <input type="hidden" name="migrationMode" value={mode} />
+      <div className="grid gap-2 md:grid-cols-3" aria-label="Onboarding steps">
+        <Link
+          href={setupPath}
+          aria-current={activeStage === "independent" ? "step" : undefined}
+          className={`rounded-lg border px-4 py-3 transition-colors hover:border-emerald-400 ${activeStage === "independent" ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Step 1
+          </p>
+          <p className="font-bold text-slate-900">Onboarding</p>
+          <p className="text-xs text-slate-600">Independent masters</p>
+        </Link>
+        <Link
+          href={`${setupPath}?step=related`}
+          aria-current={activeStage === "related" ? "step" : undefined}
+          className={`rounded-lg border px-4 py-3 transition-colors hover:border-emerald-400 ${activeStage === "related" ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Step 2
+          </p>
+          <p className="font-bold text-slate-900">Related Masters</p>
+          <p className="text-xs text-slate-600">Masters using lookups</p>
+        </Link>
+        <Link
+          href={`${setupPath}?step=third`}
+          aria-current={activeStage === "third" ? "step" : undefined}
+          className={`rounded-lg border px-4 py-3 transition-colors hover:border-emerald-400 ${activeStage === "third" ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Step 3
+          </p>
+          <p className="font-bold text-slate-900">Production Masters</p>
+          <p className="text-xs text-slate-600">Operation and material setup</p>
+        </Link>
+      </div>
+      <Card className="space-y-4">
+        <div>
+          <h2 className="text-base font-bold text-slate-900">Excel template for this step</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Download one workbook with a sheet for each master section. Upload a completed workbook to validate its filled sheets, then proceed to import those records.
+          </p>
+          {dependencyLabels.length > 0 ? (
+            <p className="mt-2 text-sm text-slate-600" role="status">
+              Some required lookup lists are empty ({dependencyLabels.join(", ")}). Complete and save the earlier step, then download a fresh template before uploading related masters.
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" variant="secondary" onClick={handleDownloadTemplate} disabled={isDownloadingTemplate}>
+            {isDownloadingTemplate ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
+            {isDownloadingTemplate ? "Preparing template..." : "Download Excel Template"}
+          </Button>
+          <Input
+            ref={workbookInputRef}
+            className="sr-only"
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={handleWorkbookChange}
+            aria-label="Upload completed organization master setup workbook"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => workbookInputRef.current?.click()}
+            disabled={isReadingWorkbook}
+          >
+            {isReadingWorkbook ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <Upload size={16} aria-hidden="true" />}
+            {isReadingWorkbook ? "Reading workbook..." : "Upload Excel Workbook"}
+          </Button>
+        </div>
+        {workbookName && uploadedRecords ? (
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-semibold text-[var(--erp-text)]" role="status">
+                {workbookName}: {uploadedRecords.length} valid records and {workbookCorrections.length} rows needing correction.
+              </p>
+              <p className="text-xs text-[var(--erp-text-muted)]">
+                {Object.entries(workbookCounts)
+                  .map(([moduleKey, count]) => `${stage.definitions.find((definition) => definition.key === moduleKey)?.label ?? moduleKey}: ${count}`)
+                  .join(" · ")}
+              </p>
+              {workbookCorrections.length ? (
+                <p className="text-xs text-[var(--erp-danger)]" role="alert">
+                  Correct all invalid rows before proceeding. Valid rows will remain ready and will not be resubmitted during correction.
+                </p>
+              ) : (
+                <p className="text-xs text-[var(--erp-text-muted)]">
+                  Proceed to import these values directly into their master sections.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {workbookCorrections.length ? (
+                <Button type="button" variant="secondary" onClick={() => setIsCorrectionOpen(true)}>
+                  Correct {workbookCorrections.length} invalid row{workbookCorrections.length === 1 ? "" : "s"}
+                </Button>
+              ) : null}
+              <SubmitButton workbookUploaded={workbookCorrections.length === 0 && uploadedRecords.length > 0} />
+            </div>
+          </div>
+        ) : null}
+        {workbookError ? <p className="text-sm text-slate-700" role="alert">{workbookError}</p> : null}
+      </Card>
+      <MasterImportCorrection
+        open={isCorrectionOpen}
+        title="Correct setup workbook rows"
+        description="Correct invalid values here. The workbook template rules and organization lookup validations are rerun before any corrected row is added to the pending import."
+        rows={correctionRows}
+        fields={[]}
+        isPending={isReadingWorkbook}
+        onChange={(rowId, fieldKey, value) => setWorkbookCorrections((current) => current.map((row) => (
+          row.id === rowId ? { ...row, values: { ...row.values, [fieldKey]: value } } : row
+        )))}
+        onValidateRow={retryCorrectedRows}
+        onClose={() => setIsCorrectionOpen(false)}
+        onRetry={retryCorrectedRows}
+        retryLabel="Validate corrections"
+      />
+      {mode === "direct" && visibleDefinitions.length === 0 ? (
+        <Card>
+          <p className="text-sm text-slate-600">
+            No master types are available for this step.
+          </p>
+        </Card>
+      ) : mode === "direct" ? (
+        visibleDefinitions.map((definition) => {
+          const labelField = definition.labelField ?? definition.fields[0]?.key;
+          const editableFields = definition.fields
+            .filter((field) => field.key !== labelField && !field.readOnly)
+            .sort((left, right) => {
+              if (activeStage === "independent") return 0;
+              return (
+                Number(right.type === "lookup") - Number(left.type === "lookup")
+              );
+            });
+          const removeButton = (recordIndex: number) => (
+            <Button
+              className="h-9 min-h-9 w-9 shrink-0 self-end p-0"
+              size="sm"
+              type="button"
+              variant="danger"
+              onClick={() => removeRecord(recordIndex)}
+              aria-label={`Remove ${definition.label} entry`}
+              title="Remove entry"
+            >
+              <Trash2 size={16} strokeWidth={2} aria-hidden="true" />
+            </Button>
+          );
+          return (
+            <Card key={definition.key} className="space-y-2">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    {definition.label}
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Existing records:{" "}
+                    {stage.existing[definition.key]?.length ?? 0}
+                  </p>
+                </div>
+                {definition.canDelete ? (
+                  <DeleteSectionAction
+                    action={deleteSectionAction}
+                    workspaceId={workspaceId}
+                    organizationId={organizationId}
+                    stage={activeStage}
+                    moduleKey={definition.key}
+                    label={definition.label}
+                  />
+                ) : null}
+              </div>
+              {(stage.existing[definition.key] ?? []).length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {stage.existing[definition.key].map((label) => (
+                    <span
+                      key={label}
+                      className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  No records created yet.
+                </p>
+              )}
+              {records.map((record, index) =>
+                record.moduleKey === definition.key ? (
+                  <div
+                    key={`${definition.key}-${index}`}
+                    className="min-w-0 max-w-full rounded-lg border border-dashed border-slate-200 bg-slate-50/50 p-2"
+                  >
+                    <div
+                      className="grid min-w-0 items-end gap-2"
+                      style={{
+                        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 12rem), 1fr))",
+                      }}
+                    >
+                      {activeStage === "independent" ? (
+                        <div className="flex min-w-0 items-end gap-1">
+                          <div className="min-w-0 flex-1">
+                            <Input
+                              className="min-w-0 text-xs"
+                              label={`${definition.label} name`}
+                              aria-label={`${definition.label} name`}
+                              value={record.label}
+                              onChange={(event) =>
+                                updateRecord(index, { label: event.target.value })
+                              }
+                              placeholder={`${definition.label} name`}
+                            />
+                          </div>
+                          {removeButton(index)}
+                        </div>
+                      ) : null}
+                      {editableFields.map((field) =>
+                        field.type === "lookup" &&
+                        field.lookupModuleKey &&
+                        field.multiple ? (
+                          <MultiLookupField
+                            key={field.key}
+                            field={field}
+                            options={
+                              stage.lookupOptions[field.lookupModuleKey] ?? []
+                            }
+                            value={record.fields[field.key]}
+                            onChange={(values) =>
+                              updateField(index, field, values)
+                            }
+                          />
+                        ) : field.type === "lookup" && field.lookupModuleKey ? (
+                          <Select
+                            className="min-w-0 text-xs"
+                            key={field.key}
+                            label={field.label}
+                            aria-label={field.label}
+                            value={String(record.fields[field.key] ?? "")}
+                            onChange={(event) =>
+                              updateField(index, field, event.target.value)
+                            }
+                          >
+                            <option value="">Select {field.label}</option>
+                            {(
+                              stage.lookupOptions[field.lookupModuleKey] ?? []
+                            ).map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </Select>
+                        ) : field.type === "checkbox" ? (
+                          <div className="min-w-0" key={field.key}>
+                            <Checkbox
+                              aria-label={field.label}
+                              label={`${field.label}${field.required ? " *" : ""}`}
+                              checked={
+                                record.fields[field.key] === true ||
+                                record.fields[field.key] === "true"
+                              }
+                              onChange={(event) =>
+                                updateField(index, field, event.target.checked)
+                              }
+                            />
+                          </div>
+                        ) : (
+                          <Input
+                            className="min-w-0 text-xs"
+                            key={field.key}
+                            label={field.label}
+                            aria-label={field.label}
+                            type={
+                              field.type === "number" ||
+                              field.type === "percentage" ||
+                              field.type === "decimal"
+                                ? "number"
+                                : field.type === "date"
+                                  ? "date"
+                                  : "text"
+                            }
+                            value={String(record.fields[field.key] ?? "")}
+                            onChange={(event) =>
+                              updateField(index, field, event.target.value)
+                            }
+                            placeholder={`${field.label}${field.required ? " *" : ""}`}
+                          />
+                        ),
+                      )}
+                      {activeStage !== "independent" ? (
+                        <div className="flex min-w-0 items-end gap-1">
+                          <div className="min-w-0 flex-1">
+                            <Input
+                              className="min-w-0 text-xs"
+                              label={`${definition.label} name`}
+                              aria-label={`${definition.label} name`}
+                              value={record.label}
+                              onChange={(event) =>
+                                updateRecord(index, { label: event.target.value })
+                              }
+                              placeholder={`${definition.label} name`}
+                            />
+                          </div>
+                          {removeButton(index)}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null,
+              )}
+              {definition.key === "size" ||
+              definition.key === "color" ||
+              definition.key === "entity" ||
+              definition.key === "pre-order-checklist" ||
+              definition.key === "merchandiser" ||
+              definition.key === "currency-type" ||
+              definition.key === "product-master" ||
+              definition.key === "process-master" ||
+              definition.key === "raw-material-type" ? (
+                <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-end">
+                  <div className="min-w-0 flex-1">
+                    <Input
+                      className="min-w-0 text-xs"
+                      label={`${definition.key === "entity" ? "Entities" : `${definition.label}s`} separated by commas`}
+                      aria-label={`${definition.key === "entity" ? "Entities" : `${definition.label}s`} separated by commas`}
+                      value={bulkInputs[definition.key] ?? ""}
+                      onChange={(event) =>
+                        setBulkInputs((current) => ({
+                          ...current,
+                          [definition.key]: event.target.value,
+                        }))
+                      }
+                      placeholder={
+                        definition.key === "size"
+                          ? "S, M, L, XL"
+                          : definition.key === "color"
+                            ? "Black, White, Red"
+                            : definition.key === "entity"
+                              ? "Company A, Company B"
+                              : definition.key === "pre-order-checklist"
+                                ? "Checklist 1, Checklist 2"
+                                : definition.key === "currency-type"
+                                  ? "INR, USD, EUR"
+                                  : definition.key === "product-master"
+                                    ? "Finished Goods, Accessories"
+                                    : definition.key === "process-master"
+                                      ? "Cutting, Sewing, Packing"
+                                      : definition.key === "raw-material-type"
+                                        ? "Item, Service, Accessory"
+                                        : "Alice, Bob, Charlie"
+                      }
+                    />
+                  </div>
+                  <SectionSubmitButton
+                    moduleKey={definition.key}
+                    label={definition.label}
+                    disabled={uploadedRecords !== null}
+                  />
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => addRecord(definition)}
+                  >
+                    Add {definition.label}
+                  </Button>
+                  <SectionSubmitButton
+                    moduleKey={definition.key}
+                    label={definition.label}
+                    disabled={uploadedRecords !== null}
+                  />
+                </div>
+              )}
+            </Card>
+          );
+        })
+      ) : null}
+    </form>
+  );
+}

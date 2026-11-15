@@ -35,6 +35,7 @@ export async function POST(request: Request, context: { params: Promise<{ organi
 
     return NextResponse.json({ profile });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save tax rules." }, { status: 400 });
+    const status = error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save tax rules." }, { status });
   }
 }

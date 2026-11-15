@@ -1,0 +1,53 @@
+import { NextResponse } from "next/server";
+
+import { requireSessionUser } from "@/lib/auth/session-manager";
+import { createRawMaterialStockBookings, getRawMaterialStockBooking, listRawMaterialStockBookings } from "@/lib/services/inventory/rm-stock-booking-service";
+import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+
+function errorStatus(error: unknown) {
+  return error instanceof Error && error.message.startsWith("Access denied:") ? 403 : 400;
+}
+
+export async function GET(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const params = new URL(request.url).searchParams;
+    const organizationId = params.get("organizationId") ?? "";
+    const organization = await requireOrganizationContext(user.id, organizationId);
+    const bookingId = params.get("bookingId")?.trim();
+    if (bookingId) {
+      const booking = await getRawMaterialStockBooking(organization.id, bookingId);
+      if (!booking) return NextResponse.json({ error: "Booked stock record was not found." }, { status: 404 });
+      return NextResponse.json({ booking });
+    }
+    return NextResponse.json({ bookings: await listRawMaterialStockBookings(organization.id) });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load booked stock." }, { status: 400 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const body = await request.json() as { organizationId?: unknown; currentStoreVendorId?: unknown; lines?: unknown };
+    const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await requireOrganizationPermission(user.id, organization.id, "RESERVE_RAW_MATERIAL_STOCK");
+    const lines = Array.isArray(body.lines) ? body.lines.map((line: unknown) => {
+      const value = line && typeof line === "object" ? line as Record<string, unknown> : {};
+      return {
+        bomItemId: String(value.bomItemId ?? ""),
+        takeFromStockId: String(value.takeFromStockId ?? ""),
+        bookedQuantity: value.bookedQuantity as number | string,
+      };
+    }) : [];
+    const result = await createRawMaterialStockBookings({
+      organizationId: organization.id,
+      bookedBy: user.full_name,
+      currentStoreVendorId: String(body.currentStoreVendorId ?? ""),
+      lines,
+    });
+    return NextResponse.json({ ok: true, ...result }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to book raw-material stock." }, { status: errorStatus(error) });
+  }
+}
