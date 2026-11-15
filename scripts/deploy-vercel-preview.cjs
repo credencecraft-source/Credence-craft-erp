@@ -94,6 +94,7 @@ function getPrismaErrorSummary(events) {
   const migrationNames = new Set();
   const databaseCodes = new Set();
   const baselineCodes = new Set();
+  const schemaChanges = new Set();
   const systemCodes = new Set();
   for (const event of events) {
     const text = event?.payload?.text ?? event?.text;
@@ -108,6 +109,14 @@ function getPrismaErrorSummary(events) {
     for (const match of text.matchAll(/\b(?:Database error code:\s*|database\s+)([A-Z0-9]{5})/gi)) {
       databaseCodes.add(match[1]);
     }
+    for (const match of text.matchAll(/\bChanges:\s*([^\r\n]+)/gi)) {
+      for (const rawChange of match[1].split(";")) {
+        const change = rawChange.trim().replace(/\.$/, "");
+        if (/^(CREATE|ALTER|DROP)\s+(TABLE|INDEX|TYPE|SEQUENCE|SCHEMA|EXTENSION|DOMAIN|VIEW|FUNCTION)(?:\s+[A-Za-z0-9_]{1,120})?$/i.test(change)) {
+          schemaChanges.add(change);
+        }
+      }
+    }
     for (const match of text.matchAll(/\[(SANDBOX_BASELINE_[A-Z_]+)\]/g)) {
       if (SAFE_BASELINE_DIAGNOSTICS.has(match[1])) baselineCodes.add(match[1]);
     }
@@ -120,6 +129,7 @@ function getPrismaErrorSummary(events) {
     migrationNames: [...migrationNames],
     databaseCodes: [...databaseCodes],
     baselineCodes: [...baselineCodes],
+    schemaChanges: [...schemaChanges],
     systemCodes: [...systemCodes],
   };
 }
@@ -202,6 +212,7 @@ async function waitForDeployment(options = {}) {
           ...summary.migrationNames.map((name) => `migration ${name}`),
           ...summary.databaseCodes.map((code) => `database ${code}`),
           ...summary.baselineCodes.map((code) => `baseline ${code.slice("SANDBOX_BASELINE_".length).toLowerCase()}`),
+          ...summary.schemaChanges.map((change) => `schema ${change}`),
           ...summary.systemCodes.map((code) => `system ${code}`),
         ];
         diagnostics = details.length ? ` (${details.join("; ")})` : "";
