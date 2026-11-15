@@ -32,9 +32,14 @@ type MigrationRetryModule = {
   runMigrationsWithRetry: (
     run: () => Promise<MigrationResult>,
     sleep: (milliseconds: number) => Promise<void>,
-    logger: { warn: (message: string) => void; error: (message: string) => void },
+    logger: {
+      log?: (message: string) => void;
+      warn: (message: string) => void;
+      error: (message: string) => void;
+    },
     verify?: () => void,
-    baseline?: () => number,
+    baseline?: () => number | Promise<number>,
+    env?: Record<string, string | undefined>,
   ) => Promise<number>;
 };
 
@@ -121,9 +126,7 @@ describe("Prisma Preview schema baseline", () => {
     );
   });
 
-  it("diffs a fresh verified sandbox Preview before migration status can fail on its empty history", async () => {
-    const migrationsPath = "prisma/migrations";
-    const migrationNames = getMigrationNames(migrationsPath);
+  it("synchronizes a fresh verified sandbox Preview and leaves migration history empty", async () => {
     const schemaDiff = 'ALTER TABLE "organizations" DROP COLUMN "legacy";';
     const run = vi.fn<(args: string[]) => MigrationResult>()
       .mockReturnValueOnce({ code: 0, output: schemaDiff })
@@ -151,7 +154,6 @@ describe("Prisma Preview schema baseline", () => {
         NEON_VERCEL_BRANCH_REF: "test-branch",
       },
       logger,
-      migrationsPath,
       run,
       runWithInput,
     })).resolves.toBe(0);
@@ -160,7 +162,7 @@ describe("Prisma Preview schema baseline", () => {
       ["db", "execute", "--stdin", "--schema", expect.any(String)],
       schemaDiff,
     );
-    expect(run).toHaveBeenCalledTimes(migrationNames.length + 2);
+    expect(run).toHaveBeenCalledTimes(2);
     expect(run).toHaveBeenNthCalledWith(1, [
       "migrate",
       "diff",
@@ -172,6 +174,9 @@ describe("Prisma Preview schema baseline", () => {
     ]);
     expect(logger.log).toHaveBeenCalledWith(
       "Synchronized the fresh, verified Preview sandbox schema to the Prisma model.",
+    );
+    expect(logger.log).toHaveBeenCalledWith(
+      "Leaving migration history unchanged on the disposable Preview sandbox branch.",
     );
   });
 
@@ -351,6 +356,43 @@ describe("Prisma migration lock retry", () => {
 
     expect(verify).toHaveBeenCalledOnce();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("skips migration history writes and deploy for a verified fresh Preview sandbox", async () => {
+    const run = vi.fn<() => Promise<MigrationResult>>();
+    const verify = vi.fn();
+    const baseline = vi.fn().mockResolvedValue(0);
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const commitSha = "a".repeat(40);
+
+    await expect(runMigrationsWithRetry(
+      run,
+      vi.fn().mockResolvedValue(undefined),
+      logger,
+      verify,
+      baseline,
+      {
+        VERCEL_ENV: "preview",
+        VERCEL_GIT_COMMIT_REF: "test-branch",
+        VERCEL_GIT_COMMIT_SHA: commitSha,
+        DATABASE_URL: "postgresql://pooled/sandbox",
+        NEON_BRANCH_ID: "br-cool-pond-123",
+        NEON_BRANCH_NAME: "credencecraft-sandbox-test-branch-12345-1",
+        NEON_BRANCH_PRIMARY: "false",
+        NEON_PROJECT_ID: "silent-tree-123",
+        NEON_SANDBOX_GIT_SHA: commitSha,
+        NEON_SANDBOX_SCHEMA_SYNC_ALLOWED: "true",
+        NEON_SANDBOX_VERIFIED: "true",
+        NEON_VERCEL_BRANCH_REF: "test-branch",
+      },
+    )).resolves.toBe(0);
+
+    expect(verify).toHaveBeenCalledOnce();
+    expect(baseline).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+    expect(logger.log).toHaveBeenCalledWith(
+      "Skipping Prisma migrate deploy for the disposable Preview sandbox branch.",
+    );
   });
 
   it("resolves Prisma's declared CLI executable", () => {

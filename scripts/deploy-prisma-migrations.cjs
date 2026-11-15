@@ -262,6 +262,11 @@ async function baselinePreviewMigrationHistory({
     logger.log("Synchronized the fresh, verified Preview sandbox schema to the Prisma model.");
   }
 
+  if (allowFreshBranchSync) {
+    logger.log("Leaving migration history unchanged on the disposable Preview sandbox branch.");
+    return 0;
+  }
+
   const migrations = getMigrationNames(migrationsPath);
   if (migrations.length === 0) {
     logger.error("[SANDBOX_BASELINE_NO_MIGRATIONS] Refusing to baseline empty Prisma history.");
@@ -317,11 +322,17 @@ async function runMigrationsWithRetry(
   logger = console,
   verify = verifySandboxDatabase,
   baseline = () => baselinePreviewMigrationHistory({ logger }),
+  env = process.env,
 ) {
   verify();
 
   const baselineCode = await baseline();
   if (baselineCode !== 0) return baselineCode;
+
+  if (isFreshSandboxBranchSchemaSyncAllowed(env)) {
+    logger.log("Skipping Prisma migrate deploy for the disposable Preview sandbox branch.");
+    return 0;
+  }
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const result = await run();
