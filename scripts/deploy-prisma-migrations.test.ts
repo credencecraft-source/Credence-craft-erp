@@ -23,6 +23,7 @@ type MigrationRetryModule = {
   }) => Promise<number>;
   getPrismaCliPath: () => string;
   getMigrationNames: (migrationsPath?: string) => string[];
+  getSchemaDiffSummary: (sql: string, limit?: number) => string[];
   isSafeSchemaBaselineDiff: (sql: string) => boolean;
   isAdvisoryLockTimeout: (output: string) => boolean;
   runMigrationsWithRetry: (
@@ -38,6 +39,7 @@ const require = createRequire(import.meta.url);
 const {
   baselinePreviewMigrationHistory,
   getMigrationNames,
+  getSchemaDiffSummary,
   getPrismaCliPath,
   isAdvisoryLockTimeout,
   isSafeSchemaBaselineDiff,
@@ -51,6 +53,13 @@ describe("Prisma Preview schema baseline", () => {
     expect(isSafeSchemaBaselineDiff('-- DropTable\nDROP TABLE "legacy_table";')).toBe(true);
     expect(isSafeSchemaBaselineDiff('ALTER TABLE "organizations" DROP COLUMN "legacy";')).toBe(false);
     expect(isSafeSchemaBaselineDiff('CREATE TABLE "missing_table" ("id" TEXT);')).toBe(false);
+  });
+
+  it("summarizes schema differences without exposing SQL values", () => {
+    expect(getSchemaDiffSummary(
+      'ALTER TABLE "public"."organization" ADD COLUMN "private_field" TEXT DEFAULT \'sensitive\'; '
+      + 'CREATE INDEX "organization_idx" ON "organization"("id");',
+    )).toEqual(["ALTER TABLE organization", "CREATE INDEX organization_idx"]);
   });
 
   it("marks the known migration history only after an empty schema diff", async () => {
@@ -99,7 +108,9 @@ describe("Prisma Preview schema baseline", () => {
       run,
     })).resolves.toBe(1);
     expect(run).toHaveBeenCalledTimes(2);
-    expect(logger.error).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history. Changes: CREATE TABLE missing_table.",
+    );
   });
 
   it("does not baseline failed migration states or non-Preview environments", async () => {
@@ -215,7 +226,7 @@ describe("Prisma Preview schema baseline", () => {
 
     expect(run).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledWith(
-      "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history.",
+      "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history. Changes: ALTER TABLE organizations.",
     );
   });
 });

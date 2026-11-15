@@ -85,6 +85,28 @@ function isSafeSchemaBaselineDiff(sql) {
   );
 }
 
+function getSchemaDiffSummary(sql, limit = 12) {
+  const statements = sql
+    .replace(/--[^\r\n]*/g, "")
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+
+  const summary = statements.map((statement) => {
+    const match = statement.match(
+      /^(CREATE|ALTER|DROP)\s+(?:UNIQUE\s+)?(TABLE|INDEX|TYPE|SEQUENCE|SCHEMA|EXTENSION|DOMAIN|VIEW|FUNCTION)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:"[^"]+"\.)?"([^"]+)"/i,
+    );
+    if (!match) return statement.match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? "UNKNOWN";
+    const [, action, objectType, objectName] = match;
+    return /^[A-Za-z0-9_]{1,120}$/.test(objectName)
+      ? `${action.toUpperCase()} ${objectType.toUpperCase()} ${objectName}`
+      : `${action.toUpperCase()} ${objectType.toUpperCase()}`;
+  });
+  const visible = summary.slice(0, limit);
+  if (summary.length > limit) visible.push(`${summary.length - limit} more changes`);
+  return visible;
+}
+
 async function baselinePreviewMigrationHistory({
   env = process.env,
   logger = console,
@@ -175,8 +197,10 @@ async function baselinePreviewMigrationHistory({
     "--script",
   ]);
   if (diff.code !== 0 || !isSafeSchemaBaselineDiff(diff.output)) {
+    const changes = getSchemaDiffSummary(diff.output);
+    const changeSummary = changes.length ? ` Changes: ${changes.join("; ")}.` : "";
     logger.error(
-      "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history.",
+      `[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history.${changeSummary}`,
     );
     return diff.code || 1;
   }
@@ -272,6 +296,7 @@ module.exports = {
   baselinePreviewMigrationHistory,
   getPrismaCliPath,
   getMigrationNames,
+  getSchemaDiffSummary,
   isSafeSchemaBaselineDiff,
   isAdvisoryLockTimeout,
   runMigrationsWithRetry,
