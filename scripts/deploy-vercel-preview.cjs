@@ -112,7 +112,7 @@ function getPrismaErrorSummary(events) {
     for (const match of text.matchAll(/\bChanges:\s*([^\r\n]+)/gi)) {
       for (const rawChange of match[1].split(";")) {
         const change = rawChange.trim().replace(/\.$/, "");
-        if (/^(CREATE|ALTER|DROP)\s+(TABLE|INDEX|TYPE|SEQUENCE|SCHEMA|EXTENSION|DOMAIN|VIEW|FUNCTION)(?:\s+[A-Za-z0-9_]{1,120})?$/i.test(change)) {
+        if (/^(CREATE|ALTER|DROP)\s+(TABLE|INDEX|TYPE|SEQUENCE|SCHEMA|EXTENSION|DOMAIN|VIEW|FUNCTION)(?:\s+[A-Za-z0-9_]{1,120})?(?:\s+(ADD|DROP|ALTER|RENAME)\s+(COLUMN|CONSTRAINT|PRIMARY KEY|FOREIGN KEY|UNIQUE|CHECK)\s+[A-Za-z0-9_]{1,120})?$/i.test(change)) {
           schemaChanges.add(change);
         }
       }

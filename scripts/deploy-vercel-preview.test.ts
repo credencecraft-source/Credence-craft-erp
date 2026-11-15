@@ -202,14 +202,14 @@ describe("Vercel Preview deployment", () => {
           + "migration 20260910000200_add_business_type_module_key.",
       },
       {
-        text: "[SANDBOX_BASELINE_SCHEMA_DRIFT] Changes: ALTER TABLE organizations; "
+        text: "[SANDBOX_BASELINE_SCHEMA_DRIFT] Changes: ALTER TABLE organizations ADD COLUMN code; "
           + "CREATE TABLE missing_table; private SQL omitted.",
       },
     ])).toMatchObject({
       baselineCodes: ["SANDBOX_BASELINE_SCHEMA_DRIFT", "SANDBOX_BASELINE_STATUS_FAILED"],
       databaseCodes: ["23502"],
       migrationNames: ["20260910000200_add_business_type_module_key"],
-      schemaChanges: ["ALTER TABLE organizations", "CREATE TABLE missing_table"],
+      schemaChanges: ["ALTER TABLE organizations ADD COLUMN code", "CREATE TABLE missing_table"],
     });
   });
 });

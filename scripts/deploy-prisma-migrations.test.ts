@@ -58,8 +58,13 @@ describe("Prisma Preview schema baseline", () => {
   it("summarizes schema differences without exposing SQL values", () => {
     expect(getSchemaDiffSummary(
       'ALTER TABLE "public"."organization" ADD COLUMN "private_field" TEXT DEFAULT \'sensitive\'; '
+      + 'ALTER TABLE "platform_version_module_tags" DROP CONSTRAINT "legacy_relation"; '
       + 'CREATE INDEX "organization_idx" ON "organization"("id");',
-    )).toEqual(["ALTER TABLE organization", "CREATE INDEX organization_idx"]);
+    )).toEqual([
+      "ALTER TABLE organization ADD COLUMN private_field",
+      "ALTER TABLE platform_version_module_tags DROP CONSTRAINT legacy_relation",
+      "CREATE INDEX organization_idx",
+    ]);
   });
 
   it("marks the known migration history only after an empty schema diff", async () => {
@@ -226,7 +231,7 @@ describe("Prisma Preview schema baseline", () => {
 
     expect(run).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledWith(
-      "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history. Changes: ALTER TABLE organizations.",
+      "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history. Changes: ALTER TABLE organizations DROP COLUMN name.",
     );
   });
 });

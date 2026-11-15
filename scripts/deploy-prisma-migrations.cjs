@@ -92,15 +92,26 @@ function getSchemaDiffSummary(sql, limit = 12) {
     .map((statement) => statement.trim())
     .filter(Boolean);
 
-  const summary = statements.map((statement) => {
+  const summary = statements.flatMap((statement) => {
     const match = statement.match(
       /^(CREATE|ALTER|DROP)\s+(?:UNIQUE\s+)?(TABLE|INDEX|TYPE|SEQUENCE|SCHEMA|EXTENSION|DOMAIN|VIEW|FUNCTION)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:"[^"]+"\.)?"([^"]+)"/i,
     );
-    if (!match) return statement.match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? "UNKNOWN";
+    if (!match) return [statement.match(/^[A-Za-z]+/)?.[0]?.toUpperCase() ?? "UNKNOWN"];
     const [, action, objectType, objectName] = match;
-    return /^[A-Za-z0-9_]{1,120}$/.test(objectName)
-      ? `${action.toUpperCase()} ${objectType.toUpperCase()} ${objectName}`
-      : `${action.toUpperCase()} ${objectType.toUpperCase()}`;
+    const target = /^[A-Za-z0-9_]{1,120}$/.test(objectName) ? objectName : undefined;
+    if (action.toUpperCase() === "ALTER" && objectType.toUpperCase() === "TABLE" && target) {
+      const operations = [...statement.matchAll(
+        /\b(ADD|DROP|ALTER|RENAME)\s+(COLUMN|CONSTRAINT|PRIMARY KEY|FOREIGN KEY|UNIQUE|CHECK)\s+(?:"([^"]+)"|([A-Za-z0-9_]+))/gi,
+      )];
+      if (operations.length > 0) {
+        return operations.map(([, operation, kind, quotedName, bareName]) =>
+          `ALTER TABLE ${target} ${operation.toUpperCase()} ${kind.toUpperCase()} ${quotedName ?? bareName}`,
+        );
+      }
+    }
+    return [target
+      ? `${action.toUpperCase()} ${objectType.toUpperCase()} ${target}`
+      : `${action.toUpperCase()} ${objectType.toUpperCase()}`];
   });
   const visible = summary.slice(0, limit);
   if (summary.length > limit) visible.push(`${summary.length - limit} more changes`);
