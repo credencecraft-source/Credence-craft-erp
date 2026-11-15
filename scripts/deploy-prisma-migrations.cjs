@@ -7,6 +7,9 @@ const { verifySandboxDatabase } = require("./verify-sandbox-db.js");
 const MAX_ATTEMPTS = 5;
 const MIGRATIONS_PATH = path.resolve(__dirname, "..", "prisma", "migrations");
 const SCHEMA_PATH = path.resolve(__dirname, "..", "prisma");
+const KNOWN_SCHEMA_BASELINE_FAILURES = new Map([
+  ["20260901060317_init", "42P07"],
+]);
 
 function isAdvisoryLockTimeout(output) {
   return output.includes("P1002")
@@ -54,7 +57,7 @@ async function readFailedMigrationDiagnostics() {
       return [{
         migrationName: migration.migration_name,
         prismaCode: logs.match(/\bP\d{4}\b/)?.[0],
-        databaseCode: logs.match(/\b(?:Database error code|SQLSTATE):\s*([A-Z0-9]{5})\b/i)?.[1],
+        databaseCode: logs.match(/\b(?:Database error code|SQLSTATE):\s*([A-Z0-9]{5})\b/i)?.[1]?.toUpperCase(),
       }];
     });
   } finally {
@@ -95,8 +98,8 @@ async function baselinePreviewMigrationHistory({
   const statusResult = await status;
   if (statusResult.code === 0) return 0;
   const nonEmptySchema = /schema is not empty/i.test(statusResult.output);
+  let failedMigrations = [];
   if (!statusResult.output.includes("P3005") && !nonEmptySchema) {
-    let failedMigrations = [];
     let diagnosticPrismaCode;
     let diagnosticDatabaseCode;
     let diagnosticSystemCode;
@@ -113,39 +116,45 @@ async function baselinePreviewMigrationHistory({
       }
     }
 
-    const prismaCode = statusResult.output.match(/\bP\d{4}\b/)?.[0]
-      ?? failedMigrations.find((migration) => migration.prismaCode)?.prismaCode
-      ?? diagnosticPrismaCode;
-    const databaseCode = statusResult.output.match(/\bDatabase error code:\s*([A-Z0-9]{5})\b/i)?.[1]
-      ?? failedMigrations.find((migration) => migration.databaseCode)?.databaseCode
-      ?? diagnosticDatabaseCode;
-    const systemErrorCode = typeof statusResult.systemErrorCode === "string"
-      && /^[A-Z0-9_]{2,20}$/.test(statusResult.systemErrorCode)
-      ? statusResult.systemErrorCode
-      : diagnosticSystemCode;
-    const failedMigrationNames = failedMigrations
-      .map((migration) => migration.migrationName)
-      .filter((name) => /^[A-Za-z0-9_]{1,120}$/.test(name));
-    const safeCode = prismaCode
-      ? `Prisma ${prismaCode}`
-      : databaseCode
-        ? `database ${databaseCode}`
-        : systemErrorCode
-          ? `system ${systemErrorCode}`
-          : "unknown";
-    const details = [
-      safeCode,
-      ...failedMigrationNames.map((name) => `migration ${name}`),
-    ];
-    if (statusResult.exitStatus === null) {
-      details.push(statusResult.signal
-        ? `status process signal ${statusResult.signal}`
-        : "status process did not exit normally");
-    } else if (statusResult.exitStatus !== undefined) {
-      details.push(`status process exit ${statusResult.exitStatus}`);
+    const knownFailedMigrations = failedMigrations.length > 0
+      && failedMigrations.every((migration) =>
+        KNOWN_SCHEMA_BASELINE_FAILURES.get(migration.migrationName) === migration.databaseCode,
+      );
+    if (!knownFailedMigrations) {
+      const prismaCode = statusResult.output.match(/\bP\d{4}\b/)?.[0]
+        ?? failedMigrations.find((migration) => migration.prismaCode)?.prismaCode
+        ?? diagnosticPrismaCode;
+      const databaseCode = statusResult.output.match(/\bDatabase error code:\s*([A-Z0-9]{5})\b/i)?.[1]
+        ?? failedMigrations.find((migration) => migration.databaseCode)?.databaseCode
+        ?? diagnosticDatabaseCode;
+      const systemErrorCode = typeof statusResult.systemErrorCode === "string"
+        && /^[A-Z0-9_]{2,20}$/.test(statusResult.systemErrorCode)
+        ? statusResult.systemErrorCode
+        : diagnosticSystemCode;
+      const failedMigrationNames = failedMigrations
+        .map((migration) => migration.migrationName)
+        .filter((name) => /^[A-Za-z0-9_]{1,120}$/.test(name));
+      const safeCode = prismaCode
+        ? `Prisma ${prismaCode}`
+        : databaseCode
+          ? `database ${databaseCode}`
+          : systemErrorCode
+            ? `system ${systemErrorCode}`
+            : "unknown";
+      const details = [
+        safeCode,
+        ...failedMigrationNames.map((name) => `migration ${name}`),
+      ];
+      if (statusResult.exitStatus === null) {
+        details.push(statusResult.signal
+          ? `status process signal ${statusResult.signal}`
+          : "status process did not exit normally");
+      } else if (statusResult.exitStatus !== undefined) {
+        details.push(`status process exit ${statusResult.exitStatus}`);
+      }
+      logger.error(`[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history (${details.join("; ")}).`);
+      return statusResult.code || 1;
     }
-    logger.error(`[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history (${details.join("; ")}).`);
-    return statusResult.code || 1;
   }
 
   const migrationUrl = env.DIRECT_URL?.trim()
@@ -176,6 +185,15 @@ async function baselinePreviewMigrationHistory({
   if (migrations.length === 0) {
     logger.error("[SANDBOX_BASELINE_NO_MIGRATIONS] Refusing to baseline empty Prisma history.");
     return 1;
+  }
+
+  const failedMigrationNames = [...new Set(failedMigrations.map((migration) => migration.migrationName))];
+  for (const migrationName of failedMigrationNames) {
+    const result = await run(["migrate", "resolve", "--rolled-back", migrationName]);
+    if (result.code !== 0) {
+      logger.error("[SANDBOX_BASELINE_ROLLBACK_FAILED] Failed to clear a known failed migration record.");
+      return result.code || 1;
+    }
   }
 
   for (const migrationName of migrations) {

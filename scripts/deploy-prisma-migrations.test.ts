@@ -162,6 +162,62 @@ describe("Prisma Preview schema baseline", () => {
     );
     expect(logger.error).not.toHaveBeenCalledWith(expect.stringContaining("postgresql://"));
   });
+
+  it("recovers only the known duplicate-table init failure after a safe schema diff", async () => {
+    const migrationsPath = "prisma/migrations";
+    const migrationNames = getMigrationNames(migrationsPath);
+    const run = vi.fn<(args: string[]) => MigrationResult>()
+      .mockReturnValueOnce({ code: 1, output: "Failed migration status." })
+      .mockReturnValueOnce({ code: 0, output: "-- Empty diff." })
+      .mockReturnValue({ code: 0, output: "" });
+
+    await expect(baselinePreviewMigrationHistory({
+      env: { VERCEL_ENV: "preview", DATABASE_URL: "postgresql://sandbox/db" },
+      logger: { log: vi.fn(), error: vi.fn() },
+      migrationsPath,
+      run,
+      readFailureDetails: vi.fn().mockResolvedValue([{
+        migrationName: "20260901060317_init",
+        databaseCode: "42P07",
+      }]),
+    })).resolves.toBe(0);
+
+    expect(run).toHaveBeenCalledTimes(migrationNames.length + 3);
+    expect(run).toHaveBeenNthCalledWith(3, [
+      "migrate",
+      "resolve",
+      "--rolled-back",
+      "20260901060317_init",
+    ]);
+    expect(run).toHaveBeenNthCalledWith(4, [
+      "migrate",
+      "resolve",
+      "--applied",
+      migrationNames[0],
+    ]);
+  });
+
+  it("does not clear a failed migration before validating the complete schema diff", async () => {
+    const run = vi.fn<(args: string[]) => MigrationResult>()
+      .mockReturnValueOnce({ code: 1, output: "Failed migration status." })
+      .mockReturnValueOnce({ code: 0, output: 'ALTER TABLE "organizations" DROP COLUMN "name";' });
+    const logger = { log: vi.fn(), error: vi.fn() };
+
+    await expect(baselinePreviewMigrationHistory({
+      env: { VERCEL_ENV: "preview", DATABASE_URL: "postgresql://sandbox/db" },
+      logger,
+      run,
+      readFailureDetails: vi.fn().mockResolvedValue([{
+        migrationName: "20260901060317_init",
+        databaseCode: "42P07",
+      }]),
+    })).resolves.toBe(1);
+
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalledWith(
+      "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history.",
+    );
+  });
 });
 
 describe("Prisma migration lock retry", () => {
