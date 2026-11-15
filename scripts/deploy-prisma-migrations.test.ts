@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 type MigrationResult = {
   code: number;
   output: string;
+  stdout?: string;
+  stderr?: string;
   systemErrorCode?: string;
   exitStatus?: number | null;
   signal?: string | null;
@@ -15,6 +17,7 @@ type MigrationRetryModule = {
     logger?: { log: (message: string) => void; error: (message: string) => void };
     migrationsPath?: string;
     run?: (args: string[]) => MigrationResult;
+    runWithInput?: (args: string[], input: string) => MigrationResult;
     readFailureDetails?: () => Promise<Array<{
       migrationName: string;
       prismaCode?: string;
@@ -115,6 +118,92 @@ describe("Prisma Preview schema baseline", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledWith(
       "[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history. Changes: CREATE TABLE missing_table.",
+    );
+  });
+
+  it("synchronizes only a fresh verified test-branch Preview before baselining", async () => {
+    const migrationsPath = "prisma/migrations";
+    const migrationNames = getMigrationNames(migrationsPath);
+    const schemaDiff = 'ALTER TABLE "organizations" DROP COLUMN "legacy";';
+    const run = vi.fn<(args: string[]) => MigrationResult>()
+      .mockReturnValueOnce({ code: 1, output: "Error: P3005" })
+      .mockReturnValueOnce({ code: 0, output: schemaDiff })
+      .mockReturnValueOnce({ code: 0, output: "-- This is an empty migration." })
+      .mockReturnValue({ code: 0, output: "" });
+    const runWithInput = vi.fn<(args: string[], input: string) => MigrationResult>()
+      .mockReturnValue({ code: 0, output: "Script executed successfully." });
+    const logger = { log: vi.fn(), error: vi.fn() };
+    const commitSha = "a".repeat(40);
+
+    await expect(baselinePreviewMigrationHistory({
+      env: {
+        VERCEL_ENV: "preview",
+        VERCEL_GIT_COMMIT_REF: "test-branch",
+        VERCEL_GIT_COMMIT_SHA: commitSha,
+        DATABASE_URL: "postgresql://pooled/sandbox",
+        DATABASE_URL_UNPOOLED: "postgresql://direct/sandbox",
+        NEON_BRANCH_ID: "br-cool-pond-123",
+        NEON_BRANCH_NAME: "credencecraft-sandbox-test-branch-12345-1",
+        NEON_BRANCH_PRIMARY: "false",
+        NEON_PROJECT_ID: "silent-tree-123",
+        NEON_SANDBOX_GIT_SHA: commitSha,
+        NEON_SANDBOX_SCHEMA_SYNC_ALLOWED: "true",
+        NEON_SANDBOX_VERIFIED: "true",
+        NEON_VERCEL_BRANCH_REF: "test-branch",
+      },
+      logger,
+      migrationsPath,
+      run,
+      runWithInput,
+    })).resolves.toBe(0);
+
+    expect(runWithInput).toHaveBeenCalledWith(
+      ["db", "execute", "--stdin", "--schema", expect.any(String)],
+      schemaDiff,
+    );
+    expect(run).toHaveBeenCalledTimes(migrationNames.length + 3);
+    expect(logger.log).toHaveBeenCalledWith(
+      "Synchronized the fresh, verified Preview sandbox schema to the Prisma model.",
+    );
+  });
+
+  it("does not baseline a synchronized branch unless the post-sync diff is empty", async () => {
+    const schemaDiff = 'ALTER TABLE "organizations" DROP COLUMN "legacy";';
+    const run = vi.fn<(args: string[]) => MigrationResult>()
+      .mockReturnValueOnce({ code: 1, output: "Error: P3005" })
+      .mockReturnValueOnce({ code: 0, output: schemaDiff })
+      .mockReturnValueOnce({
+        code: 0,
+        output: 'ALTER TABLE "organizations" DROP COLUMN "still_legacy";',
+      });
+    const runWithInput = vi.fn<(args: string[], input: string) => MigrationResult>()
+      .mockReturnValue({ code: 0, output: "Script executed successfully." });
+    const logger = { log: vi.fn(), error: vi.fn() };
+    const commitSha = "a".repeat(40);
+
+    await expect(baselinePreviewMigrationHistory({
+      env: {
+        VERCEL_ENV: "preview",
+        VERCEL_GIT_COMMIT_REF: "test-branch",
+        VERCEL_GIT_COMMIT_SHA: commitSha,
+        DATABASE_URL: "postgresql://pooled/sandbox",
+        NEON_BRANCH_ID: "br-cool-pond-123",
+        NEON_BRANCH_NAME: "credencecraft-sandbox-test-branch-12345-1",
+        NEON_BRANCH_PRIMARY: "false",
+        NEON_PROJECT_ID: "silent-tree-123",
+        NEON_SANDBOX_GIT_SHA: commitSha,
+        NEON_SANDBOX_SCHEMA_SYNC_ALLOWED: "true",
+        NEON_SANDBOX_VERIFIED: "true",
+        NEON_VERCEL_BRANCH_REF: "test-branch",
+      },
+      logger,
+      run,
+      runWithInput,
+    })).resolves.toBe(1);
+
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(logger.error).toHaveBeenCalledWith(
+      "[SANDBOX_SCHEMA_SYNC_VERIFY_FAILED] Refusing to baseline sandbox history because schema verification did not produce an empty diff. Remaining changes: ALTER TABLE organizations DROP COLUMN still_legacy.",
     );
   });
 

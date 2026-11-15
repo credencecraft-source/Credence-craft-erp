@@ -1,6 +1,8 @@
-const SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch|pr-\d+)$/;
+const SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch(?:-\d+-\d+)?|pr-\d+(?:-\d+-\d+)?)$/;
+const FRESH_SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch|pr-\d+)-\d+-\d+$/;
 const NEON_BRANCH_ID = /^br-[a-z0-9-]+$/;
 const NEON_PROJECT_ID = /^[a-z0-9-]+$/;
+const GIT_SHA = /^[a-f0-9]{40}$/i;
 
 function verifySandboxDatabase(env = process.env) {
   const vercelEnvironment = env.VERCEL_ENV?.trim();
@@ -24,6 +26,8 @@ function verifySandboxDatabase(env = process.env) {
   const verified = env.NEON_SANDBOX_VERIFIED?.trim().toLowerCase();
   const deploymentBranch = env.VERCEL_GIT_COMMIT_REF?.trim() ?? "";
   const configuredBranch = env.NEON_VERCEL_BRANCH_REF?.trim() ?? "";
+  const deploymentSha = env.VERCEL_GIT_COMMIT_SHA?.trim() ?? "";
+  const configuredSha = env.NEON_SANDBOX_GIT_SHA?.trim() ?? "";
 
   if (
     !NEON_BRANCH_ID.test(branchId)
@@ -33,6 +37,8 @@ function verifySandboxDatabase(env = process.env) {
     || verified !== "true"
     || !deploymentBranch
     || configuredBranch !== deploymentBranch
+    || !GIT_SHA.test(deploymentSha)
+    || configuredSha.toLowerCase() !== deploymentSha.toLowerCase()
     || !env.DATABASE_URL?.trim()
   ) {
     throw new Error(
@@ -41,6 +47,25 @@ function verifySandboxDatabase(env = process.env) {
   }
 
   return { skipped: false, projectId, branchId, branchName };
+}
+
+function isFreshSandboxBranchSchemaSyncAllowed(env = process.env) {
+  const deploymentSha = env.VERCEL_GIT_COMMIT_SHA?.trim() ?? "";
+  const configuredSha = env.NEON_SANDBOX_GIT_SHA?.trim() ?? "";
+  const deploymentBranch = env.VERCEL_GIT_COMMIT_REF?.trim() ?? "";
+
+  return env.VERCEL_ENV?.trim() === "preview"
+    && Boolean(deploymentBranch)
+    && env.NEON_VERCEL_BRANCH_REF?.trim() === deploymentBranch
+    && FRESH_SANDBOX_BRANCH_NAME.test(env.NEON_BRANCH_NAME?.trim() ?? "")
+    && env.NEON_SANDBOX_SCHEMA_SYNC_ALLOWED?.trim().toLowerCase() === "true"
+    && env.NEON_SANDBOX_VERIFIED?.trim().toLowerCase() === "true"
+    && env.NEON_BRANCH_PRIMARY?.trim().toLowerCase() === "false"
+    && NEON_BRANCH_ID.test(env.NEON_BRANCH_ID?.trim() ?? "")
+    && NEON_PROJECT_ID.test(env.NEON_PROJECT_ID?.trim() ?? "")
+    && GIT_SHA.test(deploymentSha)
+    && configuredSha.toLowerCase() === deploymentSha.toLowerCase()
+    && Boolean(env.DATABASE_URL?.trim());
 }
 
 if (require.main === module) {
@@ -57,4 +82,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { verifySandboxDatabase };
+module.exports = { isFreshSandboxBranchSchemaSyncAllowed, verifySandboxDatabase };

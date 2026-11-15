@@ -1,4 +1,4 @@
-const SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch|pr-\d+)$/;
+const SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch(?:-\d+-\d+)?|pr-\d+(?:-\d+-\d+)?)$/;
 const NEON_BRANCH_ID = /^br-[a-z0-9-]+$/;
 const NEON_PROJECT_ID = /^[a-z0-9-]+$/;
 

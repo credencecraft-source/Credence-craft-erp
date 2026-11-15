@@ -48,6 +48,36 @@ describe("Neon sandbox branch verification", () => {
     expect(fetchImpl.mock.calls[0][1]?.headers).toEqual({ Authorization: "Bearer test-api-key" });
   });
 
+  it("accepts a unique test-branch Preview branch name", async () => {
+    const branch = {
+      ...validBranch,
+      name: "credencecraft-sandbox-test-branch-12345-2",
+    };
+
+    await expect(verifyNeonBranch({
+      apiKey: "test-api-key",
+      branchId: branch.id,
+      expectedBranchName: branch.name,
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(response({ branch })),
+      projectId: branch.project_id,
+    })).resolves.toMatchObject({ name: branch.name });
+  });
+
+  it("accepts a unique pull-request Preview branch name", async () => {
+    const branch = {
+      ...validBranch,
+      name: "credencecraft-sandbox-pr-42-12345-2",
+    };
+
+    await expect(verifyNeonBranch({
+      apiKey: "test-api-key",
+      branchId: branch.id,
+      expectedBranchName: branch.name,
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(response({ branch })),
+      projectId: branch.project_id,
+    })).resolves.toMatchObject({ name: branch.name });
+  });
+
   it.each([
     ["primary", { ...validBranch, primary: true }],
     ["default", { ...validBranch, default: true }],

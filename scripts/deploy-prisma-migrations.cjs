@@ -2,7 +2,10 @@ const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
-const { verifySandboxDatabase } = require("./verify-sandbox-db.js");
+const {
+  isFreshSandboxBranchSchemaSyncAllowed,
+  verifySandboxDatabase,
+} = require("./verify-sandbox-db.js");
 
 const MAX_ATTEMPTS = 5;
 const MIGRATIONS_PATH = path.resolve(__dirname, "..", "prisma", "migrations");
@@ -24,18 +27,25 @@ function getPrismaCliPath() {
   return path.resolve(path.dirname(packagePath), bin);
 }
 
-function runPrismaCli(args) {
+function runPrismaCli(args, { input } = {}) {
   const result = spawnSync(process.execPath, [getPrismaCliPath(), ...args], {
     encoding: "utf8",
+    input,
   });
 
   return {
     code: result.status ?? 1,
     output: `${result.stdout ?? ""}\n${result.stderr ?? ""}${result.error?.message ?? ""}`,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
     systemErrorCode: result.error?.code,
     exitStatus: result.status,
     signal: result.signal,
   };
+}
+
+function runPrismaCliWithInput(args, input) {
+  return runPrismaCli(args, { input });
 }
 
 async function readFailedMigrationDiagnostics() {
@@ -73,24 +83,23 @@ function getMigrationNames(migrationsPath = MIGRATIONS_PATH) {
     .sort();
 }
 
-function isSafeSchemaBaselineDiff(sql) {
-  const statements = sql
+function getSchemaDiffStatements(sql) {
+  return sql
     .replace(/--[^\r\n]*/g, "")
     .split(";")
     .map((statement) => statement.trim())
     .filter(Boolean);
+}
 
+function isSafeSchemaBaselineDiff(sql) {
+  const statements = getSchemaDiffStatements(sql);
   return statements.every((statement) =>
     /^DROP TABLE (?:IF EXISTS )?(?:"[^"]+"\.)?"[^"]+"$/i.test(statement),
   );
 }
 
 function getSchemaDiffSummary(sql, limit = 12) {
-  const statements = sql
-    .replace(/--[^\r\n]*/g, "")
-    .split(";")
-    .map((statement) => statement.trim())
-    .filter(Boolean);
+  const statements = getSchemaDiffStatements(sql);
 
   const summary = statements.flatMap((statement) => {
     const match = statement.match(
@@ -123,6 +132,7 @@ async function baselinePreviewMigrationHistory({
   logger = console,
   migrationsPath = MIGRATIONS_PATH,
   run = runPrismaCli,
+  runWithInput = runPrismaCliWithInput,
   readFailureDetails = readFailedMigrationDiagnostics,
 } = {}) {
   if (env.VERCEL_ENV?.trim() !== "preview") return 0;
@@ -198,7 +208,7 @@ async function baselinePreviewMigrationHistory({
     return 1;
   }
 
-  const diff = await run([
+  const diffArgs = [
     "migrate",
     "diff",
     "--from-url",
@@ -206,14 +216,50 @@ async function baselinePreviewMigrationHistory({
     "--to-schema-datamodel",
     SCHEMA_PATH,
     "--script",
-  ]);
-  if (diff.code !== 0 || !isSafeSchemaBaselineDiff(diff.output)) {
-    const changes = getSchemaDiffSummary(diff.output);
+  ];
+  const diff = await run(diffArgs);
+  const diffSql = typeof diff.stdout === "string" ? diff.stdout : diff.output;
+  const statements = getSchemaDiffStatements(diffSql);
+  const allowFreshBranchSync = isFreshSandboxBranchSchemaSyncAllowed(env);
+
+  if (
+    diff.code !== 0
+    || (statements.length > 0 && !allowFreshBranchSync && !isSafeSchemaBaselineDiff(diffSql))
+  ) {
+    const changes = getSchemaDiffSummary(diffSql);
     const changeSummary = changes.length ? ` Changes: ${changes.join("; ")}.` : "";
     logger.error(
       `[SANDBOX_BASELINE_SCHEMA_DRIFT] Schema-only sandbox differs beyond extra legacy tables; refusing to baseline migration history.${changeSummary}`,
     );
     return diff.code || 1;
+  }
+
+  if (statements.length > 0 && allowFreshBranchSync) {
+    const applied = await runWithInput(
+      ["db", "execute", "--stdin", "--schema", SCHEMA_PATH],
+      diffSql,
+    );
+    if (applied.code !== 0) {
+      logger.error(
+        `[SANDBOX_SCHEMA_SYNC_FAILED] Refusing to baseline sandbox history after Prisma db execute failed (exit ${applied.code}).`,
+      );
+      return applied.code || 1;
+    }
+
+    const verification = await run(diffArgs);
+    const verificationSql = typeof verification.stdout === "string"
+      ? verification.stdout
+      : verification.output;
+    if (verification.code !== 0 || getSchemaDiffStatements(verificationSql).length > 0) {
+      const changes = getSchemaDiffSummary(verificationSql);
+      const changeSummary = changes.length ? ` Remaining changes: ${changes.join("; ")}.` : "";
+      logger.error(
+        `[SANDBOX_SCHEMA_SYNC_VERIFY_FAILED] Refusing to baseline sandbox history because schema verification did not produce an empty diff.${changeSummary}`,
+      );
+      return verification.code || 1;
+    }
+
+    logger.log("Synchronized the fresh, verified Preview sandbox schema to the Prisma model.");
   }
 
   const migrations = getMigrationNames(migrationsPath);
@@ -307,8 +353,10 @@ module.exports = {
   baselinePreviewMigrationHistory,
   getPrismaCliPath,
   getMigrationNames,
+  getSchemaDiffStatements,
   getSchemaDiffSummary,
   isSafeSchemaBaselineDiff,
   isAdvisoryLockTimeout,
+  runPrismaCliWithInput,
   runMigrationsWithRetry,
 };

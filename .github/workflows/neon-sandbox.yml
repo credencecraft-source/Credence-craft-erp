@@ -41,12 +41,15 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PUSH_REF: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          echo "expires_at=$(date -u -d '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           if [[ "$EVENT_NAME" == "pull_request_target" ]]; then
-            echo "neon_branch_name=credencecraft-sandbox-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "neon_branch_name=credencecraft-sandbox-pr-${PR_NUMBER}-${RUN_ID}-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
             echo "vercel_branch_ref=${PR_HEAD_REF}" >> "$GITHUB_OUTPUT"
           else
-            echo "neon_branch_name=credencecraft-sandbox-test-branch" >> "$GITHUB_OUTPUT"
+            echo "neon_branch_name=credencecraft-sandbox-test-branch-${RUN_ID}-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
             echo "vercel_branch_ref=${PUSH_REF}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -57,6 +60,7 @@ jobs:
           project_id: ${{ secrets.NEON_PROJECT_ID }}
           branch_name: ${{ steps.context.outputs.neon_branch_name }}
           branch_type: schema-only
+          expires_at: ${{ steps.context.outputs.expires_at }}
           suspend_timeout: 300
           api_key: ${{ secrets.NEON_API_KEY }}
 
@@ -88,6 +92,8 @@ jobs:
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
           NEON_BRANCH_ID: ${{ steps.neon.outputs.branch_id }}
           NEON_BRANCH_NAME: ${{ steps.context.outputs.neon_branch_name }}
+          SANDBOX_GIT_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          SANDBOX_SCHEMA_SYNC_ALLOWED: ${{ steps.neon.outputs.created == 'true' && 'true' || 'false' }}
         run: node scripts/sync-vercel-preview-env.cjs upsert
 
       - name: Deploy and verify Vercel Preview after environment sync
@@ -126,10 +132,3 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           SANDBOX_VERCEL_BRANCH_REF: ${{ github.event.pull_request.head.ref }}
         run: node scripts/sync-vercel-preview-env.cjs remove
-
-      - name: Delete the closed pull request Neon sandbox branch
-        uses: neondatabase/delete-branch-action@v3
-        with:
-          project_id: ${{ secrets.NEON_PROJECT_ID }}
-          branch: credencecraft-sandbox-pr-${{ github.event.pull_request.number }}
-          api_key: ${{ secrets.NEON_API_KEY }}

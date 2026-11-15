@@ -33,8 +33,10 @@ const env = {
   SANDBOX_DATABASE_URL: "postgresql://pooled.example/db",
   SANDBOX_DATABASE_URL_UNPOOLED: "postgresql://direct.example/db",
   NEON_BRANCH_ID: "br-cool-pond-123",
-  NEON_BRANCH_NAME: "credencecraft-sandbox-test-branch",
+  NEON_BRANCH_NAME: "credencecraft-sandbox-test-branch-12345-1",
   NEON_PROJECT_ID: "silent-tree-123",
+  SANDBOX_GIT_SHA: "a".repeat(40),
+  SANDBOX_SCHEMA_SYNC_ALLOWED: "true",
   VERCEL_PROJECT_ID: "prj_test",
   VERCEL_ORG_ID: "team_test",
   VERCEL_TOKEN: "vercel-test-token",
@@ -54,6 +56,10 @@ describe("Vercel Preview environment synchronization", () => {
     const pooled = variables.find((variable) => variable.key === "DATABASE_URL");
     const direct = variables.find((variable) => variable.key === "DIRECT_URL");
     const metadata = variables.find((variable) => variable.key === "NEON_BRANCH_PRIMARY");
+    const schemaSyncAllowed = variables.find(
+      (variable) => variable.key === "NEON_SANDBOX_SCHEMA_SYNC_ALLOWED",
+    );
+    const commitSha = variables.find((variable) => variable.key === "NEON_SANDBOX_GIT_SHA");
 
     expect(pooled).toMatchObject({
       value: env.SANDBOX_DATABASE_URL,
@@ -68,6 +74,24 @@ describe("Vercel Preview environment synchronization", () => {
       visibility: "secret",
     });
     expect(metadata).toMatchObject({ value: "false", type: "plain" });
+    expect(schemaSyncAllowed).toMatchObject({ value: "true", type: "plain" });
+    expect(commitSha).toMatchObject({ value: env.SANDBOX_GIT_SHA, type: "plain" });
+  });
+
+  it("allows schema sync only on fresh unique sandbox branches", () => {
+    expect(() => getPreviewVariables({
+      ...env,
+      SANDBOX_SCHEMA_SYNC_ALLOWED: "true",
+      NEON_BRANCH_NAME: "credencecraft-sandbox-pr-12",
+    })).toThrow("unverified Neon sandbox identity");
+
+    expect(getPreviewVariables({
+      ...env,
+      SANDBOX_VERCEL_BRANCH_REF: "feature-branch",
+      SANDBOX_SCHEMA_SYNC_ALLOWED: "true",
+      NEON_BRANCH_NAME: "credencecraft-sandbox-pr-12-12345-1",
+    }).find((variable) => variable.key === "NEON_SANDBOX_SCHEMA_SYNC_ALLOWED"))
+      .toMatchObject({ value: "true", gitBranch: "feature-branch" });
   });
 
   it("upserts only variables scoped to the intended Preview Git branch", async () => {
@@ -99,8 +123,9 @@ describe("Vercel Preview environment synchronization", () => {
     });
     expect(String(fetchImpl.mock.calls[2][0])).toContain("/v10/projects/prj_test/env");
     expect(String(fetchImpl.mock.calls[2][0])).toContain("upsert=true");
-    expect(String(fetchImpl.mock.calls[10][0])).toContain("/v9/projects/prj_test/env/verification-marker");
-    expect(JSON.parse(String(fetchImpl.mock.calls[10][1]?.body)).value).toBe("true");
+    const verifyCall = fetchImpl.mock.calls[keys.length + 1];
+    expect(String(verifyCall[0])).toContain("/v9/projects/prj_test/env/verification-marker");
+    expect(JSON.parse(String(verifyCall[1]?.body)).value).toBe("true");
   });
 
   it("updates matching branch variables and leaves other branches untouched", async () => {

@@ -7,12 +7,16 @@ const MANAGED_KEYS = [
   "NEON_BRANCH_NAME",
   "NEON_BRANCH_PRIMARY",
   "NEON_PROJECT_ID",
+  "NEON_SANDBOX_GIT_SHA",
+  "NEON_SANDBOX_SCHEMA_SYNC_ALLOWED",
   "NEON_SANDBOX_VERIFIED",
   "NEON_VERCEL_BRANCH_REF",
 ];
-const SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch|pr-\d+)$/;
+const SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch(?:-\d+-\d+)?|pr-\d+(?:-\d+-\d+)?)$/;
+const FRESH_SANDBOX_BRANCH_NAME = /^credencecraft-sandbox-(?:test-branch|pr-\d+)-\d+-\d+$/;
 const NEON_BRANCH_ID = /^br-[a-z0-9-]+$/;
 const NEON_PROJECT_ID = /^[a-z0-9-]+$/;
+const GIT_SHA = /^[a-f0-9]{40}$/i;
 
 function getRequired(name, env = process.env) {
   const value = env[name]?.trim();
@@ -89,11 +93,17 @@ function getPreviewVariables(env = process.env) {
   const branchName = getRequired("NEON_BRANCH_NAME", env);
   const branchId = getRequired("NEON_BRANCH_ID", env);
   const projectId = getRequired("NEON_PROJECT_ID", env);
+  const gitSha = getRequired("SANDBOX_GIT_SHA", env);
+  const schemaSyncAllowed = getRequired("SANDBOX_SCHEMA_SYNC_ALLOWED", env);
 
   if (
     !SANDBOX_BRANCH_NAME.test(branchName)
     || !NEON_BRANCH_ID.test(branchId)
     || !NEON_PROJECT_ID.test(projectId)
+    || !GIT_SHA.test(gitSha)
+    || !["true", "false"].includes(schemaSyncAllowed)
+    || (schemaSyncAllowed === "true"
+      && !FRESH_SANDBOX_BRANCH_NAME.test(branchName))
   ) {
     throw new Error("Refusing to synchronize an unverified Neon sandbox identity.");
   }
@@ -121,6 +131,13 @@ function getPreviewVariables(env = process.env) {
     { key: "NEON_BRANCH_NAME", value: branchName, type: "plain", visibility: "config" },
     { key: "NEON_BRANCH_PRIMARY", value: "false", type: "plain", visibility: "config" },
     { key: "NEON_PROJECT_ID", value: projectId, type: "plain", visibility: "config" },
+    { key: "NEON_SANDBOX_GIT_SHA", value: gitSha, type: "plain", visibility: "config" },
+    {
+      key: "NEON_SANDBOX_SCHEMA_SYNC_ALLOWED",
+      value: schemaSyncAllowed,
+      type: "plain",
+      visibility: "config",
+    },
     { key: "NEON_SANDBOX_VERIFIED", value: "true", type: "plain", visibility: "config" },
     { key: "NEON_VERCEL_BRANCH_REF", value: branchRef, type: "plain", visibility: "config" },
   ].map((variable) => ({
