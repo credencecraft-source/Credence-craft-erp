@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     transaction,
     prisma: {
       $transaction: vi.fn((callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
+      contactDistributorDealerAssignment: { findMany: vi.fn() },
     },
     createAuditEvent: vi.fn(),
   };
@@ -21,7 +22,11 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({
   createAuditEvent: mocks.createAuditEvent,
 }));
 
-import { replaceDistributorDealers, replaceRoleMappedContacts } from "./distributor-dealer-service";
+import {
+  listDistributorDealers,
+  replaceDistributorDealers,
+  replaceRoleMappedContacts,
+} from "./distributor-dealer-service";
 
 describe("distributor and dealer role separation", () => {
   beforeEach(() => {
@@ -29,6 +34,40 @@ describe("distributor and dealer role separation", () => {
     mocks.transaction.contact.findFirst.mockResolvedValue({ id: "contact-1" });
     mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([]);
     mocks.transaction.contact.findMany.mockResolvedValue([{ id: "contact-2" }]);
+  });
+
+  it("displays duplicate preserved mappings only once per Dealer", async () => {
+    mocks.prisma.contactDistributorDealerAssignment.findMany.mockResolvedValue([
+      {
+        id: "mapping-1",
+        dealer: {
+          id: "dealer-1",
+          code: "D-1",
+          legal_name: "DEALER",
+          display_name: "DEALER",
+          is_active: true,
+        },
+      },
+      {
+        id: "mapping-2",
+        dealer: {
+          id: "dealer-1",
+          code: "D-1",
+          legal_name: "DEALER",
+          display_name: "DEALER",
+          is_active: true,
+        },
+      },
+    ]);
+
+    await expect(listDistributorDealers("org-1", "distributor-1")).resolves.toEqual([{
+      id: "dealer-1",
+      mappingId: "mapping-1",
+      code: "D-1",
+      legalName: "DEALER",
+      displayName: "DEALER",
+      isActive: true,
+    }]);
   });
 
   it("does not promote an Agent contact to Distributor", async () => {

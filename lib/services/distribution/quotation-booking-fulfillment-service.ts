@@ -118,7 +118,9 @@ async function getQuotationBookingIds(
   });
   return {
     quotation,
-    bookingIds: [...new Set(lines.map((line) => line.source_booking_id))],
+    bookingIds: [...new Set(
+      lines.map((line) => line.source_booking_id).filter((id): id is string => id !== null),
+    )],
   };
 }
 

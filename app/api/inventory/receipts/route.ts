@@ -74,13 +74,16 @@ export async function GET(request: Request) {
     });
     const serializedReceipts = receipts.map((receipt) => ({
       ...receipt,
-      entity: {
+      entity: receipt.entity ? {
         ...receipt.entity,
         entity_name: receipt.entity_name_snapshot ?? receipt.entity.entity_name,
-      },
+      } : null,
       location: {
-        ...receipt.location,
-        location_name: receipt.location_name_snapshot ?? receipt.location.location_name,
+        ...(receipt.location ?? {}),
+        location_name: receipt.location_name_snapshot
+          ?? receipt.location?.location_name
+          ?? receipt.warehouse
+          ?? "UNMAPPED",
       },
     }));
     return receiptId || purchaseOrderId

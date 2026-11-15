@@ -66,6 +66,7 @@ const quotationInclude = {
           },
         },
       },
+      sourceBookingSize: { select: { size: true } },
     },
   },
 };
@@ -320,7 +321,7 @@ async function mapQuotation(
 ) {
   const sizeOrderByGroup = suppliedSizeOrderByGroup ?? await getSizeGroupSizeOrderMapForOrganization(
     organizationId,
-    record.lines.map((line) => line.sourceBooking.order?.sizeGroup ?? ""),
+    record.lines.map((line) => line.sourceBooking?.order?.sizeGroup ?? ""),
   );
   return {
     id: record.id,
@@ -348,13 +349,18 @@ async function mapQuotation(
     parentQuotationId: record.parent_quotation_id,
     createdAt: record.created_at.toISOString(),
     lines: record.lines.map((line) => {
-      const sizeGroup = line.sourceBooking.order?.sizeGroup ?? "";
+      const sizeGroup = line.sourceBooking?.order?.sizeGroup ?? "";
       const sizeOrder = sizeOrderByGroup.get(sizeGroup.trim().toLocaleLowerCase()) ?? [];
-      const orderedSizeLines = sortBySizeGroupOrder(line.sourceBooking.sizeLines, sizeOrder, (sizeLine) => sizeLine.size);
+      const legacySize = line.sourceBookingSize?.size ?? line.size;
+      const orderedSizeLines = line.sourceBooking
+        ? sortBySizeGroupOrder(line.sourceBooking.sizeLines, sizeOrder, (sizeLine) => sizeLine.size)
+        : legacySize
+          ? [{ size: legacySize, booked_quantity: line.quantity }]
+          : [];
       return {
         id: line.id,
         sourceBookingId: line.source_booking_id,
-        endCustomer: line.sourceBooking.customer ?? "",
+        endCustomer: line.sourceBooking?.customer ?? "",
         sizes: orderedSizeLines.map((sizeLine) => ({
           size: sizeLine.size,
           bookedQuantity: sizeLine.booked_quantity,
@@ -574,7 +580,7 @@ export async function getDistributionQuotation(
     });
     if (masterQuotation) {
       const linkedSizeGroups = masterQuotation.childQuotations.flatMap((child) =>
-        child.lines.map((line) => line.sourceBooking.order?.sizeGroup ?? ""),
+        child.lines.map((line) => line.sourceBooking?.order?.sizeGroup ?? ""),
       );
       const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(organizationId, linkedSizeGroups);
       const sellerAddress = [
@@ -1603,6 +1609,15 @@ export async function createDistributionMasterQuotations(
         select: { dealer_id: true, distributor_id: true },
       })
       : [];
+    const distributorIdsByDealer = new Map<string, Set<string>>();
+    for (const mapping of dealerMappings) {
+      const distributorIdsForDealer = distributorIdsByDealer.get(mapping.dealer_id) ?? new Set<string>();
+      distributorIdsForDealer.add(mapping.distributor_id);
+      distributorIdsByDealer.set(mapping.dealer_id, distributorIdsForDealer);
+    }
+    if ([...distributorIdsByDealer.values()].some((distributorIdsForDealer) => distributorIdsForDealer.size > 1)) {
+      throw new Error("A Dealer is assigned to multiple Distributors. Resolve the duplicate assignments before billing.");
+    }
     const distributorIds = [...new Set(dealerMappings.map((mapping) => mapping.distributor_id))];
     const roleSettings = distributorIds.length > 0
       ? await transaction.contactRoleSetting.findMany({
@@ -1912,7 +1927,9 @@ export async function deleteDistributionQuotations(
       where: { organization_id: organizationId, quotation_id: { in: linkedQuotationIds } },
       select: { source_booking_id: true },
     });
-    const sourceBookingIds = [...new Set(sourceBookingLines.map((line) => line.source_booking_id))];
+    const sourceBookingIds = [...new Set(
+      sourceBookingLines.map((line) => line.source_booking_id).filter((id): id is string => id !== null),
+    )];
     if (sourceBookingIds.length > 0) {
       const sourceBookings = await transaction.advanceBooking.findMany({
         where: { organization_id: organizationId, id: { in: sourceBookingIds } },

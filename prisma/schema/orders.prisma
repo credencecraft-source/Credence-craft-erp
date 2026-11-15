@@ -1102,10 +1102,11 @@ model ProcurementDocumentCounter {
 model InventoryReceipt {
   id                String                 @id @default(cuid())
   organization_id   String
-  entity_id         String
+  entity_id         String?
   entity_name_snapshot String?             @db.VarChar(255)
-  location_id       String
+  location_id       String?
   location_name_snapshot String?           @db.VarChar(255)
+  warehouse         String?                @db.VarChar(150)
   purchase_order_id String
   receipt_no        String                 @db.VarChar(100)
   status            String                 @default("POSTED") @db.VarChar(30)
@@ -1115,8 +1116,8 @@ model InventoryReceipt {
   created_at        DateTime               @default(now())
   updated_at        DateTime               @updatedAt
   organization      Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  entity            MasterEntity           @relation("InventoryReceiptEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
-  location          MasterLocation         @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  entity            MasterEntity?          @relation("InventoryReceiptEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  location          MasterLocation?        @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
   purchaseOrder     PurchaseOrder          @relation(fields: [purchase_order_id], references: [id], onDelete: Restrict)
   lines             InventoryReceiptLine[]
 
@@ -1223,8 +1224,9 @@ model RmGrnOrderAllocation {
 model RawMaterialStock {
   id                        String                    @id @default(cuid())
   organization_id           String
-  entity_id                 String
-  location_id               String
+  entity_id                 String?
+  location_id               String?
+  warehouse                 String?                   @db.VarChar(150)
   storage_node_id           String?
   raw_material              String                    @db.VarChar(255)
   source_type               String                    @default("LEGACY") @db.VarChar(20)
@@ -1235,12 +1237,13 @@ model RawMaterialStock {
   created_at                DateTime                  @default(now())
   updated_at                DateTime                  @updatedAt
   organization              Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  location                  MasterLocation            @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  location                  MasterLocation?           @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
   storageNode               StorageNode?              @relation(fields: [organization_id, storage_node_id], references: [organization_id, id], onDelete: Restrict)
   receiptLine               InventoryReceiptLine?     @relation(fields: [inventory_receipt_line_id], references: [id], onDelete: SetNull)
   bookings                  RawMaterialStockBooking[]
 
   @@unique([organization_id, id])
+  @@unique([organization_id, raw_material, location_id])
   @@index([organization_id, raw_material, location_id, created_at])
   @@index([organization_id, location_id])
   @@index([organization_id, storage_node_id])
@@ -1392,8 +1395,9 @@ model RawMaterialOutwardShipmentBox {
 model FinishedGoodsStock {
   id                String         @id @default(cuid())
   organization_id   String
-  entity_id         String
-  location_id       String
+  entity_id         String?
+  location_id       String?
+  warehouse         String?        @db.VarChar(150)
   style_name        String         @db.VarChar(255)
   size              String?        @db.VarChar(100)
   quantity_on_hand  Decimal        @default(0) @db.Decimal(14, 2)
@@ -1401,7 +1405,7 @@ model FinishedGoodsStock {
   quantity_issued   Decimal        @default(0) @db.Decimal(14, 2)
   updated_at        DateTime       @updatedAt
   organization      Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  location          MasterLocation @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  location          MasterLocation? @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
 
   @@unique([organization_id, style_name, size, location_id])
   @@index([organization_id, location_id])
@@ -1413,8 +1417,8 @@ model FinishedGoodsSkuStock {
   sku_code              String?              @db.VarChar(50)
   barcode               String?              @db.VarChar(150)
   organization_id       String
-  entity_id             String
-  location_id           String
+  entity_id             String?
+  location_id           String?
   storage_node_id       String?
   style_name            String               @db.VarChar(255)
   order_no              String               @db.VarChar(100)
@@ -1437,7 +1441,7 @@ model FinishedGoodsSkuStock {
   current_stock         Decimal              @default(0) @db.Decimal(14, 2)
   purchase_bill_line_id String?              @unique
   organization          Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  location              MasterLocation       @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  location              MasterLocation?      @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
   storageNode           StorageNode?          @relation(fields: [organization_id, storage_node_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_sku_stocks_storage_node_fkey")
   purchase_bill_line    PosPurchaseBillLine? @relation(fields: [purchase_bill_line_id], references: [id], onDelete: SetNull)
   posSalesLines         PosSalesInvoiceLine[]
@@ -1851,6 +1855,7 @@ model AdvanceBookingSizeLine {
   booking                             AdvanceBooking                       @relation(fields: [organization_id, booking_id], references: [organization_id, id], onDelete: Cascade, map: "advance_booking_size_lines_booking_fkey")
   assignments                         AdvanceBookingWorkOrderAssignment[]
   finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
+  quotationSizeLines                  DistributionQuotationLine[]            @relation("QuotationLineSourceSize")
 
   @@unique([organization_id, id])
   @@unique([booking_id, size])
@@ -1954,7 +1959,9 @@ model DistributionQuotationLine {
   id                String                @id @default(cuid())
   organization_id   String
   quotation_id      String
-  source_booking_id String
+  source_booking_id String?
+  source_booking_size_id String?
+  size              String?               @db.VarChar(100)
   item_description  String                @db.VarChar(500)
   booking_no        String                @db.VarChar(100)
   order_no          String                @db.VarChar(100)
@@ -1980,10 +1987,12 @@ model DistributionQuotationLine {
   created_at        DateTime              @default(now())
   organization      Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   quotation         DistributionQuotation @relation(fields: [organization_id, quotation_id], references: [organization_id, id], onDelete: Cascade)
-  sourceBooking     AdvanceBooking        @relation(fields: [organization_id, source_booking_id], references: [organization_id, id], onDelete: Restrict)
+  sourceBooking     AdvanceBooking?       @relation(fields: [organization_id, source_booking_id], references: [organization_id, id], onDelete: Restrict)
+  sourceBookingSize AdvanceBookingSizeLine? @relation("QuotationLineSourceSize", fields: [organization_id, source_booking_size_id], references: [organization_id, id], onDelete: Restrict, map: "distribution_quotation_lines_source_booking_size_fkey")
 
   @@unique([organization_id, id])
-  @@unique([organization_id, source_booking_id])
+  @@index([organization_id, source_booking_id], map: "distribution_quotation_lines_org_source_booking_idx")
+  @@index([organization_id, source_booking_size_id], map: "distribution_quotation_lines_org_source_booking_size_idx")
   @@index([organization_id, created_at(sort: Desc), id(sort: Desc)])
   @@index([organization_id, quotation_id])
   @@map("distribution_quotation_lines")

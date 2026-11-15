@@ -465,6 +465,8 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
               organization_id: input.organizationId,
               id: { in: skuStockIds },
               source: { in: [...GENERAL_FINISHED_GOODS_SKU_SOURCES] },
+              entity_id: { not: null },
+              location_id: { not: null },
               ...(stockLocation ? { storage_node_id: stockLocation.subSubLocationId } : {}),
             },
             select: {
@@ -488,13 +490,22 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
           })
         : Promise.resolve([]),
     ]);
+    const assignedSkuStockRecords = skuStockRecords
+      .map((record) => {
+        if (!record.entity_id || !record.location_id) return null;
+        return { ...record, entity_id: record.entity_id, location_id: record.location_id };
+      })
+      .filter((record) => record !== null);
+    if (assignedSkuStockRecords.length !== skuStockRecords.length) {
+      throw new Error("Assign selected SKU stock to an Entity and Location before sale.");
+    }
     const stockRecords: PosSaleStockRecord[] = [
       ...generalReceiptRecords.map((record) => ({
         ...record,
         sub_product_category: null,
         stockType: "GENERAL_GRN" as const,
       })),
-      ...skuStockRecords.map((record) => ({ ...record, stockType: "SKU" as const })),
+      ...assignedSkuStockRecords.map((record) => ({ ...record, stockType: "SKU" as const })),
     ];
     if (stockRecords.length !== normalizedLines.length) {
       throw new Error("One or more selected items are not General stock in this organization.");

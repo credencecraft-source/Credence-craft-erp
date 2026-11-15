@@ -202,6 +202,31 @@ describe("distribution quotation persistence", () => {
     });
   });
 
+  it("preserves and reports legacy quotation lines without a linked booking", async () => {
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValue({
+      ...createdQuotation,
+      lines: [{
+        ...createdQuotation.lines[0],
+        source_booking_id: null,
+        source_booking_size_id: "booking-size-1",
+        sourceBooking: null,
+        sourceBookingSize: { size: "L" },
+        size: null,
+        quantity: 12,
+      }],
+      childQuotations: [],
+    });
+
+    const result = await getDistributionQuotation("internal-org-1", "quotation-1");
+
+    expect(result.quotation.lines[0]).toMatchObject({
+      sourceBookingId: null,
+      bookingNo: "BK-1",
+      quantity: 12,
+      sizes: [{ size: "L", bookedQuantity: 12 }],
+    });
+  });
+
   it("returns active persisted Contact Roles for direct contacts and linked Dealers", async () => {
     mocks.prisma.distributionOrderForm.findMany.mockResolvedValue([
       {
@@ -1433,6 +1458,33 @@ describe("distribution quotation persistence", () => {
       where: { organization_id: "internal-org-1", dealer_id: { in: ["dealer-contact"] } },
       select: { dealer_id: true, distributor_id: true },
     });
+    expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects automatic billing when a preserved Dealer mapping points to multiple Distributors", async () => {
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      ...createdQuotation,
+      id: "quote-ambiguous",
+      quotation_no: "QT-AMBIGUOUS",
+      order_no: "ORD-AMBIGUOUS",
+      total_quantity: 10,
+      subtotal: new Prisma.Decimal("10"),
+      vendor: { contact_id: "dealer-contact" },
+    }]);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([{ contact_id: "dealer-contact" }]);
+    mocks.transaction.contactDistributorDealerAssignment.findMany.mockResolvedValue([
+      { dealer_id: "dealer-contact", distributor_id: "distributor-a" },
+      { dealer_id: "dealer-contact", distributor_id: "distributor-b" },
+    ]);
+
+    await expect(createDistributionMasterQuotations(
+      "internal-org-1",
+      "user-1",
+      ["quote-ambiguous"],
+      null,
+    )).rejects.toThrow(/assigned to multiple Distributors/);
+
+    expect(mocks.transaction.contactRoleSetting.findMany).not.toHaveBeenCalled();
     expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
   });
 

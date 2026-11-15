@@ -173,6 +173,17 @@ describe("quotation-linked booking fulfillment", () => {
     expect(result.bookings.map((booking) => booking.bookingNo)).toEqual(["BK-1", "BK-2"]);
   });
 
+  it("preserves unlinked legacy quotation lines without querying a null booking ID", async () => {
+    mocks.prisma.distributionQuotationLine.findMany.mockResolvedValue([
+      { source_booking_id: null },
+    ]);
+
+    await expect(listQuotationBookingFulfillment("internal-org-1", "quotation-1"))
+      .resolves.toEqual({ bookings: [] });
+
+    expect(mocks.prisma.advanceBooking.findMany).not.toHaveBeenCalled();
+  });
+
   it("moves unused allocated stock back to general stock and writes an audit event", async () => {
     const result = await reverseQuotationBookingFulfillment(
       "internal-org-1",

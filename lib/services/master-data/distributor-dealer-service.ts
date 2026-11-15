@@ -4,6 +4,7 @@ import { createAuditEvent } from "@/lib/services/organizations/audit-event-servi
 
 export type DistributorDealerRow = {
   id: string;
+  mappingId?: string;
   code: string;
   legalName: string;
   displayName: string | null;
@@ -32,14 +33,19 @@ export async function listDistributorDealers(
     orderBy: [{ created_at: "asc" }, { id: "asc" }],
   });
 
-  return mappings.map((mapping) => ({
-    id: mapping.dealer.id,
-    mappingId: mapping.id,
-    code: mapping.dealer.code,
-    legalName: mapping.dealer.legal_name,
-    displayName: mapping.dealer.display_name,
-    isActive: mapping.dealer.is_active,
-  }));
+  const dealersById = new Map<string, DistributorDealerRow>();
+  for (const mapping of mappings) {
+    if (dealersById.has(mapping.dealer.id)) continue;
+    dealersById.set(mapping.dealer.id, {
+      id: mapping.dealer.id,
+      mappingId: mapping.id,
+      code: mapping.dealer.code,
+      legalName: mapping.dealer.legal_name,
+      displayName: mapping.dealer.display_name,
+      isActive: mapping.dealer.is_active,
+    });
+  }
+  return [...dealersById.values()];
 }
 
 export async function listAssignedDealerIds(

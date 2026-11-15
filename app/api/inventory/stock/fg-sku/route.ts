@@ -315,7 +315,14 @@ export async function GET(request: Request) {
       verified_by: resolveActorEmail(record.verified_by, actorEmails),
       posted_at: record.posted_at,
     }));
-    const records = [...skuRecords, ...generalStockRecords, ...allocatedStockRecords]
+    const records = [
+      ...skuRecords.map((record) => ({
+        ...record,
+        location: record.location ?? { location_name: "UNMAPPED" },
+      })),
+      ...generalStockRecords,
+      ...allocatedStockRecords,
+    ]
       .map((record) => ({ ...record, ...getFinishedGoodsSourceHierarchy(record.source) }))
       .sort((left, right) => new Date(right.added_time).getTime() - new Date(left.added_time).getTime());
 
@@ -595,6 +602,9 @@ export async function PATCH(request: Request) {
           select: { id: true, entity_id: true, location_id: true },
         });
       if (!location) throw new Error("Unmapped finished-goods stock record not found.");
+      if (!location.entity_id || !location.location_id) {
+        throw new Error("Assign this stock record to an Entity and Location before mapping its Sub-sub-location.");
+      }
       await resolveActivePosStockLocationByLeaf(
         transaction,
         organization.id,

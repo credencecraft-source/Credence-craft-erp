@@ -132,10 +132,10 @@ model ContactDistributorDealerAssignment {
   distributor  Contact      @relation("DistributorContact", fields: [organization_id, distributor_id], references: [organization_id, id], onDelete: Cascade)
   dealer       Contact      @relation("DealerContact", fields: [organization_id, dealer_id], references: [organization_id, id], onDelete: Cascade)
 
-  @@unique([organization_id, distributor_id, dealer_id])
-  @@unique([organization_id, dealer_id], map: "contact_distributor_dealer_org_dealer_key")
-  @@index([organization_id, distributor_id, created_at])
-  @@index([organization_id, dealer_id])
+  @@index([organization_id, distributor_id, dealer_id], map: "contact_distributor_dealer_lookup_idx")
+  @@index([organization_id, dealer_id], map: "contact_distributor_dealer_org_dealer_idx")
+  @@index([organization_id, distributor_id, created_at], map: "contact_distributor_dealer_created_idx")
+  @@index([organization_id, dealer_id], map: "contact_distributor_dealer_dealer_idx")
   @@map("contact_distributor_dealer_assignments")
 }
 

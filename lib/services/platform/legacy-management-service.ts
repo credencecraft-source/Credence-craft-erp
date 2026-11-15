@@ -160,8 +160,8 @@ type StorageNodeCandidate = {
 
 type StorageRecord = {
   id: string;
-  entity_id: string;
-  location_id: string;
+  entity_id: string | null;
+  location_id: string | null;
 };
 
 const ADDRESS_STATE_CODES_BY_NAME: Readonly<Record<string, string>> = {
@@ -1083,6 +1083,16 @@ async function inspectUnmappedStorageTable(
 
     const updateGroups = new Map<string, { node: StorageNodeCandidate; recordIds: string[] }>();
     for (const record of records) {
+      if (!record.entity_id || !record.location_id) {
+        skippedCount += 1;
+        if (sampleSkips.length < SAMPLE_CHANGE_LIMIT) {
+          sampleSkips.push({
+            subject: "Finished-goods stock location",
+            reason: "This record has no Entity or Location assignment to resolve.",
+          });
+        }
+        continue;
+      }
       const node = await resolveNode(record.entity_id, record.location_id);
       if (!node) {
         skippedCount += 1;

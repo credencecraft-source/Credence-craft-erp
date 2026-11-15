@@ -101,12 +101,14 @@ async function findStock(database: Database, organizationId: string, stockType: 
         location: { select: { location_name: true } },
       },
     });
-    return record ? {
+    if (!record) return null;
+    if (!record.location) throw new Error("Assign this finished-goods stock to a Location before shipping.");
+    return {
       stockType, stockBucket: "GENERAL", id: record.id, locationName: record.location.location_name,
       skuCode: record.sku_code, styleName: record.style_name, orderNo: record.order_no,
       articleNo: record.article_no, brand: record.brand, size: record.size, colour: record.colour,
       currentStock: new Prisma.Decimal(record.current_stock),
-    } : null;
+    };
   }
 
   if (stockType === "GENERAL") {
@@ -117,12 +119,14 @@ async function findStock(database: Database, organizationId: string, stockType: 
         colour: true, current_stock: true, location: { select: { location_name: true } },
       },
     });
-    return record ? {
+    if (!record) return null;
+    if (!record.location) throw new Error("Assign this finished-goods stock to a Location before shipping.");
+    return {
       stockType, stockBucket: "GENERAL", id: record.id, locationName: record.location.location_name,
       skuCode: null, styleName: record.style_name, orderNo: record.order_no,
       articleNo: record.article_no ?? "", brand: record.brand, size: record.size, colour: record.colour,
       currentStock: new Prisma.Decimal(record.current_stock),
-    } : null;
+    };
   }
 
   const record = await database.finishedGoodsAllocatedStockReceipt.findFirst({
@@ -161,13 +165,16 @@ async function findStocks(
         location: { select: { location_name: true } },
       },
     });
-    for (const record of records) stocks.set(`SKU:${record.id}`, {
-      stockType: "SKU", stockBucket: "GENERAL", id: record.id,
-      locationName: record.location.location_name, skuCode: record.sku_code,
-      styleName: record.style_name, orderNo: record.order_no, articleNo: record.article_no,
-      brand: record.brand, size: record.size, colour: record.colour,
-      currentStock: new Prisma.Decimal(record.current_stock),
-    });
+    for (const record of records) {
+      if (!record.location) throw new Error("Assign this finished-goods stock to a Location before shipping.");
+      stocks.set(`SKU:${record.id}`, {
+        stockType: "SKU", stockBucket: "GENERAL", id: record.id,
+        locationName: record.location.location_name, skuCode: record.sku_code,
+        styleName: record.style_name, orderNo: record.order_no, articleNo: record.article_no,
+        brand: record.brand, size: record.size, colour: record.colour,
+        currentStock: new Prisma.Decimal(record.current_stock),
+      });
+    }
   }
 
   if (idsByType.GENERAL.length) {
@@ -178,12 +185,15 @@ async function findStocks(
         colour: true, current_stock: true, location: { select: { location_name: true } },
       },
     });
-    for (const record of records) stocks.set(`GENERAL:${record.id}`, {
-      stockType: "GENERAL", stockBucket: "GENERAL", id: record.id,
-      locationName: record.location.location_name, skuCode: null, styleName: record.style_name,
-      orderNo: record.order_no, articleNo: record.article_no ?? "", brand: record.brand,
-      size: record.size, colour: record.colour, currentStock: new Prisma.Decimal(record.current_stock),
-    });
+    for (const record of records) {
+      if (!record.location) throw new Error("Assign this finished-goods stock to a Location before shipping.");
+      stocks.set(`GENERAL:${record.id}`, {
+        stockType: "GENERAL", stockBucket: "GENERAL", id: record.id,
+        locationName: record.location.location_name, skuCode: null, styleName: record.style_name,
+        orderNo: record.order_no, articleNo: record.article_no ?? "", brand: record.brand,
+        size: record.size, colour: record.colour, currentStock: new Prisma.Decimal(record.current_stock),
+      });
+    }
   }
 
   if (idsByType.ALLOCATED.length) {
@@ -196,7 +206,7 @@ async function findStocks(
     });
     for (const record of records) stocks.set(`ALLOCATED:${record.id}`, {
       stockType: "ALLOCATED", stockBucket: "ALLOCATED", id: record.id,
-      locationName: record.location.location_name, skuCode: null, styleName: record.style_name,
+      locationName: record.location?.location_name ?? "UNMAPPED", skuCode: null, styleName: record.style_name,
       orderNo: record.order_no, articleNo: record.article_no ?? "", brand: record.brand,
       size: record.size, colour: record.colour, currentStock: new Prisma.Decimal(record.current_stock),
     });
@@ -1418,19 +1428,19 @@ export async function listFinishedGoodsOutwardWorkflow(organizationId: string, a
   const stock = [
     ...skuRecords.map((record) => ({
       stockType: "SKU" as const, stockBucket: "GENERAL" as const, id: record.id,
-      locationName: record.location.location_name, skuCode: record.sku_code, styleName: record.style_name,
+      locationName: record.location?.location_name ?? "UNMAPPED", skuCode: record.sku_code, styleName: record.style_name,
       orderNo: record.order_no, articleNo: record.article_no, brand: record.brand, size: record.size,
       colour: record.colour, currentStock: new Prisma.Decimal(record.current_stock),
     })),
     ...generalRecords.map((record) => ({
       stockType: "GENERAL" as const, stockBucket: "GENERAL" as const, id: record.id,
-      locationName: record.location.location_name, skuCode: null, styleName: record.style_name,
+      locationName: record.location?.location_name ?? "UNMAPPED", skuCode: null, styleName: record.style_name,
       orderNo: record.order_no, articleNo: record.article_no ?? "", brand: record.brand, size: record.size,
       colour: record.colour, currentStock: new Prisma.Decimal(record.current_stock),
     })),
     ...allocatedRecords.map((record) => ({
       stockType: "ALLOCATED" as const, stockBucket: "ALLOCATED" as const, id: record.id,
-      locationName: record.location.location_name, skuCode: null, styleName: record.style_name,
+      locationName: record.location?.location_name ?? "UNMAPPED", skuCode: null, styleName: record.style_name,
       orderNo: record.order_no, articleNo: record.article_no ?? "", brand: record.brand, size: record.size,
       colour: record.colour, currentStock: new Prisma.Decimal(record.current_stock),
     })),

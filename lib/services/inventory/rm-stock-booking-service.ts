@@ -59,7 +59,7 @@ function mapRawMaterialStockBooking(row: {
   id: string;
   take_from_stock_id: string;
   currentStoreVendor: { vendor: string };
-  takeFromStock: { raw_material: string; location: { location_name: string; entity: { entity_name: string } } };
+  takeFromStock: { raw_material: string; location: { location_name: string; entity: { entity_name: string } } | null };
   sourceBomItem: { order: { orderNo: string; styleName: string | null } };
   booked_quantity: Prisma.Decimal;
   fulfilled_quantity: Prisma.Decimal;
@@ -72,8 +72,8 @@ function mapRawMaterialStockBooking(row: {
     takeFromStockId: row.take_from_stock_id,
     currentStoreVendor: row.currentStoreVendor.vendor,
     rawMaterial: row.takeFromStock.raw_material,
-    location: row.takeFromStock.location.location_name,
-    entity: row.takeFromStock.location.entity.entity_name,
+    location: row.takeFromStock.location?.location_name ?? "UNMAPPED",
+    entity: row.takeFromStock.location?.entity.entity_name ?? "UNMAPPED",
     orderNo: row.sourceBomItem.order.orderNo,
     styleName: row.sourceBomItem.order.styleName,
     bookedQuantity: Number(row.booked_quantity),

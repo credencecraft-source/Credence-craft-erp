@@ -151,6 +151,42 @@ describe("raw-material General Inventory GRN totals", () => {
     expect(rows.map((row) => row.fresh_excess.toString())).toEqual(["0", "1"]);
   });
 
+  it("retains unmapped stock under its legacy warehouse label without merging different warehouses", async () => {
+    mocks.stockFindMany.mockResolvedValue([
+      {
+        id: "legacy-stock-a",
+        location_id: null,
+        warehouse: "Old Warehouse A",
+        raw_material: "Cotton",
+        source_type: "LEGACY",
+        location: null,
+        quantity_on_hand: new Prisma.Decimal("4"),
+        quantity_reserved: new Prisma.Decimal("0"),
+        quantity_issued: new Prisma.Decimal("0"),
+      },
+      {
+        id: "legacy-stock-b",
+        location_id: null,
+        warehouse: "Old Warehouse B",
+        raw_material: "Cotton",
+        source_type: "LEGACY",
+        location: null,
+        quantity_on_hand: new Prisma.Decimal("6"),
+        quantity_reserved: new Prisma.Decimal("0"),
+        quantity_issued: new Prisma.Decimal("0"),
+      },
+    ]);
+    mocks.receiptLineFindMany.mockResolvedValue([]);
+
+    const rows = await listRawMaterialGeneralInventory("internal-org-1");
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => `${row.location.location_name}:${row.quantity_on_hand.toString()}`).sort()).toEqual([
+      "UNMAPPED: Old Warehouse A:4",
+      "UNMAPPED: Old Warehouse B:6",
+    ]);
+  });
+
   it("separates asset stock using the PO snapshot and only includes verified receipt-only rows", async () => {
     mocks.stockFindMany.mockResolvedValue([
       {

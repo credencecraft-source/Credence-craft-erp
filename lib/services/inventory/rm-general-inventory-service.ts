@@ -5,8 +5,18 @@ import { getStorageNodePathsForOrganization } from "@/lib/services/inventory/sto
 
 const zero = () => new Prisma.Decimal(0);
 
-function stockKey(locationId: string, rawMaterial: string, isAsset: boolean) {
-  return `${locationId}\u0000${rawMaterial}\u0000${isAsset ? "ASSET" : "RM"}`;
+function stockKey(locationId: string | null, warehouse: string | null, rawMaterial: string, isAsset: boolean) {
+  const locationKey = locationId ?? `UNMAPPED:${warehouse?.trim().toLocaleLowerCase() ?? ""}`;
+  return `${locationKey}\u0000${rawMaterial}\u0000${isAsset ? "ASSET" : "RM"}`;
+}
+
+function displayLocation(
+  location: { location_name: string } | null,
+  warehouse: string | null,
+) {
+  if (location) return location;
+  const legacyWarehouse = warehouse?.trim();
+  return { location_name: legacyWarehouse ? `UNMAPPED: ${legacyWarehouse}` : "UNMAPPED" };
 }
 
 export async function listRawMaterialGeneralInventory(
@@ -48,6 +58,7 @@ export async function listRawMaterialGeneralInventory(
         receipt: {
           select: {
             location_id: true,
+            warehouse: true,
             location: { select: { location_name: true } },
           },
         },
@@ -89,8 +100,9 @@ export async function listRawMaterialGeneralInventory(
   ) => poAssetSnapshot ?? Boolean(rawMaterial && assetMaterialNames.has(rawMaterial));
 
   const totalsByStockKey = new Map<string, {
-    locationId: string;
-    location: { location_name: string };
+    locationId: string | null;
+    location: { location_name: string } | null;
+    warehouse: string | null;
     rawMaterial: string;
     isAsset: boolean;
     freshExcess: Prisma.Decimal;
@@ -105,6 +117,7 @@ export async function listRawMaterialGeneralInventory(
       .filter((row) => row.source_type === "LEGACY")
       .map((row) => stockKey(
         row.location_id,
+        row.warehouse,
         row.raw_material,
         isAssetMaterial(row.raw_material),
       )),
@@ -112,15 +125,16 @@ export async function listRawMaterialGeneralInventory(
 
   for (const line of receiptLines) {
     if (!line.raw_material || linkedReceiptLineIds.has(line.id) || (assetOnly && !line.rmGrnVerification)) continue;
-    const { location_id: locationId, location } = line.receipt;
+    const { location_id: locationId, location, warehouse } = line.receipt;
     const isAsset = isAssetMaterial(
       line.raw_material,
       purchaseOrderAssetSnapshot(line.purchaseOrderLine?.purchaseOrder),
     );
-    const key = stockKey(locationId, line.raw_material, isAsset);
+    const key = stockKey(locationId, warehouse, line.raw_material, isAsset);
     const totals = totalsByStockKey.get(key) ?? {
       locationId,
-      location,
+      location: displayLocation(location, warehouse),
+      warehouse,
       rawMaterial: line.raw_material,
       isAsset,
       freshExcess: zero(),
@@ -142,11 +156,12 @@ export async function listRawMaterialGeneralInventory(
       purchaseOrderAssetSnapshot(row.receiptLine?.purchaseOrderLine?.purchaseOrder),
     );
     const totals = sourceType === "LEGACY"
-      ? totalsByStockKey.get(stockKey(row.location_id, row.raw_material, isAsset))
+      ? totalsByStockKey.get(stockKey(row.location_id, row.warehouse, row.raw_material, isAsset))
       : undefined;
     const verification = row.receiptLine?.rmGrnVerification;
     return {
       ...row,
+      location: displayLocation(row.location, row.warehouse),
       storage_path: row.storage_node_id ? storagePaths.get(row.storage_node_id) ?? null : null,
       is_asset: isAsset,
       category: categoriesByMaterialName.get(row.raw_material.toLocaleLowerCase()) ?? "Uncategorized",
@@ -163,9 +178,9 @@ export async function listRawMaterialGeneralInventory(
   const receiptOnlyRows = [...totalsByStockKey.entries()]
     .filter(([key]) => !legacyStockKeys.has(key))
     .map(([, totals]) => ({
-      id: `grn:${totals.locationId}:${totals.rawMaterial}`,
+      id: `grn:${totals.locationId ?? totals.warehouse ?? "unmapped"}:${totals.rawMaterial}`,
       location_id: totals.locationId,
-      location: totals.location,
+      location: displayLocation(totals.location, totals.warehouse),
       storage_path: null,
       raw_material: totals.rawMaterial,
       is_asset: totals.isAsset,
