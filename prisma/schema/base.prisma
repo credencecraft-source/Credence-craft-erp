@@ -105,7 +105,7 @@ model TenantUsageBill {
 
 model Organization {
   id                                      String                                    @id @default(cuid())
-  organization_number                     String                                    @unique @default(dbgenerated("lpad(nextval('organization_number_sequence'::regclass)::text, 10, '0'::text)")) @db.VarChar(10)
+  organization_number                     String                                    @unique @default(dbgenerated("lpad((nextval('organization_number_sequence'::regclass))::text, 10, '0'::text)")) @db.VarChar(10)
   organization_id                         String                                    @unique @default(uuid())
   organization_name                       String                                    @db.VarChar(255)
   online_store_public_key                  String?                                   @unique @db.VarChar(64)
