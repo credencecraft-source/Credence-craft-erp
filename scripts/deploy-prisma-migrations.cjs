@@ -137,66 +137,68 @@ async function baselinePreviewMigrationHistory({
 } = {}) {
   if (env.VERCEL_ENV?.trim() !== "preview") return 0;
 
-  const status = run(["migrate", "status"]);
-  const statusResult = await status;
-  if (statusResult.code === 0) return 0;
-  const nonEmptySchema = /schema is not empty/i.test(statusResult.output);
+  const allowFreshBranchSync = isFreshSandboxBranchSchemaSyncAllowed(env);
   let failedMigrations = [];
-  if (!statusResult.output.includes("P3005") && !nonEmptySchema) {
-    let diagnosticPrismaCode;
-    let diagnosticDatabaseCode;
-    let diagnosticSystemCode;
-    try {
-      failedMigrations = await readFailureDetails();
-    } catch (error) {
-      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-      if (typeof code === "string" && /^P\d{4}$/.test(code)) {
-        diagnosticPrismaCode = code;
-      } else if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
-        diagnosticDatabaseCode = code;
-      } else if (typeof code === "string" && /^[A-Z0-9_]{2,20}$/.test(code)) {
-        diagnosticSystemCode = code;
+  if (!allowFreshBranchSync) {
+    const statusResult = await run(["migrate", "status"]);
+    if (statusResult.code === 0) return 0;
+    const nonEmptySchema = /schema is not empty/i.test(statusResult.output);
+    if (!statusResult.output.includes("P3005") && !nonEmptySchema) {
+      let diagnosticPrismaCode;
+      let diagnosticDatabaseCode;
+      let diagnosticSystemCode;
+      try {
+        failedMigrations = await readFailureDetails();
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        if (typeof code === "string" && /^P\d{4}$/.test(code)) {
+          diagnosticPrismaCode = code;
+        } else if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
+          diagnosticDatabaseCode = code;
+        } else if (typeof code === "string" && /^[A-Z0-9_]{2,20}$/.test(code)) {
+          diagnosticSystemCode = code;
+        }
       }
-    }
 
-    const knownFailedMigrations = failedMigrations.length > 0
-      && failedMigrations.every((migration) =>
-        KNOWN_SCHEMA_BASELINE_FAILURES.get(migration.migrationName) === migration.databaseCode,
-      );
-    if (!knownFailedMigrations) {
-      const prismaCode = statusResult.output.match(/\bP\d{4}\b/)?.[0]
-        ?? failedMigrations.find((migration) => migration.prismaCode)?.prismaCode
-        ?? diagnosticPrismaCode;
-      const databaseCode = statusResult.output.match(/\bDatabase error code:\s*([A-Z0-9]{5})\b/i)?.[1]
-        ?? failedMigrations.find((migration) => migration.databaseCode)?.databaseCode
-        ?? diagnosticDatabaseCode;
-      const systemErrorCode = typeof statusResult.systemErrorCode === "string"
-        && /^[A-Z0-9_]{2,20}$/.test(statusResult.systemErrorCode)
-        ? statusResult.systemErrorCode
-        : diagnosticSystemCode;
-      const failedMigrationNames = failedMigrations
-        .map((migration) => migration.migrationName)
-        .filter((name) => /^[A-Za-z0-9_]{1,120}$/.test(name));
-      const safeCode = prismaCode
-        ? `Prisma ${prismaCode}`
-        : databaseCode
-          ? `database ${databaseCode}`
-          : systemErrorCode
-            ? `system ${systemErrorCode}`
-            : "unknown";
-      const details = [
-        safeCode,
-        ...failedMigrationNames.map((name) => `migration ${name}`),
-      ];
-      if (statusResult.exitStatus === null) {
-        details.push(statusResult.signal
-          ? `status process signal ${statusResult.signal}`
-          : "status process did not exit normally");
-      } else if (statusResult.exitStatus !== undefined) {
-        details.push(`status process exit ${statusResult.exitStatus}`);
+      const knownFailedMigrations = failedMigrations.length > 0
+        && failedMigrations.every((migration) =>
+          KNOWN_SCHEMA_BASELINE_FAILURES.get(migration.migrationName) === migration.databaseCode,
+        );
+      if (!knownFailedMigrations) {
+        const prismaCode = statusResult.output.match(/\bP\d{4}\b/)?.[0]
+          ?? failedMigrations.find((migration) => migration.prismaCode)?.prismaCode
+          ?? diagnosticPrismaCode;
+        const databaseCode = statusResult.output.match(/\bDatabase error code:\s*([A-Z0-9]{5})\b/i)?.[1]
+          ?? failedMigrations.find((migration) => migration.databaseCode)?.databaseCode
+          ?? diagnosticDatabaseCode;
+        const systemErrorCode = typeof statusResult.systemErrorCode === "string"
+          && /^[A-Z0-9_]{2,20}$/.test(statusResult.systemErrorCode)
+          ? statusResult.systemErrorCode
+          : diagnosticSystemCode;
+        const failedMigrationNames = failedMigrations
+          .map((migration) => migration.migrationName)
+          .filter((name) => /^[A-Za-z0-9_]{1,120}$/.test(name));
+        const safeCode = prismaCode
+          ? `Prisma ${prismaCode}`
+          : databaseCode
+            ? `database ${databaseCode}`
+            : systemErrorCode
+              ? `system ${systemErrorCode}`
+              : "unknown";
+        const details = [
+          safeCode,
+          ...failedMigrationNames.map((name) => `migration ${name}`),
+        ];
+        if (statusResult.exitStatus === null) {
+          details.push(statusResult.signal
+            ? `status process signal ${statusResult.signal}`
+            : "status process did not exit normally");
+        } else if (statusResult.exitStatus !== undefined) {
+          details.push(`status process exit ${statusResult.exitStatus}`);
+        }
+        logger.error(`[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history (${details.join("; ")}).`);
+        return statusResult.code || 1;
       }
-      logger.error(`[SANDBOX_BASELINE_STATUS_FAILED] Refusing to baseline sandbox history (${details.join("; ")}).`);
-      return statusResult.code || 1;
     }
   }
 
@@ -220,8 +222,6 @@ async function baselinePreviewMigrationHistory({
   const diff = await run(diffArgs);
   const diffSql = typeof diff.stdout === "string" ? diff.stdout : diff.output;
   const statements = getSchemaDiffStatements(diffSql);
-  const allowFreshBranchSync = isFreshSandboxBranchSchemaSyncAllowed(env);
-
   if (
     diff.code !== 0
     || (statements.length > 0 && !allowFreshBranchSync && !isSafeSchemaBaselineDiff(diffSql))

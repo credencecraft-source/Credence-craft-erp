@@ -121,12 +121,11 @@ describe("Prisma Preview schema baseline", () => {
     );
   });
 
-  it("synchronizes only a fresh verified test-branch Preview before baselining", async () => {
+  it("diffs a fresh verified sandbox Preview before migration status can fail on its empty history", async () => {
     const migrationsPath = "prisma/migrations";
     const migrationNames = getMigrationNames(migrationsPath);
     const schemaDiff = 'ALTER TABLE "organizations" DROP COLUMN "legacy";';
     const run = vi.fn<(args: string[]) => MigrationResult>()
-      .mockReturnValueOnce({ code: 1, output: "Error: P3005" })
       .mockReturnValueOnce({ code: 0, output: schemaDiff })
       .mockReturnValueOnce({ code: 0, output: "-- This is an empty migration." })
       .mockReturnValue({ code: 0, output: "" });
@@ -161,7 +160,16 @@ describe("Prisma Preview schema baseline", () => {
       ["db", "execute", "--stdin", "--schema", expect.any(String)],
       schemaDiff,
     );
-    expect(run).toHaveBeenCalledTimes(migrationNames.length + 3);
+    expect(run).toHaveBeenCalledTimes(migrationNames.length + 2);
+    expect(run).toHaveBeenNthCalledWith(1, [
+      "migrate",
+      "diff",
+      "--from-url",
+      "postgresql://direct/sandbox",
+      "--to-schema-datamodel",
+      expect.any(String),
+      "--script",
+    ]);
     expect(logger.log).toHaveBeenCalledWith(
       "Synchronized the fresh, verified Preview sandbox schema to the Prisma model.",
     );
@@ -170,7 +178,6 @@ describe("Prisma Preview schema baseline", () => {
   it("does not baseline a synchronized branch unless the post-sync diff is empty", async () => {
     const schemaDiff = 'ALTER TABLE "organizations" DROP COLUMN "legacy";';
     const run = vi.fn<(args: string[]) => MigrationResult>()
-      .mockReturnValueOnce({ code: 1, output: "Error: P3005" })
       .mockReturnValueOnce({ code: 0, output: schemaDiff })
       .mockReturnValueOnce({
         code: 0,
@@ -201,7 +208,7 @@ describe("Prisma Preview schema baseline", () => {
       runWithInput,
     })).resolves.toBe(1);
 
-    expect(run).toHaveBeenCalledTimes(3);
+    expect(run).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledWith(
       "[SANDBOX_SCHEMA_SYNC_VERIFY_FAILED] Refusing to baseline sandbox history because schema verification did not produce an empty diff. Remaining changes: ALTER TABLE organizations DROP COLUMN still_legacy.",
     );
