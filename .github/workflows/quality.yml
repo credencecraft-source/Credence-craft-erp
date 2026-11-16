@@ -64,6 +64,9 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/pre-migration-schema"
           git archive "$baseline_commit" prisma/schema | tar -x -C "$RUNNER_TEMP/pre-migration-schema"
+          printf '%s\n' \
+            'CREATE SEQUENCE IF NOT EXISTS "organization_number_sequence" START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9999999999 NO CYCLE;' \
+            | npx prisma db execute --stdin --schema "$RUNNER_TEMP/pre-migration-schema/prisma/schema"
           npx prisma db push --schema "$RUNNER_TEMP/pre-migration-schema/prisma/schema" --skip-generate
 
           mapfile -t baseline_migrations < <(
