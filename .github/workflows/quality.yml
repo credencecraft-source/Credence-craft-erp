@@ -12,6 +12,23 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: credencecraft_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d credencecraft_migrations"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/credencecraft_migrations?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/credencecraft_migrations?schema=public
 
     steps:
       - name: Check out repository
@@ -25,6 +42,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Apply migrations to disposable PostgreSQL
+        run: npm run db:migrate:deploy
+
+      - name: Verify disposable database migration status
+        run: npm run db:migrate:status
 
       - name: Run ERP quality gates
         run: npm run qa
