@@ -93,10 +93,31 @@ function formatLocationPath(location: PosCounterRecord["subSubLocation"]) {
   ].filter((part): part is string => Boolean(part)).join(" / ");
 }
 
+function counterSlug(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function getPosCounterRouteKey(counterName: string, counterId: string) {
+  return `${counterSlug(counterName) || "counter"}--${counterId}`;
+}
+
+export function getPosCounterIdFromRouteKey(routeKey: string) {
+  const separator = routeKey.lastIndexOf("--");
+  if (separator < 1) return null;
+  const counterId = routeKey.slice(separator + 2);
+  return counterId && counterId.length <= 100 ? counterId : null;
+}
+
 function serializeCounter(counter: PosCounterRecord) {
   return {
     id: counter.id,
     counterName: counter.counter_name,
+    routeKey: getPosCounterRouteKey(counter.counter_name, counter.id),
     subSubLocationId: counter.sub_sub_location_id,
     subSubLocationPath: formatLocationPath(counter.subSubLocation),
     createdAt: counter.created_at.toISOString(),
@@ -173,12 +194,16 @@ export async function createPosCounter(input: {
 export async function listPosCounters(input: {
   organizationId: string;
   search?: string;
+  subSubLocationId?: string;
   cursor?: PosCounterCursor | null;
   limit: number;
 }) {
   const organizationId = normalizeIdentifier(input.organizationId, "Organization");
   const limit = parsePageSize(input.limit);
   const search = normalizeSearch(input.search);
+  const subSubLocationId = input.subSubLocationId
+    ? normalizeIdentifier(input.subSubLocationId, "Sub-sub-location")
+    : undefined;
   const filters: Prisma.PosCounterWhereInput[] = [];
 
   if (search) {
@@ -223,6 +248,7 @@ export async function listPosCounters(input: {
   const counters = await prisma.posCounter.findMany({
     where: {
       organization_id: organizationId,
+      ...(subSubLocationId ? { sub_sub_location_id: subSubLocationId } : {}),
       ...(filters.length ? { AND: filters } : {}),
     },
     include: POS_COUNTER_INCLUDE,
@@ -240,6 +266,16 @@ export async function listPosCounters(input: {
         }
       : null,
   };
+}
+
+export async function getPosCounterById(organizationIdValue: string, counterIdValue: string) {
+  const organizationId = normalizeIdentifier(organizationIdValue, "Organization");
+  const counterId = normalizeIdentifier(counterIdValue, "Counter");
+  const counter = await prisma.posCounter.findFirst({
+    where: { organization_id: organizationId, id: counterId },
+    include: POS_COUNTER_INCLUDE,
+  });
+  return counter ? serializeCounter(counter) : null;
 }
 
 export async function listPosCounterLocations(input: {

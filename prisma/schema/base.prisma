@@ -149,6 +149,7 @@ model Organization {
   merchandisingOrders                     MerchandisingOrder[]
   posOffers                               PosOffer[]
   posCounters                             PosCounter[]
+  posCounterShifts                        PosCounterShift[]
   posOfferTargets                         PosOfferTarget[]
   posCoupons                              PosCoupon[]
   posCouponIssues                         PosCouponIssue[]

@@ -1,8 +1,8 @@
 "use client";
 
-import { Printer, ScanLine, Search, X } from "lucide-react";
+import { Printer, ScanLine, Search, Wallet, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
@@ -144,18 +144,185 @@ type ReturnCreditOption = {
 type EntityOption = { id: string; label: string };
 type HierarchyOption = { id: string; label: string; isActive: boolean };
 type HierarchyLevel = "entities" | "divisions" | "locations" | "subLocations" | "subSubLocations";
+type ActivePosCounterShift = {
+  id: string;
+  counterId: string;
+  counterName: string;
+  salespersonName: string;
+  openingBalance: string;
+  openedAt: string;
+  salesCount?: number;
+  grossSalesAmount?: string;
+  stockHierarchy?: {
+    entityId: string;
+    divisionId: string;
+    locationId: string;
+    subLocationId: string;
+    subSubLocationId: string;
+  };
+  locationName?: string;
+  subLocationName?: string;
+  subSubLocationName?: string;
+};
+type CounterOption = {
+  id: string;
+  counterName: string;
+  subSubLocationId: string;
+  subSubLocationPath: string;
+};
+type CounterShiftHandover = {
+  suggestedOpeningBalance: string;
+  lastClosedShift: {
+    salespersonName: string;
+    closingBalance: string;
+    closedAt: string | null;
+  } | null;
+  activeCounterShift: {
+    salespersonName: string;
+  } | null;
+  activeSalespersonShift: {
+    counterName: string;
+  } | null;
+};
+
+function StockHierarchyFields({
+  entities,
+  divisions,
+  locations,
+  subLocations,
+  subSubLocations,
+  entityId,
+  divisionId,
+  locationId,
+  subLocationId,
+  subSubLocationId,
+  hierarchyLoading,
+  billHasLines,
+  onEntityChange,
+  onDivisionChange,
+  onLocationChange,
+  onSubLocationChange,
+  onSubSubLocationChange,
+}: {
+  entities: EntityOption[];
+  divisions: HierarchyOption[];
+  locations: HierarchyOption[];
+  subLocations: HierarchyOption[];
+  subSubLocations: HierarchyOption[];
+  entityId: string;
+  divisionId: string;
+  locationId: string;
+  subLocationId: string;
+  subSubLocationId: string;
+  hierarchyLoading: Record<HierarchyLevel, boolean>;
+  billHasLines: boolean;
+  onEntityChange: (value: string) => void;
+  onDivisionChange: (value: string) => void;
+  onLocationChange: (value: string) => void;
+  onSubLocationChange: (value: string) => void;
+  onSubSubLocationChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+      <Select
+        label="Entity"
+        aria-label="Entity"
+        value={entityId}
+        onChange={(event) => onEntityChange(event.target.value)}
+        disabled={hierarchyLoading.entities || billHasLines}
+        required
+        options={[
+          { value: "", label: hierarchyLoading.entities ? "Loading Entities…" : entities.length ? "Select Entity" : "No active Entities" },
+          ...entities.map((entity) => ({ value: entity.id, label: entity.label })),
+        ]}
+      />
+      <Select
+        label="Division"
+        aria-label="Division"
+        value={divisionId}
+        onChange={(event) => onDivisionChange(event.target.value)}
+        disabled={!entityId || hierarchyLoading.divisions || billHasLines}
+        required
+        options={[
+          { value: "", label: hierarchyLoading.divisions ? "Loading Divisions…" : !entityId ? "Select Entity first" : divisions.length ? "Select Division" : "No active Divisions" },
+          ...divisions.map((option) => ({ value: option.id, label: option.label })),
+        ]}
+      />
+      <Select
+        label="Location"
+        aria-label="Location"
+        value={locationId}
+        onChange={(event) => onLocationChange(event.target.value)}
+        disabled={!divisionId || hierarchyLoading.locations || billHasLines}
+        required
+        options={[
+          { value: "", label: hierarchyLoading.locations ? "Loading Locations…" : !divisionId ? "Select Division first" : locations.length ? "Select Location" : "No active Locations" },
+          ...locations.map((option) => ({ value: option.id, label: option.label })),
+        ]}
+      />
+      <Select
+        label="Sub-location"
+        aria-label="Sub-location"
+        value={subLocationId}
+        onChange={(event) => onSubLocationChange(event.target.value)}
+        disabled={!locationId || hierarchyLoading.subLocations || billHasLines}
+        required
+        options={[
+          { value: "", label: hierarchyLoading.subLocations ? "Loading Sub-locations…" : !locationId ? "Select Location first" : subLocations.length ? "Select Sub-location" : "No active Sub-locations" },
+          ...subLocations.map((option) => ({ value: option.id, label: option.label })),
+        ]}
+      />
+      <Select
+        label="Sub-sub-location"
+        aria-label="Sub-sub-location"
+        value={subSubLocationId}
+        onChange={(event) => onSubSubLocationChange(event.target.value)}
+        disabled={!subLocationId || hierarchyLoading.subSubLocations || billHasLines}
+        required
+        options={[
+          { value: "", label: hierarchyLoading.subSubLocations ? "Loading Sub-sub-locations…" : !subLocationId ? "Select Sub-location first" : subSubLocations.length ? "Select issue location" : "No active Sub-sub-locations" },
+          ...subSubLocations.map((option) => ({ value: option.id, label: option.label })),
+        ]}
+      />
+    </div>
+  );
+}
+
 export default function PosBarcodeBillingPage({
   workspaceId,
   organizationId,
   salespersonName,
+  activeShift,
+  shiftSetupError,
 }: {
   workspaceId: string;
   organizationId: string;
   salespersonName: string;
+  activeShift: ActivePosCounterShift | null;
+  shiftSetupError?: string;
 }) {
   const router = useRouter();
   const scannerRef = useRef<HTMLInputElement>(null);
   const saleRequestKey = useRef("");
+  const counterLookupControllerRef = useRef<AbortController | null>(null);
+  const [currentShift, setCurrentShift] = useState(activeShift);
+  const [startShiftDialogOpen, setStartShiftDialogOpen] = useState(false);
+  const [closeShiftDialogOpen, setCloseShiftDialogOpen] = useState(false);
+  const [selectedCounterId, setSelectedCounterId] = useState("");
+  const [counterOptions, setCounterOptions] = useState<CounterOption[]>([]);
+  const [counterNextCursor, setCounterNextCursor] = useState<string | null>(null);
+  const [counterLookupLoading, setCounterLookupLoading] = useState(false);
+  const [counterLoadingMore, setCounterLoadingMore] = useState(false);
+  const [counterLookupError, setCounterLookupError] = useState("");
+  const [shiftHandover, setShiftHandover] = useState<CounterShiftHandover | null>(null);
+  const [handoverLoading, setHandoverLoading] = useState(false);
+  const [handoverError, setHandoverError] = useState("");
+  const [handoverRetry, setHandoverRetry] = useState(0);
+  const [openingBalance, setOpeningBalance] = useState("");
+  const [closingBalance, setClosingBalance] = useState("");
+  const [savingShift, setSavingShift] = useState(false);
+  const [shiftActionError, setShiftActionError] = useState("");
+  const [shiftStatusMessage, setShiftStatusMessage] = useState("");
   const [scanValue, setScanValue] = useState("");
   const [stockSearch, setStockSearch] = useState("");
   const [records, setRecords] = useState<StockRecord[]>([]);
@@ -178,17 +345,17 @@ export default function PosBarcodeBillingPage({
   const [locations, setLocations] = useState<HierarchyOption[]>([]);
   const [subLocations, setSubLocations] = useState<HierarchyOption[]>([]);
   const [subSubLocations, setSubSubLocations] = useState<HierarchyOption[]>([]);
-  const [entityId, setEntityId] = useState("");
-  const [divisionId, setDivisionId] = useState("");
-  const [locationId, setLocationId] = useState("");
-  const [subLocationId, setSubLocationId] = useState("");
-  const [subSubLocationId, setSubSubLocationId] = useState("");
+  const [entityId, setEntityId] = useState(activeShift?.stockHierarchy?.entityId ?? "");
+  const [divisionId, setDivisionId] = useState(activeShift?.stockHierarchy?.divisionId ?? "");
+  const [locationId, setLocationId] = useState(activeShift?.stockHierarchy?.locationId ?? "");
+  const [subLocationId, setSubLocationId] = useState(activeShift?.stockHierarchy?.subLocationId ?? "");
+  const [subSubLocationId, setSubSubLocationId] = useState(activeShift?.stockHierarchy?.subSubLocationId ?? "");
   const [hierarchyLoading, setHierarchyLoading] = useState<Record<HierarchyLevel, boolean>>({
     entities: true,
-    divisions: false,
-    locations: false,
-    subLocations: false,
-    subSubLocations: false,
+    divisions: Boolean(activeShift?.stockHierarchy?.entityId),
+    locations: Boolean(activeShift?.stockHierarchy?.entityId && activeShift.stockHierarchy.divisionId),
+    subLocations: Boolean(activeShift?.stockHierarchy?.locationId),
+    subSubLocations: Boolean(activeShift?.stockHierarchy?.subLocationId),
   });
   const [hierarchyErrors, setHierarchyErrors] = useState<Record<HierarchyLevel, string>>({
     entities: "",
@@ -198,6 +365,19 @@ export default function PosBarcodeBillingPage({
     subSubLocations: "",
   });
   const [hierarchyRetry, setHierarchyRetry] = useState(0);
+  const resetShiftCounterSelection = useCallback(() => {
+    counterLookupControllerRef.current?.abort();
+    setSelectedCounterId("");
+    setCounterOptions([]);
+    setCounterNextCursor(null);
+    setCounterLookupLoading(false);
+    setCounterLoadingMore(false);
+    setCounterLookupError("");
+    setShiftHandover(null);
+    setHandoverLoading(false);
+    setOpeningBalance("");
+    setHandoverError("");
+  }, []);
   const [customerContactId, setCustomerContactId] = useState("");
   const [customerDisplayName, setCustomerDisplayName] = useState("");
   const [returnCredits, setReturnCredits] = useState<ReturnCreditOption[]>([]);
@@ -277,20 +457,60 @@ export default function PosBarcodeBillingPage({
 
   useEffect(() => {
     scannerRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (activeShift || shiftSetupError) return;
+    const frame = window.requestAnimationFrame(() => setStartShiftDialogOpen(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeShift, shiftSetupError]);
+
+  useEffect(() => {
     const controller = new AbortController();
     Promise.all([
       fetch(
         `/api/organizations/${encodeURIComponent(organizationId)}/master-data/gst?includeInactive=false`,
         { cache: "no-store", signal: controller.signal },
-      ).then((response) => response.json()),
+      ).then(async (response) => {
+        const data: unknown = await response.json();
+        if (!response.ok) throw new Error("Unable to load GST options.");
+        return data;
+      }),
       fetch(
         `/api/organizations/${encodeURIComponent(organizationId)}/tax-rules`,
         { cache: "no-store", signal: controller.signal },
-      ).then((response) => response.json()),
-      fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/entity?includeInactive=false&limit=200`,
-        { cache: "no-store", signal: controller.signal },
       ).then(async (response) => {
+        const data = await response.json() as {
+          profile?: {
+            cgstRate?: number | null;
+            sgstRate?: number | null;
+            igstRate?: number | null;
+          } | null;
+        };
+        if (!response.ok) throw new Error("Unable to load organization tax rules.");
+        return data;
+      }),
+    ])
+      .then(([gstData, taxData]) => {
+        if (controller.signal.aborted) return;
+        setGstOptions(Array.isArray(gstData) ? gstData : []);
+        setTaxProfile(taxData.profile ?? null);
+      })
+      .catch((loadError: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(loadError instanceof Error ? loadError.message : "Unable to load POS tax settings.");
+        }
+      });
+    return () => controller.abort();
+  }, [organizationId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/master-data/entity?includeInactive=false&limit=200`,
+      { cache: "no-store", signal: controller.signal },
+    )
+      .then(async (response) => {
         const data: unknown = await response.json();
         if (!response.ok || !Array.isArray(data)) {
           throw new Error("Unable to load active organization Entities.");
@@ -300,19 +520,16 @@ export default function PosBarcodeBillingPage({
           && "id" in value && typeof value.id === "string"
           && "label" in value && typeof value.label === "string",
         );
-      }),
-    ])
-      .then(([gstData, taxData, entityData]) => {
-        if (controller.signal.aborted) return;
-        setGstOptions(Array.isArray(gstData) ? gstData : []);
-        setTaxProfile(taxData.profile ?? null);
-        setEntities(entityData);
+      })
+      .then((options) => {
+        if (!controller.signal.aborted) setEntities(options);
       })
       .catch((loadError: unknown) => {
-        if (controller.signal.aborted) return;
-        const message = loadError instanceof Error ? loadError.message : "Unable to load active organization Entities.";
-        setHierarchyErrors((current) => ({ ...current, entities: message }));
-        setError(message);
+        if (!controller.signal.aborted) {
+          const message = loadError instanceof Error ? loadError.message : "Unable to load active organization Entities.";
+          setHierarchyErrors((current) => ({ ...current, entities: message }));
+          setError(message);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -429,6 +646,86 @@ export default function PosBarcodeBillingPage({
       });
     return () => controller.abort();
   }, [divisionId, entityId, hierarchyRetry, locationId, organizationId, subLocationId]);
+
+  const loadCountersForLocation = useCallback(async (
+    locationId: string,
+    cursor: string | null,
+    append: boolean,
+  ) => {
+    if (!locationId) return;
+    counterLookupControllerRef.current?.abort();
+    const controller = new AbortController();
+    counterLookupControllerRef.current = controller;
+    setCounterLookupError("");
+    if (append) setCounterLoadingMore(true);
+    else setCounterLookupLoading(true);
+    try {
+      const query = new URLSearchParams({
+        limit: "100",
+        subSubLocationId: locationId,
+      });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/counter?${query}`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const data = await response.json() as {
+        error?: string;
+        counters?: CounterOption[];
+        nextCursor?: string | null;
+      };
+      if (!response.ok || !Array.isArray(data.counters)) {
+        throw new Error(data.error || "Unable to load counters for this Sub-sub-location.");
+      }
+      if (controller.signal.aborted) return;
+      const counters = data.counters;
+      setCounterOptions((current) => append ? [...current, ...counters] : counters);
+      setCounterNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+    } catch (loadError) {
+      if (!controller.signal.aborted) {
+        setCounterLookupError(loadError instanceof Error
+          ? loadError.message
+          : "Unable to load counters for this Sub-sub-location.");
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setCounterLookupLoading(false);
+        setCounterLoadingMore(false);
+      }
+    }
+  }, [organizationId]);
+
+  useEffect(() => {
+    if (!startShiftDialogOpen || !selectedCounterId) return;
+    const controller = new AbortController();
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/pos/counter-shifts?counterId=${encodeURIComponent(selectedCounterId)}&limit=1`,
+      { cache: "no-store", signal: controller.signal },
+    )
+      .then(async (response) => {
+        const data = await response.json() as CounterShiftHandover & { error?: string };
+        if (!response.ok || typeof data.suggestedOpeningBalance !== "string") {
+          throw new Error(data.error || "Unable to load the previous counter handover.");
+        }
+        return data;
+      })
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setShiftHandover(data);
+        setOpeningBalance((current) => current || data.suggestedOpeningBalance);
+      })
+      .catch((loadError: unknown) => {
+        if (!controller.signal.aborted) {
+          setHandoverError(loadError instanceof Error
+            ? loadError.message
+            : "Unable to load the previous counter handover.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHandoverLoading(false);
+      });
+    return () => controller.abort();
+  }, [handoverRetry, organizationId, selectedCounterId, startShiftDialogOpen]);
 
   useEffect(() => {
     if (!customerContactId) return;
@@ -964,7 +1261,89 @@ export default function PosBarcodeBillingPage({
     subtotal,
   ]);
 
+  const startCounterShift = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedCounterId || !openingBalance || !shiftHandover) return;
+    if (shiftHandover.activeCounterShift || shiftHandover.activeSalespersonShift) {
+      setShiftActionError("This counter or salesperson already has an open shift. Refresh the selection before trying again.");
+      return;
+    }
+    setSavingShift(true);
+    setShiftActionError("");
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/counter-shifts`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ counterId: selectedCounterId, openingBalance }),
+        },
+      );
+      const data = await response.json() as {
+        error?: string;
+        shift?: ActivePosCounterShift;
+      };
+      if (!response.ok || !data.shift) {
+        throw new Error(data.error || "Unable to start the counter shift.");
+      }
+      setCurrentShift(data.shift);
+      setShiftStatusMessage(`Shift started at ${data.shift.counterName}.`);
+      setStartShiftDialogOpen(false);
+      setShiftActionError("");
+    } catch (saveError) {
+      setShiftActionError(saveError instanceof Error ? saveError.message : "Unable to start the counter shift.");
+    } finally {
+      setSavingShift(false);
+    }
+  };
+
+  const closeCounterShift = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!currentShift || !closingBalance) return;
+    setSavingShift(true);
+    setShiftActionError("");
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/counter-shifts`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shiftId: currentShift.id, closingBalance }),
+        },
+      );
+      const data = await response.json() as {
+        error?: string;
+        shift?: {
+          closingBalance: string | null;
+          grossSalesAmount: string;
+          salesCount: number;
+        };
+      };
+      if (!response.ok || !data.shift) {
+        throw new Error(data.error || "Unable to close the counter shift.");
+      }
+      setCurrentShift(null);
+      setCloseShiftDialogOpen(false);
+      setClosingBalance("");
+      setShiftStatusMessage(
+        `Shift closed at Rs ${data.shift.closingBalance ?? closingBalance}. ${data.shift.salesCount} sales; gross sales Rs ${data.shift.grossSalesAmount} (reported separately from counted cash).`,
+      );
+    } catch (saveError) {
+      setShiftActionError(saveError instanceof Error ? saveError.message : "Unable to close the counter shift.");
+    } finally {
+      setSavingShift(false);
+    }
+  };
+
   const saveInvoice = async () => {
+    if (shiftSetupError) {
+      setError(shiftSetupError);
+      return;
+    }
+    if (!currentShift) {
+      setError("Open a counter shift before posting a counter invoice.");
+      return;
+    }
     if (!stockHierarchyComplete) {
       setError("Select the complete stock hierarchy through a Sub-sub-location before posting.");
       return;
@@ -1027,129 +1406,177 @@ export default function PosBarcodeBillingPage({
     }
   };
 
+  const handleEntityChange = (value: string) => {
+    resetStockAndCart();
+    resetShiftCounterSelection();
+    setEntityId(value);
+    setDivisionId("");
+    setLocationId("");
+    setSubLocationId("");
+    setSubSubLocationId("");
+    setDivisions([]);
+    setLocations([]);
+    setSubLocations([]);
+    setSubSubLocations([]);
+    setHierarchyLoading((current) => ({
+      ...current,
+      divisions: Boolean(value),
+      locations: false,
+      subLocations: false,
+      subSubLocations: false,
+    }));
+    setHierarchyErrors((current) => ({ ...current, divisions: "", locations: "", subLocations: "", subSubLocations: "" }));
+  };
+
+  const handleDivisionChange = (value: string) => {
+    resetStockAndCart();
+    resetShiftCounterSelection();
+    setDivisionId(value);
+    setLocationId("");
+    setSubLocationId("");
+    setSubSubLocationId("");
+    setLocations([]);
+    setSubLocations([]);
+    setSubSubLocations([]);
+    setHierarchyLoading((current) => ({
+      ...current,
+      locations: Boolean(value),
+      subLocations: false,
+      subSubLocations: false,
+    }));
+    setHierarchyErrors((current) => ({ ...current, locations: "", subLocations: "", subSubLocations: "" }));
+  };
+
+  const handleLocationChange = (value: string) => {
+    resetStockAndCart();
+    resetShiftCounterSelection();
+    setLocationId(value);
+    setSubLocationId("");
+    setSubSubLocationId("");
+    setSubLocations([]);
+    setSubSubLocations([]);
+    setHierarchyLoading((current) => ({
+      ...current,
+      subLocations: Boolean(value),
+      subSubLocations: false,
+    }));
+    setHierarchyErrors((current) => ({ ...current, subLocations: "", subSubLocations: "" }));
+  };
+
+  const handleSubLocationChange = (value: string) => {
+    resetStockAndCart();
+    resetShiftCounterSelection();
+    setSubLocationId(value);
+    setSubSubLocationId("");
+    setSubSubLocations([]);
+    setHierarchyLoading((current) => ({ ...current, subSubLocations: Boolean(value) }));
+    setHierarchyErrors((current) => ({ ...current, subSubLocations: "" }));
+  };
+
+  const handleSubSubLocationChange = (value: string) => {
+    resetStockAndCart();
+    resetShiftCounterSelection();
+    setSubSubLocationId(value);
+    if (startShiftDialogOpen && value) void loadCountersForLocation(value, null, false);
+  };
+
+  const renderStockHierarchyFields = () => (
+    <StockHierarchyFields
+      entities={entities}
+      divisions={divisions}
+      locations={locations}
+      subLocations={subLocations}
+      subSubLocations={subSubLocations}
+      entityId={entityId}
+      divisionId={divisionId}
+      locationId={locationId}
+      subLocationId={subLocationId}
+      subSubLocationId={subSubLocationId}
+      hierarchyLoading={hierarchyLoading}
+      billHasLines={billLines.length > 0}
+      onEntityChange={handleEntityChange}
+      onDivisionChange={handleDivisionChange}
+      onLocationChange={handleLocationChange}
+      onSubLocationChange={handleSubLocationChange}
+      onSubSubLocationChange={handleSubSubLocationChange}
+    />
+  );
+
+  const retryHierarchyLookups = () => {
+    setHierarchyErrors({
+      entities: "",
+      divisions: "",
+      locations: "",
+      subLocations: "",
+      subSubLocations: "",
+    });
+    setHierarchyLoading({
+      entities: true,
+      divisions: Boolean(entityId),
+      locations: Boolean(entityId && divisionId),
+      subLocations: Boolean(entityId && divisionId && locationId),
+      subSubLocations: Boolean(entityId && divisionId && locationId && subLocationId),
+    });
+    setHierarchyRetry((value) => value + 1);
+  };
+
   return (
     <Page as="div" className="min-w-0 max-w-[1600px] pt-4 lg:pt-0">
+      {shiftSetupError ? (
+        <Card role="alert" className="mb-4 space-y-2">
+          <h2 className="erp-card-title">Counter shift setup is not ready</h2>
+          <p className="text-sm text-[var(--erp-muted)]">{shiftSetupError}</p>
+        </Card>
+      ) : !currentShift ? (
+        <Card className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="erp-card-title">No active counter shift</h2>
+          <p className="text-sm text-[var(--erp-muted)]">
+              Counter invoices require an open shift for the logged-in salesperson.
+          </p>
+          </div>
+          <Button
+            type="button"
+            onClick={() => {
+              setShiftActionError("");
+              resetShiftCounterSelection();
+              if (subSubLocationId) void loadCountersForLocation(subSubLocationId, null, false);
+              setStartShiftDialogOpen(true);
+            }}
+            disabled={Boolean(shiftSetupError) || savingShift}
+          >
+            Start shift
+          </Button>
+        </Card>
+      ) : null}
+      {currentShift && !shiftSetupError ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label="Open counter shift summary"
+          className="group fixed right-6 top-16 z-30 flex h-9 w-9 flex-col gap-1 p-2 transition-all duration-200 ease-out hover:h-16 hover:w-12 focus-visible:h-16 focus-visible:w-12"
+          onClick={() => {
+            setClosingBalance("");
+            setShiftActionError("");
+            setCloseShiftDialogOpen(true);
+          }}
+        >
+          <Wallet aria-hidden="true" className="shrink-0" size={16} />
+          <span
+            aria-hidden="true"
+            className="max-h-0 overflow-hidden whitespace-nowrap text-xs leading-none opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100 group-focus-visible:max-h-4 group-focus-visible:opacity-100"
+          >
+            SHIFT
+          </span>
+        </Button>
+      ) : null}
+      {shiftStatusMessage ? (
+        <Card role="status" className="mb-4">
+          <p className="text-sm text-[var(--erp-text)]">{shiftStatusMessage}</p>
+        </Card>
+      ) : null}
       <div className="print:hidden">
-        <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:h-8 xl:grid-cols-5">
-          <Select
-            aria-label="Entity"
-            className="h-8 px-2 py-1 text-xs"
-            value={entityId}
-            onChange={(event) => {
-              resetStockAndCart();
-              setEntityId(event.target.value);
-              setDivisionId("");
-              setLocationId("");
-              setSubLocationId("");
-              setSubSubLocationId("");
-              setDivisions([]);
-              setLocations([]);
-              setSubLocations([]);
-              setSubSubLocations([]);
-              setHierarchyLoading((current) => ({
-                ...current,
-                divisions: Boolean(event.target.value),
-                locations: false,
-                subLocations: false,
-                subSubLocations: false,
-              }));
-              setHierarchyErrors((current) => ({ ...current, divisions: "", locations: "", subLocations: "", subSubLocations: "" }));
-            }}
-            disabled={hierarchyLoading.entities || billLines.length > 0}
-            required
-            options={[
-              { value: "", label: hierarchyLoading.entities ? "Loading Entities…" : entities.length ? "Select Entity" : "No active Entities" },
-              ...entities.map((entity) => ({ value: entity.id, label: entity.label })),
-            ]}
-          />
-          <Select
-            aria-label="Division"
-            className="h-8 px-2 py-1 text-xs"
-            value={divisionId}
-            onChange={(event) => {
-              resetStockAndCart();
-              setDivisionId(event.target.value);
-              setLocationId("");
-              setSubLocationId("");
-              setSubSubLocationId("");
-              setLocations([]);
-              setSubLocations([]);
-              setSubSubLocations([]);
-              setHierarchyLoading((current) => ({
-                ...current,
-                locations: Boolean(event.target.value),
-                subLocations: false,
-                subSubLocations: false,
-              }));
-              setHierarchyErrors((current) => ({ ...current, locations: "", subLocations: "", subSubLocations: "" }));
-            }}
-            disabled={!entityId || hierarchyLoading.divisions || billLines.length > 0}
-            required
-            options={[
-              { value: "", label: hierarchyLoading.divisions ? "Loading Divisions…" : !entityId ? "Select Entity first" : divisions.length ? "Select Division" : "No active Divisions" },
-              ...divisions.map((option) => ({ value: option.id, label: option.label })),
-            ]}
-          />
-          <Select
-            aria-label="Location"
-            className="h-8 px-2 py-1 text-xs"
-            value={locationId}
-            onChange={(event) => {
-              resetStockAndCart();
-              setLocationId(event.target.value);
-              setSubLocationId("");
-              setSubSubLocationId("");
-              setSubLocations([]);
-              setSubSubLocations([]);
-              setHierarchyLoading((current) => ({
-                ...current,
-                subLocations: Boolean(event.target.value),
-                subSubLocations: false,
-              }));
-              setHierarchyErrors((current) => ({ ...current, subLocations: "", subSubLocations: "" }));
-            }}
-            disabled={!divisionId || hierarchyLoading.locations || billLines.length > 0}
-            required
-            options={[
-              { value: "", label: hierarchyLoading.locations ? "Loading Locations…" : !divisionId ? "Select Division first" : locations.length ? "Select Location" : "No active Locations" },
-              ...locations.map((option) => ({ value: option.id, label: option.label })),
-            ]}
-          />
-          <Select
-            aria-label="Sub-location"
-            className="h-8 px-2 py-1 text-xs"
-            value={subLocationId}
-            onChange={(event) => {
-              resetStockAndCart();
-              setSubLocationId(event.target.value);
-              setSubSubLocationId("");
-              setSubSubLocations([]);
-              setHierarchyLoading((current) => ({ ...current, subSubLocations: Boolean(event.target.value) }));
-              setHierarchyErrors((current) => ({ ...current, subSubLocations: "" }));
-            }}
-            disabled={!locationId || hierarchyLoading.subLocations || billLines.length > 0}
-            required
-            options={[
-              { value: "", label: hierarchyLoading.subLocations ? "Loading Sub-locations…" : !locationId ? "Select Location first" : subLocations.length ? "Select Sub-location" : "No active Sub-locations" },
-              ...subLocations.map((option) => ({ value: option.id, label: option.label })),
-            ]}
-          />
-          <Select
-            aria-label="Sub-sub-location (issue)"
-            className="h-8 px-2 py-1 text-xs"
-            value={subSubLocationId}
-            onChange={(event) => {
-              resetStockAndCart();
-              setSubSubLocationId(event.target.value);
-            }}
-            disabled={!subLocationId || hierarchyLoading.subSubLocations || billLines.length > 0}
-            required
-            options={[
-              { value: "", label: hierarchyLoading.subSubLocations ? "Loading Sub-sub-locations…" : !subLocationId ? "Select Sub-location first" : subSubLocations.length ? "Select issue location" : "No active Sub-sub-locations" },
-              ...subSubLocations.map((option) => ({ value: option.id, label: option.label })),
-            ]}
-          />
-        </div>
         <Section className="grid min-w-0 items-start gap-x-4 gap-y-4 space-y-0 xl:gap-y-0 xl:grid-cols-[minmax(0,1.7fr)_minmax(20rem,0.8fr)]">
           <div className="sticky top-0 z-20 flex flex-wrap items-center border-b border-[var(--erp-border)] bg-[var(--erp-surface)]/95 pb-0 backdrop-blur xl:col-span-2">
             <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 xl:flex-nowrap">
@@ -1263,6 +1690,8 @@ export default function PosBarcodeBillingPage({
               billLines.length === 0
               || !stockHierarchyComplete
               || !customerContactId
+              || !currentShift
+              || Boolean(shiftSetupError)
               || billLines.some((line) => line.quantity < 1)
               || savingInvoice
               || visibleOfferLookupLoading
@@ -1280,17 +1709,7 @@ export default function PosBarcodeBillingPage({
             {(Object.keys(hierarchyErrors) as HierarchyLevel[]).map((level) => hierarchyErrors[level] ? (
               <p key={level} role="alert" className="mb-2 text-xs font-medium text-[var(--erp-danger)]">
                 {hierarchyErrors[level]}{" "}
-                <Button type="button" variant="secondary" size="sm" onClick={() => {
-                  setHierarchyLoading({
-                    entities: true,
-                    divisions: Boolean(entityId),
-                    locations: Boolean(entityId && divisionId),
-                    subLocations: Boolean(entityId && divisionId && locationId),
-                    subSubLocations: Boolean(entityId && divisionId && locationId && subLocationId),
-                  });
-                  setHierarchyErrors({ entities: "", divisions: "", locations: "", subLocations: "", subSubLocations: "" });
-                  setHierarchyRetry((value) => value + 1);
-                }}>
+                <Button type="button" variant="secondary" size="sm" onClick={retryHierarchyLookups}>
                   Retry
                 </Button>
               </p>
@@ -1649,6 +2068,288 @@ export default function PosBarcodeBillingPage({
           onAdd={addToBill}
         />
       )}
+      <Modal
+        open={startShiftDialogOpen && !shiftSetupError}
+        onClose={() => {
+          if (!savingShift) {
+            setShiftActionError("");
+            resetShiftCounterSelection();
+            setStartShiftDialogOpen(false);
+          }
+        }}
+        ariaLabelledBy="pos-start-shift-title"
+        size="rectangle"
+        closeOnBackdrop={!savingShift}
+        className="flex flex-col overflow-hidden p-0"
+      >
+        <form onSubmit={(event) => void startCounterShift(event)} className="flex min-h-0 flex-col">
+          <div className="border-b border-[var(--erp-border)] px-6 py-5">
+            <p className="erp-eyebrow">COUNTER DUTY</p>
+            <h2 id="pos-start-shift-title" className="erp-card-title mt-1">
+              Do you have counter duty today?
+            </h2>
+            <p className="mt-2 text-sm text-[var(--erp-muted)]">
+              Select your stock location and counter, confirm the cash handed over, then start your shift.
+            </p>
+          </div>
+          <div className="space-y-5 p-6">
+            {renderStockHierarchyFields()}
+            {Object.values(hierarchyErrors).some(Boolean) ? (
+              <div role="alert" className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-[var(--erp-danger)]">
+                  {Object.values(hierarchyErrors).find(Boolean)}
+                </p>
+                <Button type="button" variant="secondary" onClick={retryHierarchyLookups}>
+                  Retry location lookup
+                </Button>
+              </div>
+            ) : null}
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+              <Select
+                label="Counter"
+                aria-label="Counter"
+                value={selectedCounterId}
+                onChange={(event) => {
+                  setSelectedCounterId(event.target.value);
+                  setShiftHandover(null);
+                  setHandoverLoading(Boolean(event.target.value));
+                  setOpeningBalance("");
+                  setHandoverError("");
+                  setShiftActionError("");
+                }}
+                disabled={!subSubLocationId || counterLookupLoading || counterOptions.length === 0}
+                required
+                options={[
+                  {
+                    value: "",
+                    label: !subSubLocationId
+                      ? "Select Sub-sub-location first"
+                      : counterLookupLoading
+                        ? "Loading counters…"
+                        : counterOptions.length
+                          ? "Select Counter"
+                          : "No counters at this location",
+                  },
+                  ...counterOptions.map((counter) => ({ value: counter.id, label: counter.counterName })),
+                ]}
+              />
+              <Input
+                label="Cash received at handover (opening balance)"
+                type="number"
+                min="0"
+                step="0.01"
+                value={openingBalance}
+                onChange={(event) => setOpeningBalance(event.target.value)}
+                required
+              />
+            </div>
+            {counterLookupLoading ? (
+              <p role="status" aria-busy="true" className="text-sm text-[var(--erp-muted)]">
+                Loading counters for this Sub-sub-location…
+              </p>
+            ) : null}
+            {counterLookupError ? (
+              <div role="alert" className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-[var(--erp-danger)]">{counterLookupError}</p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    if (subSubLocationId) void loadCountersForLocation(subSubLocationId, null, false);
+                  }}
+                >
+                  Retry counter lookup
+                </Button>
+              </div>
+            ) : null}
+            {counterNextCursor ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void loadCountersForLocation(subSubLocationId, counterNextCursor, true)}
+                disabled={counterLoadingMore}
+              >
+                {counterLoadingMore ? "Loading more counters…" : "Load more counters"}
+              </Button>
+            ) : null}
+            {handoverLoading ? (
+              <p role="status" aria-busy="true" className="text-sm text-[var(--erp-muted)]">
+                Loading the previous counter handover…
+              </p>
+            ) : null}
+            {handoverError ? (
+              <div role="alert" className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-[var(--erp-danger)]">{handoverError}</p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setHandoverError("");
+                    setHandoverLoading(true);
+                    setHandoverRetry((value) => value + 1);
+                  }}
+                >
+                  Retry handover lookup
+                </Button>
+              </div>
+            ) : null}
+            {shiftHandover ? (
+              <Card className="space-y-2">
+                <h3 className="text-sm font-semibold text-[var(--erp-text)]">Counter handover</h3>
+                {shiftHandover.lastClosedShift ? (
+                  <>
+                    <p className="text-sm text-[var(--erp-muted)]">
+                      Last closed by {shiftHandover.lastClosedShift.salespersonName}
+                    </p>
+                    <p className="text-sm font-semibold text-[var(--erp-text)]">
+                      Previous closing balance: Rs {shiftHandover.lastClosedShift.closingBalance}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-[var(--erp-muted)]">No previous closed shift is recorded for this counter.</p>
+                )}
+                {shiftHandover.activeCounterShift ? (
+                  <p role="alert" className="text-sm text-[var(--erp-danger)]">
+                    This counter is currently open for {shiftHandover.activeCounterShift.salespersonName}.
+                  </p>
+                ) : null}
+                {shiftHandover.activeSalespersonShift ? (
+                  <p role="alert" className="text-sm text-[var(--erp-danger)]">
+                    You already have an open shift at {shiftHandover.activeSalespersonShift.counterName}.
+                  </p>
+                ) : null}
+              </Card>
+            ) : null}
+            {shiftActionError ? (
+              <p role="alert" className="text-sm font-medium text-[var(--erp-danger)]">{shiftActionError}</p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--erp-border)] px-6 py-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                if (!savingShift) {
+                  setShiftActionError("");
+                  resetShiftCounterSelection();
+                  setStartShiftDialogOpen(false);
+                }
+              }}
+              disabled={savingShift}
+            >
+              Not on counter duty
+            </Button>
+            <Button
+              type="submit"
+              disabled={
+                savingShift
+                || !selectedCounterId
+                || !openingBalance
+                || !shiftHandover
+                || handoverLoading
+                || Boolean(handoverError)
+                || Boolean(shiftHandover?.activeCounterShift)
+                || Boolean(shiftHandover?.activeSalespersonShift)
+              }
+            >
+              {savingShift ? "Starting shift…" : "Start shift"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+      <Modal
+        open={closeShiftDialogOpen}
+        onClose={() => {
+          if (!savingShift) {
+            setShiftActionError("");
+            setCloseShiftDialogOpen(false);
+          }
+        }}
+        ariaLabelledBy="pos-close-shift-title"
+        size="square"
+        closeOnBackdrop={false}
+        className="flex flex-col overflow-hidden p-0"
+      >
+        <form
+          onSubmit={(event) => void closeCounterShift(event)}
+          onPointerLeave={() => {
+            if (!savingShift) {
+              setShiftActionError("");
+              setCloseShiftDialogOpen(false);
+            }
+          }}
+          className="flex min-h-0 flex-col"
+        >
+          <div className="border-b border-[var(--erp-border)] px-6 py-5">
+            <p className="erp-eyebrow">COUNTER HANDOVER</p>
+            <h2 id="pos-close-shift-title" className="erp-card-title mt-1">Counter shift summary</h2>
+            <p className="mt-2 text-sm text-[var(--erp-muted)]">
+              Count the cash being handed over. Gross sales are reported separately and are not used to calculate this amount.
+            </p>
+          </div>
+          <div className="space-y-4 p-6">
+            {currentShift ? (
+              <Card className="space-y-2">
+                <p className="text-sm font-semibold text-[var(--erp-text)]">{currentShift.counterName}</p>
+                <dl className="grid min-w-0 gap-4 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <dt className="erp-eyebrow">OPENING BALANCE</dt>
+                    <dd className="text-sm font-semibold text-[var(--erp-text)]">Rs {currentShift.openingBalance}</dd>
+                  </div>
+                  <div className="space-y-1">
+                    <dt className="erp-eyebrow">CURRENT SALES TOTAL</dt>
+                    <dd className="text-sm font-semibold text-[var(--erp-text)]">Rs {currentShift.grossSalesAmount ?? "0.00"}</dd>
+                    <dd className="text-xs text-[var(--erp-muted)]">{currentShift.salesCount ?? 0} posted sales; not collected cash</dd>
+                  </div>
+                  <div className="space-y-1">
+                    <dt className="erp-eyebrow">SUB-LOCATION</dt>
+                    <dd className="text-sm text-[var(--erp-text)]">
+                      {currentShift.subLocationName ?? subLocations.find((item) => item.id === subLocationId)?.label ?? "-"}
+                    </dd>
+                  </div>
+                  <div className="space-y-1">
+                    <dt className="erp-eyebrow">SUB-SUB-LOCATION</dt>
+                    <dd className="text-sm text-[var(--erp-text)]">
+                      {currentShift.subSubLocationName ?? subSubLocations.find((item) => item.id === subSubLocationId)?.label ?? "-"}
+                    </dd>
+                  </div>
+                </dl>
+              </Card>
+            ) : null}
+            <Input
+              label="Cash in hand (counted)"
+              hint="Enter the cash physically counted. This is not calculated from sales."
+              type="number"
+              min="0"
+              step="0.01"
+              value={closingBalance}
+              onChange={(event) => setClosingBalance(event.target.value)}
+              required
+            />
+            {shiftActionError ? (
+              <p role="alert" className="text-sm font-medium text-[var(--erp-danger)]">{shiftActionError}</p>
+            ) : null}
+          </div>
+          <div className="flex justify-end gap-3 border-t border-[var(--erp-border)] px-6 py-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                if (!savingShift) {
+                  setShiftActionError("");
+                  setCloseShiftDialogOpen(false);
+                }
+              }}
+              disabled={savingShift}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!currentShift || !closingBalance || savingShift}>
+              {savingShift ? "Closing counter…" : "Close counter"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
       <Modal
         open={customerRegistrationOpen}
         onClose={() => {

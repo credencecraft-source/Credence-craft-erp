@@ -90,10 +90,15 @@ export async function GET(
     if (rawCursor && !cursor) {
       throw new PosCounterValidationError("Invalid counter pagination cursor.");
     }
+    const subSubLocationId = searchParams.get("subSubLocationId");
+    if (subSubLocationId !== null && (!subSubLocationId.trim() || subSubLocationId.length > 100)) {
+      throw new PosCounterValidationError("Select a valid Sub-sub-location.");
+    }
 
     const result = await listPosCounters({
       organizationId: organization.id,
       search: searchParams.get("search") ?? "",
+      ...(subSubLocationId === null ? {} : { subSubLocationId }),
       cursor,
       limit,
     });

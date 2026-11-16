@@ -203,6 +203,15 @@ Current implementation facts to carry into the baseline (these are code-path ris
 - If any required check fails or cannot run against that exact commit, do not push. Fix the issue, create a new candidate commit, and rerun the gate. Before pushing, confirm the requested test remote/branch and candidate SHA; after pushing, verify the remote SHA and report CI/Vercel results only once observed. A push alone does not mean deployment succeeded.
 - Push only when explicitly requested and only to a confirmed test branch and remote. Never push directly to production, force-push, rewrite history, or include unrelated changes.
 
+### Production Release And Sandbox Branch Guardrails
+
+- Develop, commit, and push changes only on `test-branch`. Never push directly to `main`; production changes go through a GitHub Pull Request with `base: main` and `compare: test-branch`. Never delete `test-branch` after merging.
+- Never read, print, modify, copy, or commit `.env` files or expose credentials. Treat database connection settings and secrets as protected.
+- Before committing a Prisma migration, inspect the complete generated `migration.sql` and schema diff for data loss, destructive DDL, rewrites/backfills, foreign-key cascades, and unsafe `NOT NULL` additions. Do not allow unbacked `DROP TABLE`, `DROP COLUMN`, or non-null constraints that can fail on existing rows. Migrations must be idempotent where practical and preserve existing records; any unavoidable destructive change requires the separate DATA LOSS warning and explicit approval.
+- Use an isolated Neon branch and its matching Vercel Preview for cloud migration/workflow validation; never validate against Production. Confirm the branch is non-primary and the Preview uses that branch before treating the test as valid.
+- If Neon returns HTTP 422 and branch quota/limits are confirmed as the cause, remove only inactive disposable sandbox branches in the Neon Console, preserve the primary/production branch, then rerun the workflow. Do not delete a branch whose ownership or purpose is unclear.
+- At the start of new delivery work, verify the current branch and remote state and synchronize `test-branch` with `origin/main` using `git pull origin main`, then push the synchronized `test-branch` to `origin/test-branch` only when the user has explicitly authorized a push. Resolve conflicts on `test-branch`; never synchronize by pushing or merging directly to `main`.
+
 ## 7. Completion Record
 
 Before user confirmation, report the implemented behavior, files changed, focused validation commands and outcomes, manual test steps, and clearly identify full QA as pending. After confirmation and full QA, report all validation commands and outcomes, migration/deployment notes, and remaining warnings or unverified workflows. Never claim release readiness while a critical security issue, failing quality gate, unresolved migration risk, or material test gap remains.

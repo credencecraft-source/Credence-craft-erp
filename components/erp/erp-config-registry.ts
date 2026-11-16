@@ -22,22 +22,14 @@ export const ERP_MODULES: ErpModule[] = [
     pathSegment: "online",
     children: [
       {
-        key: "pre-order",
-        label: "Pre Order",
-        pathSegment: "pre-order",
-        children: [
-          { key: "b2b-dashboard", label: "B2B Dashboard", pathSegment: "b2b-dashboard" },
-          { key: "b2c-dashboard", label: "B2C Dashboard", pathSegment: "b2c-dashboard" },
-        ],
+        key: "online-store",
+        label: "Online Store",
+        href: "/online/online-store/manage",
       },
       {
-        key: "ready-stock",
-        label: "Ready Stock",
-        pathSegment: "ready-stock",
-        children: [
-          { key: "b2b-dashboard", label: "B2B Dashboard", pathSegment: "b2b-dashboard" },
-          { key: "b2c-dashboard", label: "B2C Dashboard", pathSegment: "b2c-dashboard" },
-        ],
+        key: "inventory",
+        label: "Inventory",
+        href: "/online/inventory",
       },
     ],
   },
@@ -46,21 +38,37 @@ export const ERP_MODULES: ErpModule[] = [
     label: "POS",
     pathSegment: "pos",
     children: [
-      { key: "quick-invoice", label: "Quick Invoice", pathSegment: "quick-invoice" },
+      {
+        key: "sales",
+        label: "Sales",
+        pathSegment: "sales",
+        children: [
+          { key: "quick-invoice", label: "Quick Invoice", pathSegment: "quick-invoice" },
+          { key: "invoice", label: "Invoice", pathSegment: "invoice" },
+          { key: "sales-return", label: "Sales Return", pathSegment: "sales-return" },
+        ],
+      },
+      {
+        key: "purchase",
+        label: "Purchase",
+        pathSegment: "purchase",
+        children: [
+          { key: "purchase-bill", label: "Purchase Bill", pathSegment: "purchase-bill" },
+          { key: "stock", label: "Stock", pathSegment: "stock" },
+        ],
+      },
+      {
+        key: "offers",
+        label: "Offers",
+        pathSegment: "offers",
+        children: [
+          { key: "offers-page", label: "Offers", pathSegment: "offers" },
+          { key: "coupon-code", label: "Coupon Code", pathSegment: "cupencode" },
+        ],
+      },
       { key: "counter", label: "Counter", pathSegment: "counter" },
       { key: "daybook", label: "Day Book", pathSegment: "daybook" },
-      { key: "purchase-bill", label: "Purchase Bill", pathSegment: "purchase-bill" },
-      { key: "offers", label: "Offers", pathSegment: "offers" },
-      { key: "coupon-code", label: "Coupon Code", pathSegment: "cupencode" },
-      { key: "invoice", label: "Invoice", pathSegment: "invoice" },
-      { key: "sales-return", label: "Sales Return", pathSegment: "sales-return" },
-      { key: "stock", label: "Stock", pathSegment: "stock" },
       { key: "vendor-customer", label: "Vendor/Customer", href: "/pos/vendor-customer" },
-      {
-        key: "online-store",
-        label: "Online Store",
-        href: "/pos/online-store/manage",
-      },
     ],
   },
   {

@@ -7,6 +7,7 @@ import {
   isPosPurchaseRewardAvailable,
   type PosInvoiceShippingAddress,
 } from "@/lib/services/pos/pos-general-stock-sale-service";
+import { PosCounterShiftRequiredError } from "@/lib/services/pos/pos-counter-shift-service";
 import { requireOrganizationContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import type { PosStockHierarchy } from "@/lib/services/pos/pos-stock-location-service";
 
@@ -462,9 +463,12 @@ export async function POST(
     return NextResponse.json({ invoice }, { status: 201 });
   } catch (error) {
     const denied = error instanceof Error && error.message.startsWith("Access denied:");
+    const shiftRequired = error instanceof PosCounterShiftRequiredError;
+    const conflict = shiftRequired
+      || (error instanceof Error && "code" in error && error.code === "P2034");
     return NextResponse.json(
       { error: denied ? "You do not have permission to post POS sales." : error instanceof Error ? error.message : "Unable to post POS sale." },
-      { status: denied ? 403 : error instanceof Error && "code" in error && error.code === "P2034" ? 409 : 400 },
+      { status: denied ? 403 : conflict ? 409 : 400 },
     );
   }
 }

@@ -64,7 +64,7 @@ describe("organization module visibility", () => {
       { moduleKey: "online", status: "disabled", isVisible: true },
       { moduleKey: "pos", status: " ENABLED ", isVisible: true },
       { moduleKey: "order-management", status: "enabled", isVisible: true },
-    ])).toBe("/pos/quick-invoice");
+    ])).toBe("/pos/sales/quick-invoice");
   });
 
   it("skips hidden modules and resolves nested navigation paths", () => {

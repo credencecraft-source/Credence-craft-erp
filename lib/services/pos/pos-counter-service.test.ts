@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   counterCreate: vi.fn(),
+  counterFindFirst: vi.fn(),
   counterFindMany: vi.fn(),
   storageNodeFindFirst: vi.fn(),
   storageNodeFindMany: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock("@/lib/database/prisma-client", () => ({
     $transaction: mocks.transaction,
     posCounter: {
       create: mocks.counterCreate,
+      findFirst: mocks.counterFindFirst,
       findMany: mocks.counterFindMany,
     },
     storageNode: {
@@ -35,6 +37,9 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({
 
 import {
   createPosCounter,
+  getPosCounterById,
+  getPosCounterIdFromRouteKey,
+  getPosCounterRouteKey,
   listPosCounterLocations,
   listPosCounters,
   PosCounterValidationError,
@@ -166,6 +171,63 @@ describe("POS counter service", () => {
       }),
       take: 26,
     }));
+  });
+
+  it("filters counter lookup to the selected tenant sub-sub-location", async () => {
+    mocks.counterFindMany.mockResolvedValue([]);
+
+    await listPosCounters({
+      organizationId: "internal-org-1",
+      subSubLocationId: "leaf-1",
+      limit: 100,
+    });
+
+    expect(mocks.counterFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "internal-org-1",
+        sub_sub_location_id: "leaf-1",
+      },
+      take: 101,
+    }));
+  });
+
+  it("resolves counter details by both the authorized organization and stable counter ID", async () => {
+    mocks.counterFindFirst.mockResolvedValue({
+      id: "counter-1",
+      organization_id: "internal-org-1",
+      counter_name: "FRONT COUNTER",
+      sub_sub_location_id: "leaf-1",
+      created_at: new Date("2026-11-15T10:00:00.000Z"),
+      subSubLocation: {
+        id: "leaf-1",
+        node_name: "STORE",
+        parent: {
+          node_name: "WAREHOUSE",
+          parent: { node_name: "SITE" },
+        },
+      },
+    });
+
+    const result = await getPosCounterById("internal-org-1", "counter-1");
+
+    expect(mocks.counterFindFirst).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", id: "counter-1" },
+      include: expect.any(Object),
+    });
+    expect(result).toMatchObject({
+      id: "counter-1",
+      counterName: "FRONT COUNTER",
+      routeKey: "front-counter--counter-1",
+      subSubLocationPath: "SITE / WAREHOUSE / STORE",
+    });
+  });
+
+  it("keeps a counter route key readable and extracts only its stable ID", () => {
+    const routeKey = getPosCounterRouteKey("Front Counter", "counter-1");
+
+    expect(routeKey).toBe("front-counter--counter-1");
+    expect(getPosCounterIdFromRouteKey(routeKey)).toBe("counter-1");
+    expect(getPosCounterIdFromRouteKey("front-counter")).toBeNull();
   });
 
   it("offers only active sub-sub-locations from the authorized storage hierarchy", async () => {

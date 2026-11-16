@@ -2,18 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findPublishedOnlineStore: vi.fn(),
-  entityFindMany: vi.fn(),
+  listEnabledOnlineStoreLocations: vi.fn(),
   skuStockFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
-    masterEntity: { findMany: mocks.entityFindMany },
     finishedGoodsSkuStock: { findMany: mocks.skuStockFindMany },
   },
 }));
 vi.mock("@/lib/services/pos/public-online-store-service", () => ({
   findPublishedOnlineStore: mocks.findPublishedOnlineStore,
+}));
+vi.mock("@/lib/services/pos/online-store-inventory-service", () => ({
+  listEnabledOnlineStoreLocations: mocks.listEnabledOnlineStoreLocations,
 }));
 
 import { GET } from "./route";
@@ -25,7 +27,9 @@ describe("public online-store catalog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findPublishedOnlineStore.mockResolvedValue(store);
-    mocks.entityFindMany.mockResolvedValue([{ id: "entity-1", entity_name: "Main Store" }]);
+    mocks.listEnabledOnlineStoreLocations.mockResolvedValue([
+      { id: "location-1", name: "Main Store", entityId: "entity-1", entityName: "Entity A" },
+    ]);
     mocks.skuStockFindMany.mockResolvedValue([]);
   });
 
@@ -38,13 +42,10 @@ describe("public online-store catalog", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       storeName: "Public Boutique",
-      entities: [{ id: "entity-1", name: "Main Store" }],
+      locations: [{ id: "location-1", name: "Main Store" }],
       records: [],
     });
-    expect(mocks.entityFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { organization_id: "internal-org-1", is_active: true },
-      take: 100,
-    }));
+    expect(mocks.listEnabledOnlineStoreLocations).toHaveBeenCalledWith("internal-org-1");
     expect(mocks.skuStockFindMany).not.toHaveBeenCalled();
   });
 
@@ -64,7 +65,7 @@ describe("public online-store catalog", () => {
       mrp: 150,
     }]);
     const response = await GET(
-      new Request(`http://localhost/api/public/stores/${storeKey}/catalog?entityId=entity-1&search=sh&limit=24&offset=0`),
+      new Request(`http://localhost/api/public/stores/${storeKey}/catalog?locationId=location-1&search=sh&limit=24&offset=0`),
       { params: Promise.resolve({ storeKey }) },
     );
 
@@ -77,11 +78,22 @@ describe("public online-store catalog", () => {
       where: expect.objectContaining({
         organization_id: "internal-org-1",
         entity_id: "entity-1",
+        location_id: "location-1",
         current_stock: { gt: 0 },
       }),
       skip: 0,
       take: 25,
     }));
+  });
+
+  it("does not return products for an unenabled location", async () => {
+    const response = await GET(
+      new Request(`http://localhost/api/public/stores/${storeKey}/catalog?locationId=disabled-location`),
+      { params: Promise.resolve({ storeKey }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.skuStockFindMany).not.toHaveBeenCalled();
   });
 
   it("does not expose a disabled or unknown store", async () => {
@@ -92,6 +104,6 @@ describe("public online-store catalog", () => {
     );
 
     expect(response.status).toBe(404);
-    expect(mocks.entityFindMany).not.toHaveBeenCalled();
+    expect(mocks.listEnabledOnlineStoreLocations).not.toHaveBeenCalled();
   });
 });

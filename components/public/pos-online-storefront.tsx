@@ -15,7 +15,7 @@ import Select from "@/components/ui/Select";
 import type { OnlineStorePresentation } from "@/lib/services/pos/public-online-store-service";
 import styles from "./pos-online-storefront.module.css";
 
-type StoreEntity = { id: string; name: string };
+type StoreLocation = { id: string; name: string };
 type Product = {
   id: string;
   stock_type: "SKU";
@@ -41,7 +41,7 @@ type ShippingAddress = {
   state: string;
   postalCode: string;
 };
-type SavedBag = { cart?: unknown; entityId?: unknown };
+type SavedBag = { cart?: unknown; locationId?: unknown; entityId?: unknown };
 
 const formatAmount = (value: number) => `₹${value.toLocaleString("en-IN", {
   minimumFractionDigits: 2,
@@ -75,12 +75,12 @@ export default function PosOnlineStorefront({
   view?: "store" | "cart";
   basePath?: string;
 }) {
-  const [entities, setEntities] = useState<StoreEntity[]>([]);
-  const [entityId, setEntityId] = useState("");
+  const [storeLocations, setStoreLocations] = useState<StoreLocation[]>([]);
+  const [locationId, setLocationId] = useState("");
   const [search, setSearch] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [loadingEntities, setLoadingEntities] = useState(true);
+  const [loadingLocations, setLoadingLocations] = useState(true);
   const [cartReady, setCartReady] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -112,28 +112,35 @@ export default function PosOnlineStorefront({
   );
   const cartKeys = useMemo(() => new Set(cart.map(({ product }) => productKey(product))), [cart]);
   const slides = presentation.slides;
+  const selectedStoreLocation = storeLocations.find((location) => location.id === locationId) ?? null;
   const activeSlide = slides[activeSlideIndex] ?? slides[0] ?? null;
 
-  const saveBag = (nextCart: CartLine[], nextEntityId: string) => {
+  const saveBag = useCallback((nextCart: CartLine[], nextLocationId: string) => {
     try {
       const saved = sessionStorage.getItem(storageKey);
       const previous = saved ? JSON.parse(saved) as SavedBag : {};
       sessionStorage.setItem(storageKey, JSON.stringify({
         ...previous,
         cart: nextCart,
-        entityId: nextEntityId,
+        locationId: nextLocationId,
       }));
       setCart(nextCart);
     } catch {
       setError("Your bag could not be saved in this browser session. Keep this page open while checking out.");
     }
-  };
+  }, [storageKey]);
 
-  const updateCart = (nextCart: CartLine[]) => saveBag(nextCart, entityId);
+  const updateCart = (nextCart: CartLine[]) => saveBag(nextCart, locationId);
 
-  const updateEntityId = (nextEntityId: string) => {
-    setEntityId(nextEntityId);
-    saveBag(cart, nextEntityId);
+  const updateLocationId = (nextLocationId: string) => {
+    const changedLocation = locationId !== nextLocationId && cart.length > 0;
+    setLocationId(nextLocationId);
+    if (changedLocation) {
+      setProducts([]);
+      setHasMore(false);
+      setNotice("Your bag was cleared because each online store location has its own stock.");
+    }
+    saveBag(changedLocation ? [] : cart, nextLocationId);
   };
 
   useEffect(() => {
@@ -197,30 +204,32 @@ export default function PosOnlineStorefront({
     const controller = new AbortController();
     fetch(`/api/public/stores/${encodeURIComponent(storeKey)}/catalog`, { signal: controller.signal })
       .then(async (response) => {
-        const data = await response.json() as { entities?: StoreEntity[]; error?: string };
-        if (!response.ok || !Array.isArray(data.entities)) {
+        const data = await response.json() as { locations?: StoreLocation[]; error?: string };
+        if (!response.ok || !Array.isArray(data.locations)) {
           throw new Error(data.error || "This storefront could not be loaded.");
         }
-        return data.entities;
+        return data.locations;
       })
-      .then((loadedEntities) => {
+      .then((loadedLocations) => {
         if (controller.signal.aborted) return;
-        setEntities(loadedEntities);
-        let savedEntityId = "";
+        setStoreLocations(loadedLocations);
+        let savedLocationId = "";
         try {
           const saved = sessionStorage.getItem(storageKey);
           if (saved) {
             const parsed = JSON.parse(saved) as SavedBag;
-            if (typeof parsed.entityId === "string") savedEntityId = parsed.entityId;
+            if (typeof parsed.locationId === "string") savedLocationId = parsed.locationId;
+            else if (typeof parsed.entityId === "string") savedLocationId = parsed.entityId;
           }
         } catch {
           setError("Your saved shop location could not be restored. Please select a location again.");
         }
-        setEntityId(
-          loadedEntities.some((entity) => entity.id === savedEntityId)
-            ? savedEntityId
-            : loadedEntities.length === 1 ? loadedEntities[0].id : "",
-        );
+        const restoredLocation = loadedLocations.some((location) => location.id === savedLocationId);
+        const selectedLocationId = restoredLocation
+          ? savedLocationId
+          : loadedLocations.length === 1 ? loadedLocations[0].id : "";
+        setLocationId(selectedLocationId);
+        if (savedLocationId && !restoredLocation) saveBag([], selectedLocationId);
       })
       .catch((loadError: unknown) => {
         if (!controller.signal.aborted) {
@@ -228,19 +237,19 @@ export default function PosOnlineStorefront({
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoadingEntities(false);
+        if (!controller.signal.aborted) setLoadingLocations(false);
       });
     return () => controller.abort();
-  }, [storageKey, storeKey]);
+  }, [saveBag, storageKey, storeKey]);
 
   const loadProducts = useCallback(async (signal: AbortSignal, offset = 0) => {
-    if (view !== "store" || !entityId || search.trim().length === 1) return;
+    if (view !== "store" || !locationId || search.trim().length === 1) return;
     if (offset > 0) setLoadingMore(true);
     else setLoadingProducts(true);
     setError("");
     try {
       const query = new URLSearchParams({
-        entityId,
+        locationId,
         limit: "24",
         offset: String(offset),
       });
@@ -267,11 +276,11 @@ export default function PosOnlineStorefront({
         setLoadingMore(false);
       }
     }
-  }, [entityId, search, storeKey, view]);
+  }, [locationId, search, storeKey, view]);
 
   useEffect(() => {
     stockRequest.current?.abort();
-    if (view !== "store" || !entityId || search.trim().length === 1) return;
+    if (view !== "store" || !locationId || search.trim().length === 1) return;
     const controller = new AbortController();
     stockRequest.current = controller;
     const timeout = window.setTimeout(() => void loadProducts(controller.signal), search.trim() ? 250 : 0);
@@ -280,7 +289,7 @@ export default function PosOnlineStorefront({
       controller.abort();
       if (stockRequest.current === controller) stockRequest.current = null;
     };
-  }, [entityId, loadProducts, search, view]);
+  }, [locationId, loadProducts, search, view]);
 
   const addProduct = (product: Product) => {
     const available = Math.floor(Number(product.current_stock));
@@ -323,7 +332,7 @@ export default function PosOnlineStorefront({
 
   const submitOrder = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!entityId || cart.length === 0 || submitting) return;
+    if (!selectedStoreLocation || cart.length === 0 || submitting) return;
     setSubmitting(true);
     setError("");
     setNotice("");
@@ -332,7 +341,7 @@ export default function PosOnlineStorefront({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          entityId,
+          locationId: selectedStoreLocation.id,
           requestKey: requestKey.current || (requestKey.current = crypto.randomUUID()),
           shippingAddress: address,
           lines: cart.map(({ product, quantity }) => ({
@@ -394,21 +403,21 @@ export default function PosOnlineStorefront({
           {view === "store" ? <div className={`${styles.headerField} w-full sm:w-56`}>
             <Select
               label="Shop location"
-              value={entityId}
+              value={locationId}
               onChange={(event) => {
                 stockRequest.current?.abort();
                 setProducts([]);
                 setHasMore(false);
                 setLoadingProducts(false);
                 setLoadingMore(false);
-                updateEntityId(event.target.value);
+                updateLocationId(event.target.value);
               }}
-              disabled={loadingEntities || entities.length === 0}
+              disabled={loadingLocations || storeLocations.length === 0}
               required
               className={`${styles.headerControl} h-9 rounded-lg px-3 py-1.5`}
             >
-              <option value="">{loadingEntities ? "Loading locations..." : "Select a location"}</option>
-              {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+              <option value="">{loadingLocations ? "Loading locations..." : "Select a location"}</option>
+              {storeLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
             </Select>
           </div> : null}
 
@@ -426,7 +435,7 @@ export default function PosOnlineStorefront({
                 setSearch(event.target.value);
               }}
               placeholder="Style, brand, colour or size"
-              disabled={!entityId}
+              disabled={!locationId}
               className={`${styles.headerControl} h-9 rounded-lg px-3 py-1.5`}
             />
           </div> : null}
@@ -540,7 +549,7 @@ export default function PosOnlineStorefront({
               </Link>
             </header>
 
-            {!cartReady || loadingEntities ? (
+            {!cartReady || loadingLocations ? (
               <Card className={`${styles.surfaceCard} text-sm text-[var(--erp-muted)]`} role="status">
                 Loading your shopping bag…
               </Card>
@@ -565,13 +574,13 @@ export default function PosOnlineStorefront({
                   <form className="space-y-4" onSubmit={(event) => void submitOrder(event)}>
                     <Select
                       label="Shop location"
-                      value={entityId}
-                      onChange={(event) => updateEntityId(event.target.value)}
-                      disabled={entities.length === 0}
+                      value={locationId}
+                      onChange={(event) => updateLocationId(event.target.value)}
+                      disabled={storeLocations.length === 0}
                       required
                     >
                       <option value="">Select a location</option>
-                      {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+                      {storeLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
                     </Select>
                     <Input label="Recipient name" value={address.recipientName} maxLength={200} required
                       onChange={(event) => updateAddress("recipientName", event.target.value)} />
@@ -590,7 +599,7 @@ export default function PosOnlineStorefront({
                     <Input label="Postal code" value={address.postalCode} maxLength={20} required
                       onChange={(event) => updateAddress("postalCode", event.target.value)} />
                     <Button type="submit" className={`${styles.primaryButton} w-full`}
-                      disabled={submitting || !cart.length || !entityId || !cartReady}>
+                      disabled={submitting || !cart.length || !selectedStoreLocation || !cartReady}>
                       {submitting ? "Placing your order…" : `Place order · ${formatAmount(subtotal)}`}
                     </Button>
                   </form>
@@ -660,15 +669,15 @@ export default function PosOnlineStorefront({
               </p>
             </div>
 
-            {loadingEntities ? <p role="status" className="text-sm text-[var(--erp-muted)]">Preparing the collection…</p> : null}
-            {!loadingEntities && entities.length === 0 ? (
+            {loadingLocations ? <p role="status" className="text-sm text-[var(--erp-muted)]">Preparing the collection…</p> : null}
+            {!loadingLocations && storeLocations.length === 0 ? (
               <Card className={styles.surfaceCard}><p className="text-sm text-[var(--erp-muted)]">This store has no active shopping locations yet.</p></Card>
             ) : null}
             {search.trim().length === 1 ? (
               <p className="text-sm text-[var(--erp-muted)]">Enter at least two characters to search.</p>
             ) : null}
             {loadingProducts ? <p role="status" className="text-sm text-[var(--erp-muted)]">Finding available pieces…</p> : null}
-            {!loadingProducts && entityId && !products.length && search.trim().length !== 1 ? (
+            {!loadingProducts && locationId && !products.length && search.trim().length !== 1 ? (
               <Card className={`${styles.surfaceCard} text-center`}>
                 <ShoppingBag aria-hidden="true" className={`mx-auto ${styles.eyebrow}`} size={24} />
                 <p className={`mt-3 font-semibold ${styles.productName}`}>Nothing in this collection just yet</p>

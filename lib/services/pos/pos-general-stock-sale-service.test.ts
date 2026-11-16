@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
     contact: { findFirst: vi.fn() },
     organization: { findFirst: vi.fn() },
     masterEntity: { findFirst: vi.fn() },
+    masterLocation: { findFirst: vi.fn() },
+    eRPModule: { findFirst: vi.fn() },
     masterHsn: { findMany: vi.fn() },
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), updateMany: vi.fn() },
     finishedGoodsSkuStock: { findMany: vi.fn(), updateMany: vi.fn() },
@@ -15,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     posCoupon: { findFirst: vi.fn() },
     posCouponIssue: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
     posCouponRedemption: { count: vi.fn(), create: vi.fn() },
+    posCounterShift: { findFirst: vi.fn(), updateMany: vi.fn() },
     posSalesInvoice: { findFirst: vi.fn(), create: vi.fn() },
     posSalesReturn: { findMany: vi.fn(), updateMany: vi.fn() },
     posSalesReturnCreditApplication: { create: vi.fn() },
@@ -25,8 +28,10 @@ const mocks = vi.hoisted(() => ({
   rewardRedemptionCount: vi.fn(),
   reserveNumber: vi.fn(),
   createAuditEvent: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createFgMaterialIssue: vi.fn(),
   resolveActivePosStockLocation: vi.fn(),
+  findEnabledOnlineStoreLocation: vi.fn(),
   ingestPosSale: vi.fn(),
 }));
 
@@ -43,11 +48,17 @@ vi.mock("@/lib/services/orders/procurement-document-number-service", () => ({
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({
   createAuditEvent: mocks.createAuditEvent,
 }));
+vi.mock("@/lib/services/organizations/organization-service", () => ({
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
+}));
 vi.mock("@/lib/services/inventory/fg-issued-service", () => ({
   createFgMaterialIssue: mocks.createFgMaterialIssue,
 }));
 vi.mock("@/lib/services/pos/pos-stock-location-service", () => ({
   resolveActivePosStockLocation: mocks.resolveActivePosStockLocation,
+}));
+vi.mock("@/lib/services/pos/online-store-inventory-service", () => ({
+  findEnabledOnlineStoreLocation: mocks.findEnabledOnlineStoreLocation,
 }));
 vi.mock("@/lib/services/finance/finance-ingestion-service", () => ({
   ingestPosSale: mocks.ingestPosSale,
@@ -78,6 +89,7 @@ const saleInput = {
   actorId: "user-1",
   requestKey: "sale-request-1",
   entityId: "entity-1",
+  onlineStoreLocationId: "location-1",
   stockHierarchy: {
     entityId: "entity-1",
     divisionId: "division-1",
@@ -101,6 +113,7 @@ const saleInput = {
 describe("createPosGeneralStockSale", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.requireOrganizationPermission.mockResolvedValue(undefined);
     mocks.rewardCampaignFindFirst.mockResolvedValue(null);
     mocks.rewardRedemptionCount.mockResolvedValue(0);
     mocks.prismaTransaction.mockImplementation(async (callback) => callback(mocks.transaction));
@@ -118,6 +131,15 @@ describe("createPosGeneralStockSale", () => {
     mocks.transaction.finishedGoodsSkuStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.finishedGoodsStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.masterEntity.findFirst.mockResolvedValue({ id: "entity-1", entity_name: "Store A" });
+    mocks.transaction.masterLocation.findFirst.mockResolvedValue({
+      id: "location-1",
+      entity_id: "entity-1",
+      location_name: "Main Store",
+    });
+    mocks.transaction.eRPModule.findFirst.mockResolvedValue({
+      id: "pos-module-1",
+      settings: { onlineStoreLocationIds: ["location-1"] },
+    });
     mocks.resolveActivePosStockLocation.mockResolvedValue({
       entityId: "entity-1",
       divisionId: "division-1",
@@ -125,12 +147,19 @@ describe("createPosGeneralStockSale", () => {
       subLocationId: "sub-location-1",
       subSubLocationId: "leaf-1",
     });
+    mocks.findEnabledOnlineStoreLocation.mockResolvedValue({
+      id: "location-1",
+      entityId: "entity-1",
+      name: "Main Store",
+    });
     mocks.transaction.organization.findFirst.mockResolvedValue({ state: "Karnataka" });
     mocks.transaction.posCoupon.findFirst.mockResolvedValue(null);
     mocks.transaction.posCouponIssue.findFirst.mockResolvedValue(null);
     mocks.transaction.posCouponRedemption.count.mockResolvedValue(0);
     mocks.transaction.posCouponIssue.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.posCouponRedemption.create.mockResolvedValue({ id: "redemption-1" });
+    mocks.transaction.posCounterShift.findFirst.mockResolvedValue({ id: "shift-1" });
+    mocks.transaction.posCounterShift.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.posSalesInvoice.findFirst.mockResolvedValue(null);
     mocks.transaction.posSalesReturn.findMany.mockResolvedValue([]);
     mocks.transaction.posSalesReturn.updateMany.mockResolvedValue({ count: 1 });
@@ -149,6 +178,38 @@ describe("createPosGeneralStockSale", () => {
     );
     mocks.ingestPosSale.mockResolvedValue({ id: "central-transaction-1", duplicate: false });
     mocks.reserveNumber.mockResolvedValue("POS-1");
+  });
+
+  it("requires and reserves the salesperson's open shift for counter invoices", async () => {
+    await createPosGeneralStockSale(saleInput);
+
+    expect(mocks.transaction.posCounterShift.findFirst).toHaveBeenCalledWith({
+      where: {
+        organization_id: "organization-1",
+        active_salesperson_id: "user-1",
+        status: "OPEN",
+      },
+      select: { id: true },
+    });
+    expect(mocks.transaction.posCounterShift.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "shift-1",
+        organization_id: "organization-1",
+        active_salesperson_id: "user-1",
+        status: "OPEN",
+      },
+      data: { updated_at: expect.any(Date) },
+    });
+  });
+
+  it("does not post a counter invoice without an open shift", async () => {
+    mocks.transaction.posCounterShift.findFirst.mockResolvedValue(null);
+
+    await expect(createPosGeneralStockSale(saleInput))
+      .rejects.toThrow("Open a counter shift before posting a counter invoice.");
+
+    expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).not.toHaveBeenCalled();
   });
 
   it("applies same-customer return credit atomically without changing invoice value", async () => {
@@ -171,6 +232,7 @@ describe("createPosGeneralStockSale", () => {
     expect(mocks.transaction.posSalesInvoice.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         entity_name_snapshot: "Store A",
+        sales_channel: "COUNTER",
         total_amount: new Prisma.Decimal("189.00"),
         store_credit_applied_amount: new Prisma.Decimal("50.00"),
       }),
@@ -714,6 +776,7 @@ describe("createPosGeneralStockSale", () => {
     expect(mocks.transaction.posSalesInvoice.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         customer: "STORE CUSTOMER",
+        sales_channel: "ONLINE_STORE",
         tax_mode: "LOCAL",
         shipping_address: {
           ...shippingAddress,
@@ -739,6 +802,41 @@ describe("createPosGeneralStockSale", () => {
       where: { id: "organization-1" },
       select: { state: true },
     });
+    expect(mocks.transaction.finishedGoodsSkuStock.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ location_id: "location-1" }),
+    }));
+    expect(mocks.transaction.posCounterShift.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("rejects checkout when its selected online-store location is no longer enabled", async () => {
+    mocks.findEnabledOnlineStoreLocation.mockResolvedValue(null);
+
+    await expect(createPosGeneralStockSale({
+      ...saleInput,
+      salesChannel: "ONLINE_STORE",
+      customerContactId: null,
+      shippingAddress: {
+        recipientName: "Store Customer",
+        phone: "9876543210",
+        addressLine1: "12 Market Road",
+        addressLine2: null,
+        city: "Bengaluru",
+        state: "Karnataka",
+        postalCode: "560001",
+        countryCode: "IN",
+      },
+      lines: [{
+        stockId: "sku-store-stock-1",
+        stockType: "SKU",
+        quantity: "1",
+        rate: "0",
+        gstRate: "0",
+        discountPercent: "0",
+      }],
+    })).rejects.toThrow("This inventory location is no longer available in the online store.");
+
+    expect(mocks.transaction.finishedGoodsSkuStock.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
   });
 
   it("uses interstate GST for an online shipping address outside the organization state", async () => {

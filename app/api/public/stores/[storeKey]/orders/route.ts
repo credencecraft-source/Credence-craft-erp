@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { prisma } from "@/lib/database/prisma-client";
+import { findEnabledOnlineStoreLocation } from "@/lib/services/pos/online-store-inventory-service";
 import {
   createPosGeneralStockSale,
   type PosInvoiceShippingAddress,
@@ -76,9 +76,9 @@ export async function POST(
     const store = await findPublishedOnlineStore(storeKey);
     if (!store) return NextResponse.json({ error: "This store is not available." }, { status: 404 });
     const body = await request.json() as Record<string, unknown>;
-    const entityId = typeof body.entityId === "string" ? body.entityId.trim() : "";
+    const locationId = typeof body.locationId === "string" ? body.locationId.trim() : "";
     const requestKey = typeof body.requestKey === "string" ? body.requestKey.trim() : "";
-    if (!entityId || entityId.length > 100) {
+    if (!locationId || locationId.length > 100) {
       return NextResponse.json({ error: "Select a valid store location." }, { status: 400 });
     }
     if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestKey)) {
@@ -102,11 +102,8 @@ export async function POST(
         discountPercent: "0",
       };
     });
-    const activeEntity = await prisma.masterEntity.findFirst({
-      where: { id: entityId, organization_id: store.id, is_active: true },
-      select: { id: true },
-    });
-    if (!activeEntity) {
+    const onlineStoreLocation = await findEnabledOnlineStoreLocation(store.id, locationId);
+    if (!onlineStoreLocation) {
       return NextResponse.json({ error: "Select an active store location." }, { status: 400 });
     }
 
@@ -114,7 +111,8 @@ export async function POST(
       organizationId: store.id,
       actorId: null,
       requestKey,
-      entityId,
+      entityId: onlineStoreLocation.entityId,
+      onlineStoreLocationId: onlineStoreLocation.id,
       invoiceDate: new Date().toISOString().slice(0, 10),
       customer: shippingAddress.recipientName,
       salesChannel: "ONLINE_STORE",
