@@ -125,7 +125,7 @@ export default function PosOnlineStoreThemeEditorPage({
             </p>
           </div>
           <Link
-            href={`/dashboard/${workspaceId}/organizations/${organizationId}/pos/online-store/manage`}
+            href={`/dashboard/${workspaceId}/organizations/${organizationId}/online/online-store/manage`}
             className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--erp-brand)]"
           >
             <ArrowLeft aria-hidden="true" size={16} />

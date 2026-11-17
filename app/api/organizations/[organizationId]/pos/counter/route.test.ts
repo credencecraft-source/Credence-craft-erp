@@ -71,6 +71,32 @@ describe("POS counter route", () => {
     expect(body.counters).toHaveLength(1);
   });
 
+  it("passes the selected sub-sub-location to the tenant-scoped counter query", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/counter?subSubLocationId=leaf-1&limit=100"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listPosCounters).toHaveBeenCalledWith({
+      organizationId: "internal-org-1",
+      search: "",
+      subSubLocationId: "leaf-1",
+      cursor: null,
+      limit: 100,
+    });
+  });
+
+  it("rejects an empty selected sub-sub-location", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/counter?subSubLocationId="),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.listPosCounters).not.toHaveBeenCalled();
+  });
+
   it("does not query the report without view permission", async () => {
     mocks.requireOrganizationPermission.mockRejectedValue(
       new Error("Access denied: missing view permission."),

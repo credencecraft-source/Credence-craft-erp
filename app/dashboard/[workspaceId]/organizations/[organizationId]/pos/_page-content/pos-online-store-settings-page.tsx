@@ -249,7 +249,7 @@ export default function PosOnlineStoreSettingsPage({
                         {presentation.themeId === theme.id ? "Currently selected" : saving ? "Applying..." : "Use this theme"}
                       </Button>
                       <Link
-                        href={`/dashboard/${workspaceId}/organizations/${organizationId}/pos/online-store/manage/themes/${theme.id}`}
+                        href={`/dashboard/${workspaceId}/organizations/${organizationId}/online/online-store/manage/themes/${theme.id}`}
                         className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3.5 py-2 text-sm font-semibold text-[var(--erp-text)] shadow-sm transition-colors hover:bg-[var(--erp-surface-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
                       >
                         <Palette aria-hidden="true" size={16} />

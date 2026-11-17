@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { GENERAL_FINISHED_GOODS_SKU_SOURCES } from "@/lib/services/inventory/finished-goods-stock-overview";
+import { listEnabledOnlineStoreLocations } from "@/lib/services/pos/online-store-inventory-service";
 import { findPublishedOnlineStore } from "@/lib/services/pos/public-online-store-service";
 
 const DEFAULT_PAGE_SIZE = 24;
@@ -17,7 +18,7 @@ export async function GET(
     if (!store) return NextResponse.json({ error: "This store is not available." }, { status: 404 });
 
     const searchParams = new URL(request.url).searchParams;
-    const entityId = searchParams.get("entityId")?.trim() || null;
+    const locationId = searchParams.get("locationId")?.trim() || null;
     const search = searchParams.get("search")?.trim() ?? "";
     const rawLimit = searchParams.get("limit");
     const rawOffset = searchParams.get("offset");
@@ -31,28 +32,25 @@ export async function GET(
       return NextResponse.json({ error: "Enter valid bounded catalog search details." }, { status: 400 });
     }
 
-    const entities = await prisma.masterEntity.findMany({
-      where: { organization_id: store.id, is_active: true },
-      select: { id: true, entity_name: true },
-      orderBy: [{ sort_order: "asc" }, { entity_name: "asc" }, { id: "asc" }],
-      take: 100,
-    });
-    if (!entityId) {
+    const locations = await listEnabledOnlineStoreLocations(store.id);
+    if (!locationId) {
       return NextResponse.json({
         storeName: store.organization_name,
-        entities: entities.map(({ id, entity_name }) => ({ id, name: entity_name })),
+        locations: locations.map(({ id, name }) => ({ id, name })),
         records: [],
         hasMore: false,
       });
     }
-    if (!entities.some((entity) => entity.id === entityId)) {
-      return NextResponse.json({ error: "Select an active store." }, { status: 400 });
+    const location = locations.find((item) => item.id === locationId);
+    if (!location) {
+      return NextResponse.json({ error: "Select an active online-store location." }, { status: 400 });
     }
 
     const records = await prisma.finishedGoodsSkuStock.findMany({
       where: {
         organization_id: store.id,
-        entity_id: entityId,
+        entity_id: location.entityId,
+        location_id: location.id,
         source: { in: [...GENERAL_FINISHED_GOODS_SKU_SOURCES] },
         current_stock: { gt: 0 },
         OR: [{ sales_price: { gt: 0 } }, { mrp: { gt: 0 } }],
@@ -91,11 +89,14 @@ export async function GET(
 
     return NextResponse.json({
       storeName: store.organization_name,
-      entities: entities.map(({ id, entity_name }) => ({ id, name: entity_name })),
+      locations: locations.map(({ id, name }) => ({ id, name })),
       records: records.slice(0, limit).map((record) => ({ ...record, stock_type: "SKU" as const })),
       hasMore: records.length > limit,
     });
-  } catch {
+  } catch (error) {
+    console.error("Public online-store catalog failed", {
+      errorName: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json({ error: "The store catalog could not be loaded." }, { status: 500 });
   }
 }

@@ -839,11 +839,45 @@ model PosCounter {
   created_at            DateTime     @default(now())
   organization          Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   subSubLocation        StorageNode  @relation(fields: [organization_id, sub_sub_location_id], references: [organization_id, id], onDelete: Restrict)
+  shifts                PosCounterShift[]
 
   @@unique([organization_id, id])
   @@unique([organization_id, counter_name], map: "pos_counters_org_name_key")
   @@index([organization_id, sub_sub_location_id], map: "pos_counters_org_sub_sub_location_idx")
   @@map("pos_counters")
+}
+
+enum PosCounterShiftStatus {
+  OPEN
+  CLOSED
+}
+
+model PosCounterShift {
+  id                         String                 @id @default(cuid())
+  organization_id            String
+  counter_id                 String
+  salesperson_user_id        String                 @db.VarChar(255)
+  salesperson_name_snapshot  String                 @db.VarChar(255)
+  active_counter_id          String?
+  active_salesperson_id      String?                @db.VarChar(255)
+  status                     PosCounterShiftStatus  @default(OPEN)
+  opening_balance            Decimal                @db.Decimal(14, 2)
+  closing_balance            Decimal?               @db.Decimal(14, 2)
+  opened_at                  DateTime               @default(now())
+  closed_at                  DateTime?
+  created_by                 String                 @db.VarChar(255)
+  closed_by                  String?                @db.VarChar(255)
+  created_at                 DateTime               @default(now())
+  updated_at                 DateTime               @updatedAt
+  organization               Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  counter                    PosCounter             @relation(fields: [organization_id, counter_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, active_counter_id], map: "pos_counter_shifts_org_active_counter_key")
+  @@unique([organization_id, active_salesperson_id], map: "pos_counter_shifts_org_active_salesperson_key")
+  @@index([organization_id, counter_id, opened_at(sort: Desc), id(sort: Desc)], map: "pos_counter_shifts_org_counter_opened_idx")
+  @@index([organization_id, salesperson_user_id, opened_at], map: "pos_counter_shifts_org_salesperson_opened_idx")
+  @@map("pos_counter_shifts")
 }
 
 model PosSalesInvoice {
@@ -857,6 +891,7 @@ model PosSalesInvoice {
   customer        String?               @db.VarChar(255)
   customer_contact_id String?
   shipping_address Json?
+  sales_channel   String                @default("COUNTER") @db.VarChar(20)
   tax_mode        String                @default("LOCAL") @db.VarChar(20)
   status          String                @default("POSTED") @db.VarChar(30)
   subtotal        Decimal               @db.Decimal(14, 2)
@@ -885,6 +920,7 @@ model PosSalesInvoice {
   @@unique([organization_id, id])
   @@unique([organization_id, request_key], map: "pos_sales_invoice_request_key")
   @@index([organization_id, invoice_date, status])
+  @@index([organization_id, created_by, posted_at], map: "pos_sales_invoices_org_actor_posted_idx")
   @@index([organization_id, customer_contact_id])
   @@index([organization_id, entity_id, invoice_date])
   @@map("pos_sales_invoices")

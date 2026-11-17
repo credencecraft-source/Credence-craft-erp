@@ -6,5 +6,5 @@ export default async function PosOnlineStoreDashboardRoute({
   params: Promise<{ workspaceId: string; organizationId: string }>;
 }) {
   const { workspaceId, organizationId } = await params;
-  redirect(`/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/pos/online-store/manage`);
+  redirect(`/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/online/online-store/manage`);
 }

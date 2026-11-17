@@ -7,6 +7,7 @@ import {
   PosCouponIssueStatus,
   PosCouponStatus,
   PosCouponType,
+  PosCounterShiftStatus,
   PosOfferScope,
   PosOfferStatus,
   PosOfferType,
@@ -17,6 +18,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { createFgMaterialIssue } from "@/lib/services/inventory/fg-issued-service";
 import { GENERAL_FINISHED_GOODS_SKU_SOURCES } from "@/lib/services/inventory/finished-goods-stock-overview";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
+import { requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
 import {
   assertCentralTaxMasters,
@@ -28,6 +30,8 @@ import {
   resolveActivePosStockLocation,
   type PosStockHierarchy,
 } from "@/lib/services/pos/pos-stock-location-service";
+import { findEnabledOnlineStoreLocation } from "@/lib/services/pos/online-store-inventory-service";
+import { PosCounterShiftRequiredError } from "@/lib/services/pos/pos-counter-shift-service";
 
 type PosSaleLineInput = {
   stockId: string;
@@ -63,6 +67,7 @@ type CreatePosSaleInput = {
   returnCreditApplications?: Array<{ returnId: string; amount: string }>;
   couponCode?: string | null;
   salesChannel?: "COUNTER" | "ONLINE_STORE";
+  onlineStoreLocationId?: string;
   shippingAddress?: PosInvoiceShippingAddress | null;
   taxMode: "LOCAL" | "INTERSTATE";
   lines: PosSaleLineInput[];
@@ -225,12 +230,22 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
   if (salesChannel !== "COUNTER" && salesChannel !== "ONLINE_STORE") {
     throw new Error("Select a valid POS sales channel.");
   }
+  if (salesChannel === "COUNTER") {
+    if (!input.actorId) {
+      throw new PosCounterShiftRequiredError("Sign in as a salesperson and open a counter shift before posting a counter invoice.");
+    }
+    await requireOrganizationPermission(input.actorId, input.organizationId, "CREATE_POS_SALES");
+  }
   if (salesChannel === "COUNTER" && !input.customerContactId?.trim()) {
     throw new Error("Select a registered customer before posting a POS invoice.");
   }
   const shippingAddress = input.shippingAddress ?? null;
   if (salesChannel === "ONLINE_STORE" && !shippingAddress) {
     throw new Error("A shipping address is required for an online-store sale.");
+  }
+  const onlineStoreLocationId = input.onlineStoreLocationId?.trim() ?? "";
+  if (salesChannel === "ONLINE_STORE" && (!onlineStoreLocationId || onlineStoreLocationId.length > 100)) {
+    throw new Error("Select an enabled inventory location for online-store checkout.");
   }
   if (salesChannel === "ONLINE_STORE" && shippingAddress?.countryCode.trim().toUpperCase() !== "IN") {
     throw new Error("Online-store checkout currently supports shipping addresses within India.");
@@ -376,11 +391,52 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         issuedCouponCode: existingInvoice.issuedCoupon?.coupon_code ?? null,
       };
     }
+    if (salesChannel === "COUNTER") {
+      if (!input.actorId) {
+        throw new PosCounterShiftRequiredError("Sign in as a salesperson and open a counter shift before posting a counter invoice.");
+      }
+      const activeShift = await transaction.posCounterShift.findFirst({
+        where: {
+          organization_id: input.organizationId,
+          active_salesperson_id: input.actorId,
+          status: PosCounterShiftStatus.OPEN,
+        },
+        select: { id: true },
+      });
+      if (!activeShift) {
+        throw new PosCounterShiftRequiredError("Open a counter shift before posting a counter invoice.");
+      }
+      const reservedShift = await transaction.posCounterShift.updateMany({
+        where: {
+          id: activeShift.id,
+          organization_id: input.organizationId,
+          active_salesperson_id: input.actorId,
+          status: PosCounterShiftStatus.OPEN,
+        },
+        data: { updated_at: new Date() },
+      });
+      if (reservedShift.count !== 1) {
+        throw new PosCounterShiftRequiredError("The counter shift is no longer open. Refresh and try again.");
+      }
+    }
     const entity = await transaction.masterEntity.findFirst({
       where: { id: entityId, organization_id: input.organizationId, is_active: true },
       select: { id: true, entity_name: true, gstin: true },
     });
     if (!entity) throw new Error("Select an active Entity belonging to this organization.");
+    const onlineStoreLocation = salesChannel === "ONLINE_STORE"
+      ? await findEnabledOnlineStoreLocation(
+          input.organizationId,
+          onlineStoreLocationId,
+          transaction,
+        )
+      : null;
+    if (salesChannel === "ONLINE_STORE" && !onlineStoreLocation) {
+      throw new Error("This inventory location is no longer available in the online store.");
+    }
+    if (onlineStoreLocation && onlineStoreLocation.entityId !== entity.id) {
+      throw new Error("The selected inventory location must belong to the selected Entity.");
+    }
     if (salesChannel === "COUNTER" && !input.stockHierarchy) {
       throw new Error("Select the complete stock hierarchy through an active Sub-sub-location.");
     }
@@ -442,6 +498,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
             where: {
               organization_id: input.organizationId,
               id: { in: generalReceiptIds },
+              ...(onlineStoreLocation ? { location_id: onlineStoreLocation.id } : {}),
               ...(stockLocation ? { storage_node_id: stockLocation.subSubLocationId } : {}),
             },
             select: {
@@ -467,6 +524,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
               source: { in: [...GENERAL_FINISHED_GOODS_SKU_SOURCES] },
               entity_id: { not: null },
               location_id: { not: null },
+              ...(onlineStoreLocation ? { location_id: onlineStoreLocation.id } : {}),
               ...(stockLocation ? { storage_node_id: stockLocation.subSubLocationId } : {}),
             },
             select: {
@@ -512,6 +570,9 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     }
     if (stockRecords.some((stock) => stock.entity_id !== entity.id)) {
       throw new Error("Every selected stock item must belong to the selected Entity.");
+    }
+    if (onlineStoreLocation && stockRecords.some((stock) => stock.location_id !== onlineStoreLocation.id)) {
+      throw new Error("Every selected stock item must belong to the enabled online-store location.");
     }
     if (stockLocation && stockRecords.some((stock) =>
       stock.storage_node_id !== stockLocation.subSubLocationId
@@ -852,6 +913,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
               countryCode: shippingAddress.countryCode.trim().toUpperCase(),
             }
           : Prisma.DbNull,
+        sales_channel: salesChannel,
         tax_mode: invoiceTaxMode,
         status: "POSTED",
         subtotal: totals.subtotal,

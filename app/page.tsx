@@ -8,7 +8,12 @@ import {
 } from "@/lib/services/pos/public-online-store-service";
 import LoginPage from "./login-page";
 
-export default async function HomePage() {
+export default function HomePage() {
+  if (process.env.NODE_ENV !== "production") return <LoginPage />;
+  return getProductionHomePage();
+}
+
+async function getProductionHomePage() {
   const requestHeaders = await headers();
   const hostname = (requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "")
     .split(",")[0]

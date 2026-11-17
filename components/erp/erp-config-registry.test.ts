@@ -78,6 +78,25 @@ describe("Admin module navigation", () => {
   });
 });
 
+describe("Online module navigation", () => {
+  it("shows Online Store and Inventory under the Online module", () => {
+    const online = ERP_MODULES.find((module) => module.key === "online");
+
+    expect(online?.children).toEqual([
+      {
+        key: "online-store",
+        label: "Online Store",
+        href: "/online/online-store/manage",
+      },
+      {
+        key: "inventory",
+        label: "Inventory",
+        href: "/online/inventory",
+      },
+    ]);
+  });
+});
+
 describe("POS contact navigation", () => {
   it("adds Counter as a first-level POS sidebar entry", () => {
     const pos = ERP_MODULES.find((module) => module.key === "pos");
@@ -117,43 +136,59 @@ describe("POS contact navigation", () => {
     });
   });
 
-  it("adds Offers to the POS sidebar at the offers route", () => {
+  it("groups Offers and Coupon Code under a main Offers module in the POS sidebar", () => {
     const pos = ERP_MODULES.find((module) => module.key === "pos");
     const offers = pos?.children.find((child) => child.key === "offers");
 
     expect(offers).toMatchObject({
+      key: "offers",
       label: "Offers",
       pathSegment: "offers",
+      children: [
+        { key: "offers-page", label: "Offers", pathSegment: "offers" },
+        { key: "coupon-code", label: "Coupon Code", pathSegment: "cupencode" },
+      ],
     });
   });
 
-  it("adds Coupon Code to the POS sidebar at the coupon report route", () => {
+  it("groups Quick Invoice, Invoice, and Sales Return under the Sales section in the POS sidebar", () => {
     const pos = ERP_MODULES.find((module) => module.key === "pos");
-    const coupons = pos?.children.find((child) => child.key === "coupon-code");
+    const sales = pos?.children.find((child) => child.key === "sales");
 
-    expect(coupons).toMatchObject({
-      label: "Coupon Code",
-      pathSegment: "cupencode",
+    expect(sales).toMatchObject({
+      key: "sales",
+      label: "Sales",
+      pathSegment: "sales",
+      children: [
+        { key: "quick-invoice", label: "Quick Invoice", pathSegment: "quick-invoice" },
+        { key: "invoice", label: "Invoice", pathSegment: "invoice" },
+        { key: "sales-return", label: "Sales Return", pathSegment: "sales-return" },
+      ],
     });
   });
 
-  it("adds Sales Return to the POS sidebar at the sales-return route", () => {
+  it("groups Purchase Bill and Stock under a Purchase section in the POS sidebar", () => {
     const pos = ERP_MODULES.find((module) => module.key === "pos");
-    const salesReturn = pos?.children.find((child) => child.key === "sales-return");
+    const purchase = pos?.children.find((child) => child.key === "purchase");
 
-    expect(salesReturn).toMatchObject({
-      label: "Sales Return",
-      pathSegment: "sales-return",
+    expect(purchase).toMatchObject({
+      key: "purchase",
+      label: "Purchase",
+      pathSegment: "purchase",
+      children: [
+        { key: "purchase-bill", label: "Purchase Bill", pathSegment: "purchase-bill" },
+        { key: "stock", label: "Stock", pathSegment: "stock" },
+      ],
     });
   });
 
-  it("links Online Store directly to its settings page in the POS sidebar", () => {
-    const pos = ERP_MODULES.find((module) => module.key === "pos");
-    const onlineStore = pos?.children.find((child) => child.key === "online-store");
+  it("links Online Store directly to the Online module settings page", () => {
+    const online = ERP_MODULES.find((module) => module.key === "online");
+    const onlineStore = online?.children.find((child) => child.key === "online-store");
 
     expect(onlineStore).toMatchObject({
       label: "Online Store",
-      href: "/pos/online-store/manage",
+      href: "/online/online-store/manage",
     });
     expect(onlineStore?.children).toBeUndefined();
   });
@@ -185,9 +220,9 @@ describe("organization route module resolution", () => {
       organizationPath,
     )?.key).toBe("pos");
     expect(getErpModuleForOrganizationPath(
-      `${organizationPath}/pos/online-store/manage`,
+      `${organizationPath}/online/online-store/manage`,
       organizationPath,
-    )?.key).toBe("pos");
+    )?.key).toBe("online");
   });
 
   it("does not resolve routes outside an ERP module", () => {
