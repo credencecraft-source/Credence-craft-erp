@@ -1259,7 +1259,8 @@ async function createOrganizationDummyDataForUser(
           gst: [5, 12, 18][groupIndex % 3],
           hsn_code: ["5208", "5515", "6006", "9606"][groupIndex % 4],
           buying_qty: lines.reduce((total, line) => total + Number(line.grouped_qty ?? 0), 0) / (conversion?.howMany ?? 1),
-          lines: { create: lines as Prisma.GroupedPurchaseOrderLineUncheckedCreateWithoutGroupedPurchaseOrderInput[] },
+          lines: { create: (lines as Prisma.GroupedPurchaseOrderLineUncheckedCreateWithoutGroupedPurchaseOrderInput[])
+            .map((line) => ({ ...line, organization_id: organization.id })) },
         },
         select: { id: true, lines: { select: { id: true } } },
       }) as unknown as { id: string; lines: Array<{ id: string }> };
@@ -1362,7 +1363,7 @@ async function createOrganizationDummyDataForUser(
           status: "PENDING_APPROVAL",
           created_by: userId,
           sources: { create: masters.map((master) => ({ master_purchase_order_id: master.id })) },
-          lines: { create: purchaseOrderLines },
+          lines: { create: purchaseOrderLines.map((line) => ({ ...line, organization_id: organization.id })) },
         },
         select: { id: true, purchase_order_no: true },
       });

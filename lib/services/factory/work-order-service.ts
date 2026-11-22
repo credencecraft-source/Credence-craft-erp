@@ -556,13 +556,13 @@ async function createWorkOrderInTransaction(
         order_no: order.orderNo,
         work_order_no: await reserveChallanNumber(organizationId, "FACTORY_WO", transaction),
         total_qty: totalQty,
-        sizeLines: { create: normalizedLines.map((line) => { const sourceRow = sourceRows.get(line.sourceFinishedGoodsId)!; return { source_finished_goods_id: sourceRow.id, size: sourceRow.size, buyer_size: sourceRow.buyerSize, quantity: line.quantity }; }) },
+        sizeLines: { create: normalizedLines.map((line) => { const sourceRow = sourceRows.get(line.sourceFinishedGoodsId)!; return { organization_id: organizationId, source_finished_goods_id: sourceRow.id, size: sourceRow.size, buyer_size: sourceRow.buyerSize, quantity: line.quantity }; }) },
       },
       include: { sizeLines: true },
     });
   const bomLines = buildWorkOrderBomLines(order.bomItems, normalizedLines.map((line) => ({ size: sourceRows.get(line.sourceFinishedGoodsId)!.size, quantity: line.quantity })), totalQty);
   if (bomLines.length > 0) {
-    await transaction.factoryWorkOrderBomLine.createMany({ data: bomLines.map((line) => ({ ...line, work_order_id: createdWorkOrder.id })) });
+    await transaction.factoryWorkOrderBomLine.createMany({ data: bomLines.map((line) => ({ ...line, organization_id: organizationId, work_order_id: createdWorkOrder.id })) });
   }
   const workOrderProcessController = await createWorkOrderProcessController(transaction, createdWorkOrder.id, orderProcessController, totalQty);
   await createAuditEvent({
@@ -877,7 +877,7 @@ export async function updateWorkOrder(organizationId: string, userId: string, wo
       const bomLines = buildWorkOrderBomLines(bomItems, normalizedLines.map((line) => ({ size: sourceRows.get(line.sourceFinishedGoodsId)!.size, quantity: line.quantity })), totalQty);
       await transaction.factoryWorkOrderBomLine.deleteMany({ where: { work_order_id: workOrderId } });
       if (bomLines.length > 0) {
-        await transaction.factoryWorkOrderBomLine.createMany({ data: bomLines.map((line) => ({ ...line, work_order_id: workOrderId })) });
+        await transaction.factoryWorkOrderBomLine.createMany({ data: bomLines.map((line) => ({ ...line, organization_id: organizationId, work_order_id: workOrderId })) });
       }
       updatedBomLines = await transaction.factoryWorkOrderBomLine.findMany({ where: { work_order_id: workOrderId } });
       await transaction.workOrderProcessControllerProcess.updateMany({

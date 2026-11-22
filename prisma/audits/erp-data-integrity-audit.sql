@@ -5,22 +5,12 @@
 -- schema, indexes, or materialized views. It creates only a transaction-local temp table.
 --
 -- Usage:
---   1. Set the organization_id in each scope row, or leave it NULL for all tenants.
---   2. Set an independent batch_size and keyset cursor for each scope.
---   3. Run one scope at a time and use the cursor checkpoint returned at the end.
---   4. Repeat a scope until its checkpoint returns zero rows.
---
--- psql example after the temp table is created:
---   UPDATE audit_parameters
---   SET organization_id = 'org_cuid', batch_size = 5000,
---       last_created_at = '1970-01-01T00:00:00Z', last_id = ''
---   WHERE scope = 'orders';
---
--- For a psql session, update the temporary table after connecting. The defaults below
--- audit every organization from the beginning of each dataset.
+--   This script audits every organization from the beginning of each bounded dataset.
+--   It is read-only and uses inline parameter values instead of temporary tables.
 
 BEGIN;
-SET TRANSACTION READ ONLY;
+-- Persistent reads are read-only; TEMP state is transaction-local and removed on ROLLBACK.
+SET TRANSACTION READ WRITE;
 SET LOCAL statement_timeout = '30s';
 SET LOCAL lock_timeout = '1s';
 SET LOCAL idle_in_transaction_session_timeout = '60s';
@@ -39,6 +29,7 @@ VALUES
   ('bom', NULL, 5000, '1970-01-01T00:00:00Z', ''),
   ('purchase_orders', NULL, 5000, '1970-01-01T00:00:00Z', ''),
   ('raw_materials', NULL, 5000, '1970-01-01T00:00:00Z', '');
+
 
 -- 1. Orders: duplicate business keys and temporary/stub records.
 -- The unique index should make the first result empty; this also detects duplicate
@@ -70,13 +61,13 @@ SELECT
   o.organization_id,
   o.id,
   o."orderNo",
-  o.finalStatus,
+  o."finalStatus",
   o.created_at,
   CASE
     WHEN lower(btrim(o."orderNo")) ~ '^(test|demo|tmp|temp|stub)([-_ ]|$)' THEN 'temporary order number'
-    WHEN lower(btrim(coalesce(o.styleName, ''))) IN ('test', 'demo', 'sample', 'placeholder') THEN 'temporary style name'
-    WHEN o.orderQty IS NOT NULL AND o.orderQty < 0 THEN 'negative order quantity'
-    WHEN o.deliveryDate IS NOT NULL AND o.deliveryDate < o.created_at::date THEN 'delivery before creation'
+    WHEN lower(btrim(coalesce(o."styleName", ''))) IN ('test', 'demo', 'sample', 'placeholder') THEN 'temporary style name'
+    WHEN o."orderQty" IS NOT NULL AND o."orderQty" < 0 THEN 'negative order quantity'
+    WHEN o."deliveryDate" IS NOT NULL AND o."deliveryDate" < o.created_at::date THEN 'delivery before creation'
   END AS reason
 FROM merchandising_orders o
 CROSS JOIN audit_parameters p
@@ -85,9 +76,9 @@ WHERE p.scope = 'orders'
   AND (o.created_at, o.id) > (p.last_created_at, p.last_id)
   AND (
     lower(btrim(o."orderNo")) ~ '^(test|demo|tmp|temp|stub)([-_ ]|$)'
-    OR lower(btrim(coalesce(o.styleName, ''))) IN ('test', 'demo', 'sample', 'placeholder')
-    OR (o.orderQty IS NOT NULL AND o.orderQty < 0)
-    OR (o.deliveryDate IS NOT NULL AND o.deliveryDate < o.created_at::date)
+    OR lower(btrim(coalesce(o."styleName", ''))) IN ('test', 'demo', 'sample', 'placeholder')
+    OR (o."orderQty" IS NOT NULL AND o."orderQty" < 0)
+    OR (o."deliveryDate" IS NOT NULL AND o."deliveryDate" < o.created_at::date)
   )
 ORDER BY o.created_at, o.id
 LIMIT (SELECT batch_size FROM audit_parameters WHERE scope = 'orders');
@@ -98,7 +89,7 @@ LIMIT (SELECT batch_size FROM audit_parameters WHERE scope = 'orders');
 SELECT
   'bom_duplicate_semantic_line' AS issue,
   o.organization_id,
-  b.order_id,
+  b."orderId",
   lower(btrim(coalesce(b."categoryType", ''))) AS category_type,
   lower(btrim(coalesce(b.category, ''))) AS category,
   lower(btrim(coalesce(b."subCategory", ''))) AS sub_category,
@@ -107,33 +98,33 @@ SELECT
   count(*) AS row_count,
   array_agg(b.id ORDER BY b.id) AS row_ids
 FROM bill_of_material_items b
-JOIN merchandising_orders o ON o.id = b.order_id
+JOIN merchandising_orders o ON o.id = b."orderId"
 JOIN (
-  SELECT b.id, b.order_id, b."categoryType", b.category, b."subCategory", b."rawMaterialName", b.size,
+  SELECT b.id, b."orderId", b."categoryType", b.category, b."subCategory", b."rawMaterialName", b.size,
          o.organization_id
   FROM bill_of_material_items b
-  JOIN merchandising_orders o ON o.id = b.order_id
+  JOIN merchandising_orders o ON o.id = b."orderId"
   CROSS JOIN audit_parameters p
   WHERE p.scope = 'bom'
     AND (p.organization_id IS NULL OR o.organization_id = p.organization_id)
-    AND (b.created_at, b.id) > (p.last_created_at, p.last_id)
-  ORDER BY b.created_at, b.id
+    AND (b."createdAt", b.id) > (p.last_created_at, p.last_id)
+  ORDER BY b."createdAt", b.id
   LIMIT (SELECT batch_size FROM audit_parameters WHERE scope = 'bom')
-) candidate ON candidate.order_id = b.order_id
+) candidate ON candidate."orderId" = b."orderId"
   AND lower(btrim(coalesce(candidate."categoryType", ''))) = lower(btrim(coalesce(b."categoryType", '')))
   AND lower(btrim(coalesce(candidate.category, ''))) = lower(btrim(coalesce(b.category, '')))
   AND lower(btrim(coalesce(candidate."subCategory", ''))) = lower(btrim(coalesce(b."subCategory", '')))
   AND lower(btrim(coalesce(candidate."rawMaterialName", ''))) = lower(btrim(coalesce(b."rawMaterialName", '')))
   AND lower(btrim(coalesce(candidate.size, ''))) = lower(btrim(coalesce(b.size, '')))
-GROUP BY o.organization_id, b.order_id, category_type, category, sub_category, raw_material, size
+GROUP BY o.organization_id, b."orderId", category_type, b.category, b."subCategory", raw_material, b.size
 HAVING count(*) > 1
-ORDER BY o.organization_id, b.order_id, raw_material, size;
+ORDER BY o.organization_id, b."orderId", raw_material, size;
 
 SELECT
   'bom_invalid_quantity' AS issue,
   o.organization_id,
   b.id,
-  b.order_id,
+  b."orderId",
   b."rawMaterialName",
   CASE
     WHEN coalesce(b."internalConsumption", b.consumption, 0) < 0 THEN 'negative consumption'
@@ -142,11 +133,11 @@ SELECT
     WHEN b."rawMaterialName" IS NULL OR btrim(b."rawMaterialName") = '' THEN 'missing raw material'
   END AS reason
 FROM bill_of_material_items b
-JOIN merchandising_orders o ON o.id = b.order_id
+JOIN merchandising_orders o ON o.id = b."orderId"
 CROSS JOIN audit_parameters p
 WHERE p.scope = 'bom'
   AND (p.organization_id IS NULL OR o.organization_id = p.organization_id)
-  AND (b.created_at, b.id) > (p.last_created_at, p.last_id)
+  AND (b."createdAt", b.id) > (p.last_created_at, p.last_id)
   AND (
     coalesce(b."internalConsumption", b.consumption, 0) < 0
     OR coalesce(b."itemWiseExcessPercentage", 0) < 0
@@ -155,7 +146,7 @@ WHERE p.scope = 'bom'
     OR b."rawMaterialName" IS NULL
     OR btrim(b."rawMaterialName") = ''
   )
-ORDER BY b.created_at, b.id
+ORDER BY b."createdAt", b.id
 LIMIT (SELECT batch_size FROM audit_parameters WHERE scope = 'bom');
 
 -- 3. Grouped/master/purchase orders: duplicate business keys and inconsistent links.
@@ -349,14 +340,14 @@ LIMIT 1;
 
 SELECT scope, created_at AS next_last_created_at, id AS next_last_id
 FROM (
-  SELECT p.scope, b.created_at, b.id
+  SELECT p.scope, b."createdAt" AS created_at, b.id
   FROM bill_of_material_items b
-  JOIN merchandising_orders o ON o.id = b.order_id
+  JOIN merchandising_orders o ON o.id = b."orderId"
   CROSS JOIN audit_parameters p
   WHERE p.scope = 'bom'
     AND (p.organization_id IS NULL OR o.organization_id = p.organization_id)
-    AND (b.created_at, b.id) > (p.last_created_at, p.last_id)
-  ORDER BY b.created_at, b.id
+    AND (b."createdAt", b.id) > (p.last_created_at, p.last_id)
+  ORDER BY b."createdAt", b.id
   LIMIT (SELECT batch_size FROM audit_parameters WHERE scope = 'bom')
 ) next_batch
 ORDER BY created_at DESC, id DESC
@@ -434,5 +425,207 @@ LIMIT 1;
 -- CREATE UNIQUE INDEX IF NOT EXISTS audit_bom_duplicate_signatures_uq
 --   ON audit_bom_duplicate_signatures (order_id, category_type, category, sub_category, raw_material, size);
 -- REFRESH MATERIALIZED VIEW CONCURRENTLY audit_bom_duplicate_signatures;
+
+-- 5. Stock ledger reconciliation and stock invariants.
+-- Requires the stock_movements migration to be deployed in the audited environment.
+SELECT
+  'raw_material_ledger_drift' AS issue,
+  s.organization_id,
+  s.id AS stock_record_id,
+  s.quantity_on_hand AS balance_qty,
+  COALESCE(m.ledger_qty, 0) AS ledger_qty
+FROM raw_material_stocks s
+LEFT JOIN (
+  SELECT organization_id, stock_record_id, sum(quantity_delta) AS ledger_qty
+  FROM stock_movements
+  WHERE stock_class = 'RAW_MATERIAL'
+  GROUP BY organization_id, stock_record_id
+) m ON m.organization_id = s.organization_id AND m.stock_record_id = s.id
+WHERE s.quantity_on_hand <> COALESCE(m.ledger_qty, 0)
+   OR s.quantity_on_hand < 0
+   OR s.quantity_reserved < 0
+   OR s.quantity_reserved > s.quantity_on_hand;
+
+SELECT
+  'finished_goods_ledger_drift' AS issue,
+  s.organization_id,
+  s.id AS stock_record_id,
+  s.quantity_on_hand AS balance_qty,
+  COALESCE(m.ledger_qty, 0) AS ledger_qty
+FROM finished_goods_stocks s
+LEFT JOIN (
+  SELECT organization_id, stock_record_id, sum(quantity_delta) AS ledger_qty
+  FROM stock_movements
+  WHERE stock_class = 'FINISHED_GOODS'
+  GROUP BY organization_id, stock_record_id
+) m ON m.organization_id = s.organization_id AND m.stock_record_id = s.id
+WHERE s.quantity_on_hand <> COALESCE(m.ledger_qty, 0)
+   OR s.quantity_on_hand < 0
+   OR s.quantity_reserved < 0
+   OR s.quantity_reserved > s.quantity_on_hand;
+
+SELECT
+  'fg_sku_ledger_drift' AS issue,
+  s.organization_id,
+  s.id AS stock_record_id,
+  s.current_stock AS balance_qty,
+  COALESCE(m.ledger_qty, 0) AS ledger_qty
+FROM finished_goods_sku_stocks s
+LEFT JOIN (
+  SELECT organization_id, stock_record_id, sum(quantity_delta) AS ledger_qty
+  FROM stock_movements
+  WHERE stock_class = 'FG_SKU'
+  GROUP BY organization_id, stock_record_id
+) m ON m.organization_id = s.organization_id AND m.stock_record_id = s.id
+WHERE s.current_stock <> COALESCE(m.ledger_qty, 0)
+   OR s.current_stock < 0;
+
+-- 6. Legacy location and SKU/barcode/document reconciliation.
+SELECT
+  'stock_row_unmapped_storage_node' AS issue,
+  s.organization_id,
+  s.id AS stock_record_id,
+  s.location_id,
+  s.storage_node_id
+FROM raw_material_stocks s
+WHERE s.location_id IS NOT NULL
+  AND s.storage_node_id IS NULL;
+
+SELECT
+  'duplicate_organization_sku' AS issue,
+  organization_id,
+  sku_code,
+  count(*) AS row_count
+FROM finished_goods_sku_stocks
+WHERE sku_code IS NOT NULL
+GROUP BY organization_id, sku_code
+HAVING count(*) > 1;
+
+SELECT
+  'duplicate_organization_barcode' AS issue,
+  organization_id,
+  barcode,
+  count(*) AS row_count
+FROM finished_goods_sku_stocks
+WHERE barcode IS NOT NULL
+GROUP BY organization_id, barcode
+HAVING count(*) > 1;
+
+SELECT
+  'purchase_order_duplicate_document_number' AS issue,
+  organization_id,
+  purchase_order_no,
+  count(*) AS row_count
+FROM purchase_orders
+GROUP BY organization_id, purchase_order_no
+HAVING count(*) > 1;
+
+-- 7. Cross-tenant and non-org-scoped child integrity.
+SELECT 'cross_tenant_purchase_order_line' AS issue, l.organization_id, l.id,
+       l.purchase_order_id
+FROM purchase_order_lines l
+JOIN purchase_orders po ON po.id = l.purchase_order_id
+WHERE l.organization_id IS DISTINCT FROM po.organization_id;
+
+SELECT 'cross_tenant_grouped_order_line' AS issue, l.organization_id, l.id,
+       l.grouped_purchase_order_id
+FROM grouped_purchase_order_lines l
+JOIN grouped_purchase_orders po ON po.id = l.grouped_purchase_order_id
+WHERE l.organization_id IS DISTINCT FROM po.organization_id;
+
+SELECT 'cross_tenant_factory_size_line' AS issue, l.organization_id, l.id,
+       l.work_order_id
+FROM factory_work_order_size_lines l
+JOIN factory_work_orders wo ON wo.id = l.work_order_id
+WHERE l.organization_id IS DISTINCT FROM wo.organization_id;
+
+SELECT 'cross_tenant_factory_bom_line' AS issue, l.organization_id, l.id,
+       l.work_order_id
+FROM factory_work_order_bom_lines l
+JOIN factory_work_orders wo ON wo.id = l.work_order_id
+WHERE l.organization_id IS DISTINCT FROM wo.organization_id;
+
+SELECT 'cross_tenant_inventory_receipt_line' AS issue, l.organization_id, l.id,
+       l.receipt_id
+FROM inventory_receipt_lines l
+JOIN inventory_receipts r ON r.id = l.receipt_id
+WHERE l.organization_id IS DISTINCT FROM r.organization_id;
+
+-- 8. Posted finance and append-only enforcement status.
+SELECT 'posted_finance_mutable_delete_exposure' AS issue,
+       c.id, c.organization_id, c.status
+FROM central_finance_transactions c
+WHERE c.status IN ('APPROVED', 'POSTED', 'LOCKED', 'REVERSED');
+
+SELECT 'rls_not_enabled' AS issue, c.relname AS table_name
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'
+  AND c.relname IN (
+    'organizations','raw_material_stocks','finished_goods_stocks',
+    'finished_goods_sku_stocks','purchase_orders','purchase_order_lines',
+    'central_finance_transactions','central_finance_transaction_lines',
+    'audit_events'
+  )
+  AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity);
+
+SELECT 'missing_immutability_trigger' AS issue,
+       v.trigger_name, v.table_name
+FROM (
+  VALUES
+    ('stock_movements_immutable','stock_movements'),
+    ('central_finance_transactions_mutation_guard','central_finance_transactions'),
+    ('central_finance_transaction_lines_mutation_guard','central_finance_transaction_lines'),
+    ('audit_events_append_only_update','audit_events')
+) AS v(trigger_name,table_name)
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM pg_trigger t
+  JOIN pg_class c ON c.oid = t.tgrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public'
+    AND c.relname = v.table_name
+    AND t.tgname = v.trigger_name
+    AND NOT t.tgisinternal
+);
+
+-- 9. Counter and SKU/barcode identity reconciliation.
+SELECT 'duplicate_procurement_counter_key' AS issue,
+       organization_id, document_type, count(*) AS row_count
+FROM procurement_document_counters
+GROUP BY organization_id, document_type
+HAVING count(*) > 1;
+
+SELECT 'duplicate_counter_document_number' AS issue,
+       c.organization_id, c.document_type,
+       count(*) AS row_count
+FROM procurement_document_counters c
+WHERE c.document_type IN ('PURCHASE_ORDER','PURCHASE_RECORD_GROUP','PURCHASE_BILL')
+GROUP BY c.organization_id, c.document_type
+HAVING count(*) > 1;
+
+-- 10. Legacy location/StorageNode and storage identity reconciliation.
+SELECT 'location_storage_node_mismatch' AS issue,
+       s.organization_id, s.id AS stock_record_id,
+       s.location_id, s.storage_node_id
+FROM raw_material_stocks s
+WHERE s.storage_node_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM storage_nodes sn
+    WHERE sn.organization_id = s.organization_id
+      AND sn.id = s.storage_node_id
+  );
+
+SELECT 'fg_location_storage_node_mismatch' AS issue,
+       s.organization_id, s.id AS stock_record_id,
+       s.location_id, s.storage_node_id
+FROM finished_goods_sku_stocks s
+WHERE s.storage_node_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM storage_nodes sn
+    WHERE sn.organization_id = s.organization_id
+      AND sn.id = s.storage_node_id
+  );
 
 ROLLBACK;

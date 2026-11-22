@@ -1033,9 +1033,21 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       }
     }
 
-    for (const line of normalizedLines) {
+    for (const line of [...normalizedLines].sort((a, b) =>
+      String(a.stockId).localeCompare(String(b.stockId)),
+    )) {
       const stock = stockByKey.get(stockKey(line.stockType, line.stockId));
       if (!stock) throw new Error("A selected General stock record was not found.");
+      if (typeof transaction.$queryRawUnsafe === "function") {
+        const stockTable = stock.stockType === "SKU"
+          ? "finished_goods_sku_stocks"
+          : "finished_goods_general_stock_receipts";
+        await transaction.$queryRawUnsafe(
+          `SELECT "id" FROM "${stockTable}" WHERE "organization_id" = $1 AND "id" = $2 FOR UPDATE`,
+          input.organizationId,
+          stock.id,
+        );
+      }
       const stockWhere = {
         id: stock.id,
         organization_id: input.organizationId,

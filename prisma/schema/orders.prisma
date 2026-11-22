@@ -358,7 +358,7 @@ model GroupedPurchaseOrder {
   updated_at           DateTime                      @updatedAt
   organization         Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   entity               MasterEntity?                 @relation("GroupedPurchaseOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
-  vendor               MasterVendor                  @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  vendor               MasterVendor                  @relation(fields: [organization_id, vendor_id], references: [organization_id, id], onDelete: Restrict)
   lines                GroupedPurchaseOrderLine[]
   stockBookings        RawMaterialStockBooking[]
   masterGroupSource    MasterPurchaseOrderSource?
@@ -394,7 +394,7 @@ model MasterPurchaseOrder {
   updated_at           DateTime                    @updatedAt
   organization         Organization                @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   entity               MasterEntity?               @relation("MasterPurchaseOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
-  vendor               MasterVendor                @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  vendor               MasterVendor                @relation(fields: [organization_id, vendor_id], references: [organization_id, id], onDelete: Restrict)
   sourceRecords        MasterPurchaseOrderSource[]
   lines                MasterPurchaseOrderLine[]
   purchaseOrderSources PurchaseOrderSource[]
@@ -446,6 +446,7 @@ model MasterPurchaseOrderLine {
 
 model GroupedPurchaseOrderLine {
   id                        String                 @id @default(cuid())
+  organization_id           String
   grouped_purchase_order_id String
   source_bom_item_id        String
   source_order_id           String
@@ -467,9 +468,9 @@ model GroupedPurchaseOrderLine {
   total_spend               Decimal?               @db.Decimal(12, 4)
   created_at                DateTime               @default(now())
   updated_at                DateTime               @updatedAt
-  groupedPurchaseOrder      GroupedPurchaseOrder   @relation(fields: [grouped_purchase_order_id], references: [id], onDelete: Cascade)
-  sourceBomItem             BillOfMaterialItem     @relation(fields: [source_bom_item_id], references: [id], onDelete: Cascade)
-  sourceOrder               MerchandisingOrder     @relation(fields: [source_order_id], references: [id], onDelete: Cascade)
+  groupedPurchaseOrder      GroupedPurchaseOrder   @relation(fields: [organization_id, grouped_purchase_order_id], references: [organization_id, id], onDelete: Restrict)
+  sourceBomItem             BillOfMaterialItem     @relation(fields: [source_bom_item_id], references: [id], onDelete: Restrict)
+  sourceOrder               MerchandisingOrder     @relation(fields: [source_order_id], references: [id], onDelete: Restrict)
   rmGrnOrderAllocations     RmGrnOrderAllocation[]
 
   @@unique([grouped_purchase_order_id, source_bom_item_id])
@@ -532,7 +533,7 @@ model PurchaseOrder {
   delivery_date                DateTime?
   organization                 Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   entity                       MasterEntity?                 @relation("PurchaseOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
-  vendor                       MasterVendor                  @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  vendor                       MasterVendor                  @relation(fields: [organization_id, vendor_id], references: [organization_id, id], onDelete: Restrict)
   contact                      Contact?                      @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
   counterpartyRole             ContactRoleAssignment?        @relation(fields: [organization_id, contact_id, counterparty_role_code], references: [organization_id, contact_id, role_code], onDelete: Restrict)
   sources                      PurchaseOrderSource[]
@@ -564,6 +565,7 @@ model PurchaseOrderSource {
 
 model PurchaseOrderLine {
   id                              String                     @id @default(cuid())
+  organization_id                 String
   purchase_order_id               String
   source_master_line_id           String
   master_purchase_order_id        String?
@@ -586,14 +588,16 @@ model PurchaseOrderLine {
   hsn_code                        String?                    @db.VarChar(100)
   stock_uom                       String?                    @db.VarChar(100)
   total                           Decimal?                   @db.Decimal(12, 4)
-  purchaseOrder                   PurchaseOrder              @relation(fields: [purchase_order_id], references: [id], onDelete: Cascade)
-  masterPurchaseOrder             MasterPurchaseOrder?       @relation(fields: [master_purchase_order_id], references: [id], onDelete: Cascade)
+  purchaseOrder                   PurchaseOrder              @relation(fields: [organization_id, purchase_order_id], references: [organization_id, id], onDelete: Restrict)
+  masterPurchaseOrder             MasterPurchaseOrder?       @relation(fields: [master_purchase_order_id], references: [id], onDelete: Restrict)
   generalPurchaseOrderGroup       GeneralPurchaseOrderGroup? @relation(fields: [general_purchase_order_group_id], references: [id], onDelete: Restrict)
   inventoryReceiptLines           InventoryReceiptLine[]
   procurementVendorBillLines      ProcurementVendorBillLine[]
 
   @@unique([purchase_order_id, id])
+  @@unique([organization_id, id])
   @@unique([purchase_order_id, source_master_line_id])
+  @@index([organization_id])
   @@index([purchase_order_id])
   @@index([master_purchase_order_id])
   @@map("purchase_order_lines")
@@ -1157,6 +1161,7 @@ model InventoryReceipt {
   purchaseOrder     PurchaseOrder          @relation(fields: [purchase_order_id], references: [id], onDelete: Restrict)
   lines             InventoryReceiptLine[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, receipt_no])
   @@index([organization_id, received_date])
   @@index([purchase_order_id])
@@ -1166,6 +1171,7 @@ model InventoryReceipt {
 
 model InventoryReceiptLine {
   id                     String             @id @default(cuid())
+  organization_id        String
   receipt_id             String
   purchase_order_line_id String
   raw_material           String?            @db.VarChar(255)
@@ -1174,14 +1180,15 @@ model InventoryReceiptLine {
   accepted_quantity      Decimal            @db.Decimal(12, 2)
   rejected_quantity      Decimal            @db.Decimal(12, 2)
   created_at             DateTime           @default(now())
-  receipt                InventoryReceipt   @relation(fields: [receipt_id], references: [id], onDelete: Cascade)
-  purchaseOrderLine      PurchaseOrderLine  @relation(fields: [purchase_order_line_id], references: [id], onDelete: Restrict)
+  receipt                InventoryReceipt   @relation(fields: [organization_id, receipt_id], references: [organization_id, id], onDelete: Restrict)
+  purchaseOrderLine      PurchaseOrderLine  @relation(fields: [organization_id, purchase_order_line_id], references: [organization_id, id], onDelete: Restrict)
   rmGrnVerification      RmGrnVerification?
   rawMaterialStock       RawMaterialStock?
   procurementVendorBillLines ProcurementVendorBillLine[]
 
   @@unique([receipt_id, id])
   @@unique([receipt_id, purchase_order_line_id])
+  @@index([organization_id])
   @@index([purchase_order_line_id])
   @@map("inventory_receipt_lines")
 }
@@ -1284,6 +1291,54 @@ model RawMaterialStock {
   @@index([organization_id, location_id])
   @@index([organization_id, storage_node_id])
   @@map("raw_material_stocks")
+}
+
+enum StockMovementClass {
+  RAW_MATERIAL
+  FINISHED_GOODS
+  FG_SKU
+}
+
+enum StockMovementType {
+  GRN_RECEIPT
+  RESERVATION
+  RESERVATION_RELEASE
+  ISSUE_OUTWARD
+  POS_SALE
+  POS_RETURN
+  WO_FG_GRN
+  ADJUSTMENT
+  REVERSAL
+}
+
+model StockMovement {
+  id                String            @id @default(cuid())
+  organization_id   String
+  stock_class       StockMovementClass
+  stock_record_id   String
+  item_id           String?
+  variant_id        String?
+  sku_id            String?
+  storage_node_id   String?
+  movement_type     StockMovementType
+  quantity_delta    Decimal           @db.Decimal(14, 4)
+  before_qty        Decimal           @db.Decimal(14, 4)
+  after_qty         Decimal           @db.Decimal(14, 4)
+  uom               String            @db.VarChar(50)
+  source_doc_type   String            @db.VarChar(100)
+  source_doc_id     String
+  source_line_id    String?
+  idempotency_key   String            @db.VarChar(160)
+  reason            String?           @db.VarChar(1000)
+  actor_id          String?
+  created_at        DateTime          @default(now())
+  organization      Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, idempotency_key])
+  @@unique([organization_id, id])
+  @@index([organization_id, stock_class, stock_record_id, created_at])
+  @@index([organization_id, source_doc_type, source_doc_id])
+  @@map("stock_movements")
 }
 
 model RawMaterialStockBooking {
@@ -1443,6 +1498,7 @@ model FinishedGoodsStock {
   organization      Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   location          MasterLocation? @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
 
+  @@unique([organization_id, id])
   @@unique([organization_id, style_name, size, location_id])
   @@index([organization_id, location_id])
   @@map("finished_goods_stocks")
@@ -1750,7 +1806,7 @@ model GateEntry {
   created_at        DateTime       @default(now())
   updated_at        DateTime       @updatedAt
   organization      Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  purchaseOrder     PurchaseOrder? @relation(fields: [purchase_order_id], references: [id], onDelete: SetNull)
+  purchaseOrder     PurchaseOrder? @relation(fields: [organization_id, purchase_order_id], references: [organization_id, id], onDelete: SetNull)
 
   @@unique([organization_id, entry_no])
   @@index([organization_id, entry_at])

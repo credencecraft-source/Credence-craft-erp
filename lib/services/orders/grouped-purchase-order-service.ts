@@ -727,7 +727,7 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
         total_grouped_qty: totalGroupedQty,
         no_of_styles: new Set(lines.map((line) => line.style_name).filter(Boolean)).size,
         stock_uom: stockUoms.join(", ") || null,
-        lines: { create: lines },
+        lines: { create: lines.map((line) => ({ ...line, organization_id: input.organizationId })) },
       },
       include: groupedPurchaseOrderInclude,
     });

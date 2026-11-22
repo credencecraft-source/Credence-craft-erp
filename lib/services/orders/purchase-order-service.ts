@@ -213,7 +213,7 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         po_date: parsedPoDate,
         delivery_date: parsedDeliveryDate,
         sources: { create: masters.map((master) => ({ master_purchase_order_id: master.id })) },
-        lines: { create: lines },
+        lines: { create: lines.map((line) => ({ ...line, organization_id: organizationId })) },
       },
     });
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
