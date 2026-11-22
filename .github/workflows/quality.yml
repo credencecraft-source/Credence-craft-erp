@@ -46,7 +46,7 @@ jobs:
         run: npm ci
 
       - name: Prepare disposable database from migration history
-        run: npx prisma migrate deploy
+        run: node scripts/prepare-disposable-migration-history.cjs
 
       - name: Apply pending migrations to disposable PostgreSQL
         run: npm run db:migrate:deploy
