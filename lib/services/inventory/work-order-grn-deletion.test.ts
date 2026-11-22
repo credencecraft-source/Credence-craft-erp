@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
     finishedGoodsGeneralStockReceipt: { deleteMany: vi.fn() },
     finishedGoodsAllocatedStockReceipt: { deleteMany: vi.fn() },
     workOrderInventoryGrnBookingAllocation: { deleteMany: vi.fn() },
-    finishedGoodsStock: { updateMany: vi.fn() },
+    finishedGoodsStock: { updateMany: vi.fn(), findFirst: vi.fn() },
   },
   createAuditEvent: vi.fn(),
 }));
@@ -47,6 +47,7 @@ describe("deleteWorkOrderInventoryGrns", () => {
     mocks.transaction.finishedGoodsAllocatedStockReceipt.deleteMany.mockResolvedValue({ count: 0 });
     mocks.transaction.workOrderInventoryGrnBookingAllocation.deleteMany.mockResolvedValue({ count: 0 });
     mocks.transaction.finishedGoodsStock.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.finishedGoodsStock.findFirst.mockResolvedValue(null);
     mocks.createAuditEvent.mockResolvedValue(undefined);
     mocks.prisma.$transaction.mockImplementation(
       (callback: (database: typeof mocks.transaction) => Promise<unknown>) => callback(mocks.transaction),
@@ -133,6 +134,8 @@ describe("deleteWorkOrderInventoryGrns", () => {
         location_id: "location-1",
         style_name: "STYLE-1",
         size: "M",
+        quantity_on_hand: { gte: new Prisma.Decimal(10) },
+        quantity_reserved: { gte: new Prisma.Decimal(4) },
       },
       data: {
         quantity_on_hand: { decrement: new Prisma.Decimal(10) },
@@ -396,5 +399,35 @@ describe("deleteWorkOrderInventoryGrns", () => {
 
     expect(mocks.transaction.finishedGoodsGeneralStockReceipt.deleteMany).toHaveBeenCalled();
     expect(mocks.transaction.workOrderInventoryGrn.deleteMany).toHaveBeenCalled();
+  });
+
+  it("does not delete a GRN when reversing its receipt would make an existing stock summary negative", async () => {
+    mocks.transaction.workOrderInventoryGrn.findMany.mockResolvedValue([{
+      ...structuredClone(emptyGrn),
+      status: "VERIFIED",
+      lines: [{
+        id: "line-1",
+        generalStockReceipt: {
+          id: "general-1",
+          entity_id: "entity-1",
+          location_id: "location-1",
+          style_name: "STYLE-1",
+          size: "M",
+          quantity_in: 10,
+          quantity_out: 0,
+          current_stock: 10,
+        },
+        bookingAllocations: [],
+      }],
+    }]);
+    mocks.transaction.finishedGoodsStock.updateMany.mockResolvedValue({ count: 0 });
+    mocks.transaction.finishedGoodsStock.findFirst.mockResolvedValue({ id: "stock-summary-1" });
+
+    await expect(deleteWorkOrderInventoryGrns("internal-org-1", "user-1", ["grn-1"]))
+      .rejects.toThrow("finished-goods balance no longer covers the receipt reversal");
+
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.workOrderInventoryGrn.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).not.toHaveBeenCalled();
   });
 });

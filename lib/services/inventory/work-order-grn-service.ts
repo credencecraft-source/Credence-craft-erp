@@ -242,19 +242,38 @@ export async function deleteWorkOrderInventoryGrns(
       stockReversals.set(key, reversal);
     }
     for (const reversal of stockReversals.values()) {
-      await transaction.finishedGoodsStock.updateMany({
+      const reversed = await transaction.finishedGoodsStock.updateMany({
         where: {
           organization_id: organizationId,
           entity_id: reversal.entityId,
           location_id: reversal.locationId,
           style_name: reversal.styleName,
           size: reversal.size,
+          quantity_on_hand: { gte: reversal.quantityOnHand },
+          quantity_reserved: { gte: reversal.quantityReserved },
         },
         data: {
           quantity_on_hand: { decrement: reversal.quantityOnHand },
           quantity_reserved: { decrement: reversal.quantityReserved },
         },
       });
+      if (reversed.count === 0) {
+        const stockSummary = await transaction.finishedGoodsStock.findFirst({
+          where: {
+            organization_id: organizationId,
+            entity_id: reversal.entityId,
+            location_id: reversal.locationId,
+            style_name: reversal.styleName,
+            size: reversal.size,
+          },
+          select: { id: true },
+        });
+        if (stockSummary) {
+          throw new WorkOrderGrnDeletionConflictError(
+            "This GRN cannot be deleted because the finished-goods balance no longer covers the receipt reversal. Reconcile inventory first.",
+          );
+        }
+      }
     }
 
     const outwardLineIds = outwardLines.map((line) => line.id);
