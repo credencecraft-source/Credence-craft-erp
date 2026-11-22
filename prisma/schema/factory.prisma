@@ -9,7 +9,7 @@ model FactoryWorkOrder {
   created_at                          DateTime                             @default(now())
   updated_at                          DateTime                             @updatedAt
   organization                        Organization                         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  order                               MerchandisingOrder                   @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  order                               MerchandisingOrder                   @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict)
   sizeLines                           FactoryWorkOrderSizeLine[]
   bomLines                            FactoryWorkOrderBomLine[]
   rawMaterialOutwardRequests          RawMaterialOutwardRequest[]
@@ -35,18 +35,20 @@ model FactoryWorkOrder {
 
 model FactoryWorkOrderSizeLine {
   id                       String                              @id @default(cuid())
+  organization_id          String
   work_order_id            String
   source_finished_goods_id String
   size                     String?                             @db.VarChar(100)
   buyer_size               String?                             @db.VarChar(100)
   quantity                 Int
   created_at               DateTime                            @default(now())
-  workOrder                FactoryWorkOrder                    @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
-  sourceFinishedGoods      FinishedGoodsSizeWise               @relation(fields: [source_finished_goods_id], references: [id], onDelete: Cascade)
+  workOrder                FactoryWorkOrder                    @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict)
+  sourceFinishedGoods      FinishedGoodsSizeWise               @relation(fields: [source_finished_goods_id], references: [id], onDelete: Restrict)
   inventoryGrnLines        WorkOrderInventoryGrnLine[]
   bookingAssignments       AdvanceBookingWorkOrderAssignment[]
 
   @@unique([work_order_id, id])
+  @@index([organization_id])
   @@unique([work_order_id, source_finished_goods_id])
   @@index([source_finished_goods_id])
   @@map("factory_work_order_size_lines")
@@ -54,6 +56,7 @@ model FactoryWorkOrderSizeLine {
 
 model FactoryWorkOrderBomLine {
   id                          String                          @id @default(cuid())
+  organization_id             String
   work_order_id               String
   source_bom_item_id          String
   category_type               String?                         @db.VarChar(255)
@@ -70,7 +73,7 @@ model FactoryWorkOrderBomLine {
   total_required_qty          Decimal                         @db.Decimal(12, 2)
   created_at                  DateTime                        @default(now())
   updated_at                  DateTime                        @updatedAt
-  workOrder                   FactoryWorkOrder                @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  workOrder                   FactoryWorkOrder                @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict)
   sourceBomItem               BillOfMaterialItem              @relation(fields: [source_bom_item_id], references: [id], onDelete: Restrict)
   outwardRequestLines         RawMaterialOutwardRequestLine[]
 
@@ -86,7 +89,7 @@ model WorkOrderProcessController {
   order_controller_id String
   created_at          DateTime                            @default(now())
   updated_at          DateTime                            @updatedAt
-  workOrder           FactoryWorkOrder                    @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  workOrder                FactoryWorkOrder                    @relation(fields: [work_order_id], references: [id], onDelete: Restrict)
   orderController     OrderProcessController              @relation(fields: [order_controller_id], references: [id], onDelete: Restrict)
   processes           WorkOrderProcessControllerProcess[]
 

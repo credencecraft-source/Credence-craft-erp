@@ -895,7 +895,7 @@ export async function createGeneralPurchaseOrderFromGroups(
         created_by: createdBy,
         po_date: parsedPoDate!,
         delivery_date: parsedDeliveryDate,
-        lines: { create: lines },
+        lines: { create: lines.map((line) => ({ ...line, organization_id: organizationId })) },
       },
       select: { id: true, purchase_order_no: true },
     });

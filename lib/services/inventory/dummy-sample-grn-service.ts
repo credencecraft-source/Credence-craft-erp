@@ -109,7 +109,7 @@ export async function createDummySampleGrns(
           receipt_no: await reserveChallanNumber(organizationId, "RM_GRN", transaction),
           received_by: actorId,
           notes,
-          lines: { create: receiptLines },
+          lines: { create: receiptLines.map((line) => ({ ...line, organization_id: organizationId })) },
         },
         select: { id: true, receipt_no: true },
       });

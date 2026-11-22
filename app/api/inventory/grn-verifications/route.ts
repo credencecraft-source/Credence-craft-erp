@@ -10,6 +10,13 @@ import {
   requireOrganizationPermission,
 } from "@/lib/services/organizations/organization-service";
 
+function isPrismaKnownRequestError(error: unknown) {
+  const knownRequestError = (Prisma as typeof Prisma & {
+    PrismaClientKnownRequestError?: typeof Prisma.PrismaClientKnownRequestError;
+  }).PrismaClientKnownRequestError;
+  return typeof knownRequestError === "function" && error instanceof knownRequestError;
+}
+
 function errorResponse(error: unknown, fallback: string) {
   if (error instanceof Error && error.message.startsWith("Access denied:")) {
     return NextResponse.json({ error: error.message }, { status: 403 });
@@ -23,15 +30,16 @@ function errorResponse(error: unknown, fallback: string) {
   if (error instanceof MasterGroupRequiredError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (error.code === "P2021" || error.code === "P2022") {
+  if (isPrismaKnownRequestError(error)) {
+    const prismaError = error as Prisma.PrismaClientKnownRequestError;
+    if (prismaError.code === "P2021" || prismaError.code === "P2022") {
       return NextResponse.json({ error: "RM GRN Verification is unavailable until its database migration is deployed." }, { status: 503 });
     }
-    if (error.code === "P2002" || error.code === "P2034") {
+    if (prismaError.code === "P2002" || prismaError.code === "P2034") {
       return NextResponse.json({ error: "This verification changed while it was being saved. Reload and try again." }, { status: 409 });
     }
   }
-  if (error instanceof Error && !(error instanceof Prisma.PrismaClientKnownRequestError)) {
+  if (error instanceof Error && !isPrismaKnownRequestError(error)) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
   return NextResponse.json({ error: fallback }, { status: 500 });

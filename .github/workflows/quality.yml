@@ -45,38 +45,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prepare disposable database at the pre-migration schema
-        shell: bash
-        run: |
-          migration_file="$(find prisma/migrations -mindepth 2 -maxdepth 2 -type f -name migration.sql | sort | tail -n 1)"
-          if [[ -z "$migration_file" ]]; then
-            echo "No Prisma migrations found."
-            exit 1
-          fi
-
-          migration_name="$(basename "$(dirname "$migration_file")")"
-          migration_commit="$(git log --diff-filter=A --format=%H -- "$migration_file" | head -n 1)"
-          if [[ -z "$migration_commit" ]]; then
-            echo "Could not locate the commit that introduced $migration_name."
-            exit 1
-          fi
-          baseline_commit="$(git rev-parse "${migration_commit}^")"
-
-          mkdir -p "$RUNNER_TEMP/pre-migration-schema"
-          git archive "$baseline_commit" prisma/schema | tar -x -C "$RUNNER_TEMP/pre-migration-schema"
-          printf '%s\n' \
-            'CREATE SEQUENCE IF NOT EXISTS "organization_number_sequence" START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9999999999 NO CYCLE;' \
-            | npx prisma db execute --stdin --schema "$RUNNER_TEMP/pre-migration-schema/prisma/schema"
-          npx prisma db push --schema "$RUNNER_TEMP/pre-migration-schema/prisma/schema" --skip-generate
-
-          mapfile -t baseline_migrations < <(
-            git ls-tree -r --name-only "$baseline_commit" prisma/migrations \
-              | awk -F/ '$NF == "migration.sql" { print $(NF-1) }' \
-              | sort
-          )
-          for name in "${baseline_migrations[@]}"; do
-            npx prisma migrate resolve --applied "$name"
-          done
+      - name: Prepare disposable database from migration history
+        run: npx prisma migrate deploy
 
       - name: Apply pending migrations to disposable PostgreSQL
         run: npm run db:migrate:deploy

@@ -283,7 +283,16 @@ export async function createRawMaterialStockBookings(input: {
       };
     });
 
-    for (const [stockId, quantity] of stockQuantities) {
+    const sortedStockIds = [...stockQuantities.keys()].sort((a, b) => a.localeCompare(b));
+    for (const stockId of sortedStockIds) {
+      if (typeof transaction.$queryRawUnsafe === "function") {
+        await transaction.$queryRawUnsafe(
+          'SELECT "id" FROM "raw_material_stocks" WHERE "organization_id" = $1 AND "id" = $2 FOR UPDATE',
+          input.organizationId,
+          stockId,
+        );
+      }
+      const quantity = stockQuantities.get(stockId)!;
       const stock = stockById.get(stockId)!;
       const available = stock.quantity_on_hand.minus(stock.quantity_reserved);
       if (quantity.gt(available)) throw new Error(`Booked quantity exceeds available stock for ${stock.raw_material}.`);
@@ -348,7 +357,7 @@ export async function createRawMaterialStockBookings(input: {
         total_grouped_qty: totalGroupedQty,
         no_of_styles: new Set(groupedLines.map((line) => line.style_name).filter(Boolean)).size,
         stock_uom: firstItem.stockUom,
-        lines: { create: groupedLines },
+        lines: { create: groupedLines.map((line) => ({ ...line, organization_id: input.organizationId })) },
       },
       select: { id: true },
     });

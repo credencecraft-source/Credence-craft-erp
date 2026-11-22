@@ -281,6 +281,7 @@ model Organization {
   fgStockOutwardShipmentBoxes             FinishedGoodsOutwardShipmentBox[]
   finishedGoodsStocks                     FinishedGoodsStock[]
   finishedGoodsSkuStocks                  FinishedGoodsSkuStock[]
+  stockMovements                          StockMovement[]
   finishedGoodsGeneralStockReceipts       FinishedGoodsGeneralStockReceipt[]
   finishedGoodsAllocatedStockReceipts     FinishedGoodsAllocatedStockReceipt[]
   gateEntries                             GateEntry[]
@@ -915,6 +916,12 @@ model AuditEvent {
   id              String         @id @default(cuid())
   organization_id String
   user_id         String?
+  actor_id        String?
+  source_context  String?        @db.VarChar(100)
+  request_id      String?        @db.VarChar(160)
+  before_data     Json?
+  after_data      Json?
+  changed_fields  Json?
   module          String         @db.VarChar(100)
   action          String         @db.VarChar(100)
   entity_type     String?        @db.VarChar(150)

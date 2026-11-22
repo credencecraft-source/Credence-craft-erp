@@ -26,6 +26,7 @@
     "@tanstack/react-virtual": "^3.14.13",
     "clsx": "^2.1.1",
     "framer-motion": "^13.1.1",
+    "jsbarcode": "^3.12.3",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "jszip": "^3.10.2",
@@ -62,6 +63,7 @@
   },
   "overrides": {
     "deepmerge-ts": "8.0.2",
-    "dompurify": "3.4.17"
+    "dompurify": "3.4.17",
+    "effect": "3.22.5"
   }
 }
