@@ -11,7 +11,6 @@ const {
     key: string;
     value: string;
     type: string;
-    visibility: string;
     target: string[];
     gitBranch: string;
   }>;
@@ -64,14 +63,12 @@ describe("Vercel Preview environment synchronization", () => {
     expect(pooled).toMatchObject({
       value: env.SANDBOX_DATABASE_URL,
       type: "sensitive",
-      visibility: "secret",
       target: ["preview"],
       gitBranch: "test-branch",
     });
     expect(direct).toMatchObject({
       value: env.SANDBOX_DATABASE_URL_UNPOOLED,
       type: "sensitive",
-      visibility: "secret",
     });
     expect(metadata).toMatchObject({ value: "false", type: "plain" });
     expect(schemaSyncAllowed).toMatchObject({ value: "true", type: "plain" });
@@ -117,10 +114,10 @@ describe("Vercel Preview environment synchronization", () => {
       key: "DATABASE_URL",
       value: env.SANDBOX_DATABASE_URL,
       type: "sensitive",
-      visibility: "secret",
       target: ["preview"],
       gitBranch: "test-branch",
     });
+    expect(createBody).not.toHaveProperty("visibility");
     expect(String(fetchImpl.mock.calls[2][0])).toContain("/v10/projects/prj_test/env");
     expect(String(fetchImpl.mock.calls[2][0])).toContain("upsert=true");
     const verifyCall = fetchImpl.mock.calls[keys.length + 1];
