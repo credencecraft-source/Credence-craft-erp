@@ -6,10 +6,18 @@ import {
   findPublishedOnlineStoreByHostname,
   getOrganizationOnlineStorePresentation,
 } from "@/lib/services/pos/public-online-store-service";
-import LoginPage from "./login-page";
+import HomeLandingPage from "./_page-content/home-landing-page";
+
+const marketingHostnames = new Set(["credencecraft.in", "www.credencecraft.in"]);
+
+export const metadata = {
+  title: "Credence Craft | Apparel ERP for Manufacturing, Retail & Distribution",
+  description:
+    "Connect apparel merchandising, sourcing, production, inventory, distribution and retail in one organization-scoped ERP workspace.",
+};
 
 export default function HomePage() {
-  if (process.env.NODE_ENV !== "production") return <LoginPage />;
+  if (process.env.NODE_ENV !== "production") return <HomeLandingPage />;
   return getProductionHomePage();
 }
 
@@ -21,11 +29,11 @@ async function getProductionHomePage() {
     .replace(/:\d+$/, "")
     .replace(/\.$/, "")
     .toLowerCase();
-  const customDomainStore = hostname
+  const customDomainStore = hostname && !marketingHostnames.has(hostname)
     ? await findPublishedOnlineStoreByHostname(hostname)
     : null;
 
-  if (!customDomainStore) return <LoginPage />;
+  if (!customDomainStore) return <HomeLandingPage />;
   if (hostname !== customDomainStore.primaryHostname) {
     redirect(`https://${customDomainStore.primaryHostname}`);
   }

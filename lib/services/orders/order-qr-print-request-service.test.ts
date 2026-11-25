@@ -115,6 +115,7 @@ describe("order QR print request service", () => {
       qr_field_key: "orderNo",
       display_fields: ["orderNo", "buyer"],
       display_field_styles: {
+        codeType: "QR_CODE",
         styles: {
           orderNo: { fontSize: 14, bold: true, underline: false, color: "#111827" },
           buyer: { fontSize: 10, bold: false, underline: true, color: "#FF0000" },
@@ -259,6 +260,7 @@ describe("order QR print request service", () => {
         id: "request-1",
         orderNo: "ORD-1",
         templateName: "BASIC",
+        codeType: "QR_CODE",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "buyer"],
         displayValues: { orderNo: "ORD-1", buyer: "BUYER-1" },
@@ -308,6 +310,7 @@ describe("order QR print request service", () => {
             __pageSetup: pageSetupSnapshot,
           },
           display_field_styles: {
+            codeType: "QR_CODE",
             styles: {
               orderNo: { fontSize: 14, bold: true, underline: false, color: "#111827" },
               buyer: { fontSize: 10, bold: false, underline: true, color: "#FF0000" },
@@ -327,6 +330,65 @@ describe("order QR print request service", () => {
           sticker_width_mm: 50,
           sticker_length_mm: 30,
           qr_payload: JSON.stringify({ "Order Number": "ORD-1" }),
+        }),
+      }),
+    );
+  });
+
+  it("uses the saved barcode format and snapshots the raw selected field", async () => {
+    mocks.transaction.merchandisingOrderQrTemplate.findFirst.mockResolvedValueOnce({
+      name: "ORDER BARCODE",
+      type: "ORDER_TAGS",
+      field_keys: ["orderNo", "buyer"],
+      qr_field_key: "orderNo",
+      display_fields: ["orderNo", "buyer"],
+      display_field_styles: {
+        codeType: "BARCODE",
+        styles: {},
+        layout: {
+          qr: { x: 3, y: 25 },
+          fields: {
+            orderNo: { x: 44, y: 16 },
+            buyer: { x: 44, y: 36 },
+          },
+          printerType: "LASER",
+          pdfPaperSize: "A4_LANDSCAPE",
+        },
+        pageSetup: pageSetupSnapshot,
+      },
+      qr_size: 320,
+      sticker_width_mm: 50,
+      sticker_length_mm: 30,
+    });
+    mocks.transaction.merchandisingOrderQrPrintRequest.create.mockImplementationOnce(
+      async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "request-barcode",
+        ...data,
+        status: "PENDING",
+        requested_at: new Date("2026-10-27T00:00:00.000Z"),
+        updated_at: new Date("2026-10-27T00:00:00.000Z"),
+      }),
+    );
+
+    const result = await createOrderQrPrintRequest("internal-org-1", "user-1", {
+      orderId: "order-1",
+      templateId: "template-1",
+      requestType: "PRINT",
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      request: {
+        id: "request-barcode",
+        codeType: "BARCODE",
+        qrPayload: "ORD-1",
+      },
+    });
+    expect(mocks.transaction.merchandisingOrderQrPrintRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          qr_payload: "ORD-1",
+          display_field_styles: expect.objectContaining({ codeType: "BARCODE" }),
         }),
       }),
     );

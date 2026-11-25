@@ -3,6 +3,10 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import {
+  getPlatformLeadReadScope,
+  isPlatformSalesManager,
+} from "./platform-lead-access";
 
 const CONFIGURATION_ID = "default";
 const DEFAULT_NAMESPACE = "decc5535_5d4b_402c_9592_3165bf9c35e4";
@@ -22,18 +26,40 @@ export type PlatformWhatsAppTemplateInput = {
 
 async function requireWhatsAppPlatformAdmin() {
   const admin = await requirePlatformSessionAdmin();
-  if (admin.team_role === "CTO") {
-    throw new Error("WhatsApp campaign access is not available to the CTO team.");
+  if (admin.team_role === "CTO" || admin.team_role === "SALES_MANAGER") {
+    throw new Error("WhatsApp configuration is not available to this platform team.");
   }
   return admin;
 }
 
 async function requireCampaignPlatformAdmin() {
-  const admin = await requireWhatsAppPlatformAdmin();
-  if (admin.team_role !== null) {
-    throw new Error("Campaign management is available to platform Admin accounts only.");
+  const admin = await requirePlatformSessionAdmin();
+  if (
+    admin.team_role !== null
+    && admin.team_role !== "CMO"
+    && admin.team_role !== "SALES_MANAGER"
+  ) {
+    throw new Error("Campaign management is available to platform Admin, CMO, and Sales Manager accounts only.");
   }
   return admin;
+}
+
+function assertMessageRecipientsInManagerScope(
+  admin: Awaited<ReturnType<typeof requirePlatformSessionAdmin>>,
+  recipients: Array<{
+    lead: { assigned_sales_manager_id: string | null } | null;
+  }>,
+) {
+  if (
+    isPlatformSalesManager(admin)
+    && recipients.some(({ lead }) =>
+      !lead ||
+      (lead.assigned_sales_manager_id !== null &&
+        lead.assigned_sales_manager_id !== admin.id),
+    )
+  ) {
+    throw new Error("You can only manage WhatsApp messages for leads assigned to you or unassigned.");
+  }
 }
 
 function normalizeTemplate(input: PlatformWhatsAppTemplateInput) {
@@ -270,6 +296,7 @@ export async function schedulePlatformWhatsAppCampaignMessage(input: {
       select: {
         id: true,
         leads: {
+          where: { lead: getPlatformLeadReadScope(admin) },
           select: {
             lead: { select: { id: true, name: true, mobile: true } },
           },
@@ -332,11 +359,16 @@ export async function schedulePlatformWhatsAppCampaignMessage(input: {
 }
 
 export async function listPlatformWhatsAppCampaignMessages(campaignId: string) {
-  await requireCampaignPlatformAdmin();
+  const admin = await requireCampaignPlatformAdmin();
   const id = campaignId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid campaign.");
   return prisma.platformWhatsAppCampaignMessage.findMany({
-    where: { campaign_id: id },
+    where: {
+      campaign_id: id,
+      ...(isPlatformSalesManager(admin)
+        ? { recipients: { some: { lead: getPlatformLeadReadScope(admin) } } }
+        : {}),
+    },
     orderBy: [{ scheduled_at: "desc" }, { created_at: "desc" }],
     take: 50,
     select: {
@@ -347,6 +379,7 @@ export async function listPlatformWhatsAppCampaignMessages(campaignId: string) {
       failure_summary: true,
       template: { select: { template_name: true } },
       recipients: {
+        where: { lead: getPlatformLeadReadScope(admin) },
         select: {
           customer_name: true,
           phone_number: true,
@@ -396,10 +429,16 @@ export async function cancelPlatformWhatsAppCampaignMessage(campaignId: string, 
       select: {
         id: true,
         status: true,
-        recipients: { select: { status: true } },
+        recipients: {
+          select: {
+            status: true,
+            lead: { select: { assigned_sales_manager_id: true } },
+          },
+        },
       },
     });
     if (!message) throw new Error("WhatsApp schedule not found.");
+    assertMessageRecipientsInManagerScope(admin, message.recipients);
     assertCampaignMessageHasNoDelivery(message);
     if (message.status !== "SCHEDULED") {
       throw new Error("Only a scheduled WhatsApp message can be cancelled.");
@@ -439,10 +478,16 @@ export async function deletePlatformWhatsAppCampaignMessage(campaignId: string, 
         id: true,
         status: true,
         template_id: true,
-        recipients: { select: { status: true } },
+        recipients: {
+          select: {
+            status: true,
+            lead: { select: { assigned_sales_manager_id: true } },
+          },
+        },
       },
     });
     if (!message) throw new Error("WhatsApp schedule not found.");
+    assertMessageRecipientsInManagerScope(admin, message.recipients);
     assertCampaignMessageHasNoDelivery(message);
     if (!["SCHEDULED", "CANCELLED", "FAILED"].includes(message.status)) {
       throw new Error("Only unsent, cancelled, or failed WhatsApp schedules can be deleted.");

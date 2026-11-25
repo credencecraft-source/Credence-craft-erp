@@ -10,6 +10,7 @@ import {
 import Sidebar from "@/components/ui/Sidebar";
 import Button from "@/components/ui/Button";
 import NavigationLinkStatus from "@/components/ui/navigation-link-status";
+import { shouldShowPlatformNavigationSection } from "@/lib/auth/platform-navigation-access";
 
 type NavigationItem = {
   label: string;
@@ -23,34 +24,22 @@ const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[]; directItem?:
     items: [
       { label: "Leads", href: "/platform/leads" },
       { label: "Sales team", href: "/platform/leads/sales-team" },
+      { label: "Organisations", href: "/platform/organisations" },
+      { label: "Subscriptions", href: "/platform/subscriptions" },
+      { label: "Campaigns", href: "/platform/campaigns" },
     ],
   },
   {
     title: "Sales",
     items: [
       { label: "Leads", href: "/platform/leads" },
-    ],
-  },
-  {
-    title: "Admin",
-    items: [
-      { label: "Leads", href: "/platform/leads" },
-      { label: "Sales team", href: "/platform/leads/sales-team" },
       { label: "Campaigns", href: "/platform/campaigns" },
-      {
-        label: "Platform Settings",
-        children: [
-          { label: "AI Settings", href: "/admin/settings/ai-control-panel" },
-        ],
-      },
     ],
   },
   {
-    title: "Organisations",
+    title: "CTO",
     items: [
-      { label: "Organisations", href: "/platform/organisations" },
-      { label: "Subscriptions", href: "/platform/subscriptions" },
-      { label: "Workspace Users", href: "/platform/workspace-users" },
+      { label: "AI Settings", href: "/admin/settings/ai-control-panel" },
     ],
   },
   {
@@ -101,6 +90,9 @@ export default function PlatformRootLayoutClient({
   canAccessWorkspace,
   canAccessSupport,
   canAccessLegacyManagement,
+  canAccessOrganizations,
+  canAccessCampaigns,
+  canAccessAISettings,
   attentionCounts,
 }: {
   accessLabel: string;
@@ -113,6 +105,9 @@ export default function PlatformRootLayoutClient({
   canAccessWorkspace: boolean;
   canAccessSupport: boolean;
   canAccessLegacyManagement: boolean;
+  canAccessOrganizations: boolean;
+  canAccessCampaigns: boolean;
+  canAccessAISettings: boolean;
   attentionCounts: {
     openTickets: number;
     pendingOrganizations: number;
@@ -196,6 +191,14 @@ export default function PlatformRootLayoutClient({
     });
 
   const visibleSections = NAV_SECTIONS.filter((section) => {
+    if (!shouldShowPlatformNavigationSection(section.title, isSuperAdminView)) {
+      return false;
+    }
+
+    if (!isSuperAdminView && canManageAccounts) {
+      return section.title === "Masters" || section.title === "Settings";
+    }
+
     if (section.title === "Support") {
       return canAccessSupport;
     }
@@ -204,10 +207,12 @@ export default function PlatformRootLayoutClient({
     }
 
     if (section.title === "CMO") {
-      return canAccessLeadsAndSubscriptions && !canManageAccounts;
+      return canAccessLeadsAndSubscriptions &&
+        !canManageAccounts &&
+        (canAccessOrganizations || canAccessCampaigns);
     }
-    if (section.title === "Admin") {
-      return canManageAccounts;
+    if (section.title === "CTO") {
+      return canAccessAISettings;
     }
     if (section.title === "Sales") {
       return canAccessLeads && !canAccessLeadsAndSubscriptions && !canManageAccounts;
@@ -244,6 +249,7 @@ export default function PlatformRootLayoutClient({
         {visibleSections.map((section) => {
           const items = section.items
             .filter((item) => item.href !== "/platform/settings/access" || canManageAccounts)
+            .filter((item) => item.href !== "/platform/campaigns" || canAccessCampaigns)
             .filter((item) => item.href !== "/platform/leads/sales-team" || canManageSalesTeam)
             .filter((item) => item.href !== "/platform/whatsapp" || canAccessConfiguration)
             .filter((item) => item.href !== "/platform/subscriptions" || canAccessConfiguration)

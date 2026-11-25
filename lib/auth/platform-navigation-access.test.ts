@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { getPlatformNavigationAccess } from "./platform-navigation-access";
+import {
+  getPlatformNavigationAccess,
+  shouldShowPlatformNavigationSection,
+} from "./platform-navigation-access";
 
 describe("getPlatformNavigationAccess", () => {
   it.each([
@@ -13,6 +16,10 @@ describe("getPlatformNavigationAccess", () => {
         canManageSalesTeam: true,
         canAccessWorkspace: true,
         canAccessSupport: false,
+        canAccessOrganizations: true,
+        canAccessCampaigns: true,
+        canAccessAISettings: false,
+        canCreateCampaignFromLeads: true,
       },
     },
     {
@@ -24,6 +31,10 @@ describe("getPlatformNavigationAccess", () => {
         canManageSalesTeam: true,
         canAccessWorkspace: false,
         canAccessSupport: false,
+        canAccessOrganizations: true,
+        canAccessCampaigns: true,
+        canAccessAISettings: false,
+        canCreateCampaignFromLeads: true,
       },
     },
     {
@@ -35,13 +46,17 @@ describe("getPlatformNavigationAccess", () => {
         canManageSalesTeam: false,
         canAccessWorkspace: false,
         canAccessSupport: true,
+        canAccessOrganizations: false,
+        canAccessCampaigns: false,
+        canAccessAISettings: true,
+        canCreateCampaignFromLeads: false,
       },
     },
   ])("returns the configured platform navigation for $teamRole", ({ teamRole, expected }) => {
     expect(getPlatformNavigationAccess(teamRole)).toEqual(expected);
   });
 
-  it("allows Sales Managers into Leads without granting subscriptions or team management", () => {
+  it("allows Sales Managers into Leads and Campaigns without subscriptions or team management", () => {
     expect(getPlatformNavigationAccess("SALES_MANAGER")).toEqual({
       canAccessConfiguration: false,
       canAccessLeadsAndSubscriptions: false,
@@ -49,6 +64,21 @@ describe("getPlatformNavigationAccess", () => {
       canManageSalesTeam: false,
       canAccessWorkspace: false,
       canAccessSupport: false,
+      canAccessOrganizations: false,
+      canAccessCampaigns: true,
+      canAccessAISettings: false,
+      canCreateCampaignFromLeads: true,
     });
+  });
+
+  it("shows only Settings in Super Admin view", () => {
+    expect(shouldShowPlatformNavigationSection("Settings", true)).toBe(true);
+    expect(shouldShowPlatformNavigationSection("Admin", true)).toBe(false);
+    expect(shouldShowPlatformNavigationSection("Organisations", true)).toBe(false);
+  });
+
+  it("shows the normal sections outside Super Admin view", () => {
+    expect(shouldShowPlatformNavigationSection("Settings", false)).toBe(true);
+    expect(shouldShowPlatformNavigationSection("Admin", false)).toBe(true);
   });
 });

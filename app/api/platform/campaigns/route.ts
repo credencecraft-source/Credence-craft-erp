@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   createPlatformCampaign,
+  createPlatformCampaignWithSelectedLeads,
   listPlatformCampaigns,
 } from "@/lib/services/platform/platform-campaign-service";
 
@@ -23,6 +24,15 @@ export async function POST(request: Request) {
     const body = typeof payload === "object" && payload !== null
       ? payload as Record<string, unknown>
       : {};
+    if (body.leadIds !== undefined) {
+      const result = await createPlatformCampaignWithSelectedLeads({
+        name: typeof body.name === "string" ? body.name : "",
+        campaignDate: typeof body.campaignDate === "string" ? body.campaignDate : "",
+        leadIds: body.leadIds,
+      });
+      return NextResponse.json(result, { status: 201 });
+    }
+
     const campaign = await createPlatformCampaign({
       name: typeof body.name === "string" ? body.name : "",
       campaignDate: typeof body.campaignDate === "string" ? body.campaignDate : "",

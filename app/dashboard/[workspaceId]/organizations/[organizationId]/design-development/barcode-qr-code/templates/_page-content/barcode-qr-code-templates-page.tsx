@@ -9,13 +9,16 @@ import Modal from "@/components/ui/Modal";
 import {
   getQrTemplateFieldLabel,
   ORDER_QR_TEMPLATE_TYPES,
+  getOrderQrCodeTypeLabel,
   getQrTemplateTypeLabel,
+  type OrderQrCodeType,
 } from "@/lib/services/orders/order-qr-template-contract";
 
 type TemplateReportRow = {
   id: string;
   name: string;
   type: string;
+  codeType: string;
   fields: string;
   qrSize: string;
   updatedAt: string;
@@ -23,9 +26,10 @@ type TemplateReportRow = {
 
 const fields: Array<{ key: keyof TemplateReportRow; label: string }> = [
   { key: "name", label: "Template Name" },
-  { key: "type", label: "Type" },
+  { key: "type", label: "Category" },
+  { key: "codeType", label: "Code Format" },
   { key: "fields", label: "Template Fields" },
-  { key: "qrSize", label: "QR Size" },
+  { key: "qrSize", label: "Code Size" },
   { key: "updatedAt", label: "Last Updated" },
 ];
 
@@ -33,6 +37,7 @@ type ApiTemplate = {
   id: string;
   name: string;
   type: string;
+  codeType: OrderQrCodeType;
   fieldKeys: string[];
   qrSize: number;
   updatedAt: string;
@@ -87,6 +92,9 @@ export default function BarcodeQrCodeTemplatesPage({
           )
             ? getQrTemplateTypeLabel(template.type as (typeof ORDER_QR_TEMPLATE_TYPES)[number])
             : template.type,
+          codeType: getOrderQrCodeTypeLabel(
+            template.codeType === "BARCODE" ? "BARCODE" : "QR_CODE",
+          ),
           fields: template.fieldKeys
             .map((key) => getQrTemplateFieldLabel(key as Parameters<typeof getQrTemplateFieldLabel>[0]))
             .join(", "),
@@ -234,7 +242,7 @@ export default function BarcodeQrCodeTemplatesPage({
                 Delete selected QR templates?
               </h2>
               <p className="mt-2 text-sm text-slate-600">
-                {deleteIds.length} template{deleteIds.length === 1 ? "" : "s"} will be removed. Existing print requests keep their saved QR design snapshots.
+                {deleteIds.length} template{deleteIds.length === 1 ? "" : "s"} will be removed. Existing print requests keep their saved code design snapshots.
               </p>
             </div>
             {deleteError && <p className="text-sm text-[var(--erp-danger)]" role="alert">{deleteError}</p>}

@@ -6,13 +6,18 @@ import PlatformCampaignsPage from "./_page-content/platform-campaigns-page";
 
 export default async function PlatformCampaignsRoute() {
   const admin = await requirePlatformSessionAdmin();
-  if (admin.actualRole !== "SUPER_ADMIN" && (admin.role !== "ADMIN" || admin.team_role !== null)) {
-    redirect("/platform/organisations");
+  if (
+    admin.role !== "SUPER_ADMIN"
+    && admin.team_role !== "CMO"
+    && admin.team_role !== "SALES_MANAGER"
+  ) {
+    redirect("/platform/business-types");
   }
 
   const campaigns = await listPlatformCampaigns();
   return (
     <PlatformCampaignsPage
+      key="campaign-list"
       campaigns={campaigns.map((campaign) => ({
         id: campaign.id,
         name: campaign.name,

@@ -8,5 +8,18 @@ export function getPlatformNavigationAccess(teamRole: PlatformNavigationTeamRole
     canManageSalesTeam: teamRole === null || teamRole === "CMO",
     canAccessWorkspace: teamRole === null,
     canAccessSupport: teamRole === "CTO",
+    canAccessOrganizations: teamRole === null || teamRole === "CMO",
+    canAccessCampaigns:
+      teamRole === null || teamRole === "CMO" || teamRole === "SALES_MANAGER",
+    canAccessAISettings: teamRole === "CTO",
+    canCreateCampaignFromLeads:
+      teamRole === null || teamRole === "CMO" || teamRole === "SALES_MANAGER",
   };
+}
+
+export function shouldShowPlatformNavigationSection(
+  sectionTitle: string,
+  isSuperAdminView: boolean,
+): boolean {
+  return !isSuperAdminView || sectionTitle === "Settings";
 }

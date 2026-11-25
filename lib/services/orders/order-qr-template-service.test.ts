@@ -64,6 +64,7 @@ describe("order QR template service", () => {
         id: "template-1",
         name: "ORDER TAG",
         type: "ORDER_TAGS",
+        codeType: "QR_CODE",
         field_keys: ["orderNo", "buyer", 3],
         qr_field_key: "orderNo",
         display_fields: ["orderNo", "buyer"],
@@ -95,6 +96,7 @@ describe("order QR template service", () => {
       qr_field_key: "orderNo",
       display_fields: ["orderNo", "styleName"],
       display_field_styles: {
+        codeType: "BARCODE",
         styles: {},
         layout: {
           qr: { x: 3, y: 25 },
@@ -118,6 +120,7 @@ describe("order QR template service", () => {
         id: "template-1",
         name: "ORDER TAG",
         type: "ORDER_TAGS",
+        codeType: "QR_CODE",
         fieldKeys: ["orderNo", "buyer"],
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "buyer"],
@@ -154,6 +157,7 @@ describe("order QR template service", () => {
       createOrderQrTemplate("internal-org-1", "user-1", {
         name: "ORDER TAG",
         type: "ORDER_TAGS",
+        codeType: "BARCODE",
         pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "styleName"],
@@ -173,6 +177,7 @@ describe("order QR template service", () => {
       }),
     ).resolves.toMatchObject({
       id: "template-2",
+      codeType: "BARCODE",
       fieldKeys: ["orderNo", "styleName"],
     });
 
@@ -187,6 +192,7 @@ describe("order QR template service", () => {
           qr_field_key: "orderNo",
           display_fields: ["orderNo", "styleName"],
           display_field_styles: {
+            codeType: "BARCODE",
             styles: {},
             layout: {
               qr: { x: 3, y: 25 },
@@ -232,6 +238,7 @@ describe("order QR template service", () => {
     await createOrderQrTemplate("internal-org-1", "user-1", {
       name: "THERMAL TAG",
       type: "ORDER_TAGS",
+      codeType: "QR_CODE",
       pageSetupTemplateId: "setup-1",
       qrFieldKey: "orderNo",
       displayFields: ["orderNo"],
@@ -270,6 +277,7 @@ describe("order QR template service", () => {
     await expect(createOrderQrTemplate("internal-org-1", "user-1", {
       name: "ORDER TAG",
       type: "ORDER_TAGS",
+      codeType: "QR_CODE",
       pageSetupTemplateId: "foreign-setup",
       qrFieldKey: "orderNo",
       displayFields: ["orderNo"],
@@ -377,6 +385,7 @@ describe("order QR template service", () => {
     await expect(updateOrderQrTemplate("internal-org-1", "user-1", "template-1", {
       name: "UPDATED TAG",
       type: "ORDER_TAGS",
+      codeType: "BARCODE",
       pageSetupTemplateId: "setup-1",
       qrFieldKey: "orderNo",
       displayFields: ["orderNo", "buyer"],
@@ -409,6 +418,7 @@ describe("order QR template service", () => {
           qr_field_key: "orderNo",
           display_fields: ["orderNo", "buyer"],
           display_field_styles: {
+            codeType: "BARCODE",
             styles: {},
             layout: {
               qr: { x: 3, y: 25 },

@@ -44,7 +44,6 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          echo "expires_at=$(date -u -d '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           if [[ "$EVENT_NAME" == "pull_request_target" ]]; then
             echo "neon_branch_name=credencecraft-sandbox-pr-${PR_NUMBER}-${RUN_ID}-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
             echo "vercel_branch_ref=${PR_HEAD_REF}" >> "$GITHUB_OUTPUT"
@@ -60,8 +59,6 @@ jobs:
           project_id: ${{ secrets.NEON_PROJECT_ID }}
           branch_name: ${{ steps.context.outputs.neon_branch_name }}
           branch_type: schema-only
-          expires_at: ${{ steps.context.outputs.expires_at }}
-          suspend_timeout: 300
           api_key: ${{ secrets.NEON_API_KEY }}
 
       - name: Mask sandbox connection strings

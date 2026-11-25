@@ -3,17 +3,18 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import QRCode from "qrcode";
-
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
+import { createOrderQrCodeDataUrl } from "@/components/erp/order-qr-code-generator";
 import {
-  buildOrderQrPayload,
+  buildOrderCodePayload,
   getQrTemplateFieldLabel,
   getQrTemplateSampleValues,
+  getOrderQrCodeTypeLabel,
   getQrTemplateTypeLabel,
+  type OrderQrCodeType,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
   type QrTemplateFieldKey,
@@ -23,6 +24,7 @@ type TemplateDetail = {
   id: string;
   name: string;
   type: string;
+  codeType: OrderQrCodeType;
   fieldKeys: string[];
   qrFieldKey: QrTemplateFieldKey;
   displayFields: QrTemplateFieldKey[];
@@ -50,9 +52,10 @@ export default function BarcodeQrCodeTemplateDetailPage({
   const [qrRetryCount, setQrRetryCount] = useState(0);
   const [qrPreview, setQrPreview] = useState<{
     payload: string;
+    codeType: OrderQrCodeType;
     dataUrl?: string;
     error?: string;
-  }>({ payload: "" });
+  }>({ payload: "", codeType: "QR_CODE" });
   const router = useRouter();
   const templatesHref =
     `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/templates`;
@@ -103,31 +106,40 @@ export default function BarcodeQrCodeTemplateDetailPage({
     (key) => getQrTemplateFieldLabel(key),
   ) ?? [];
   const qrPayload = template
-    ? buildOrderQrPayload(
-      [template.qrFieldKey],
+    ? buildOrderCodePayload(
+      template.codeType,
+      template.qrFieldKey,
       sampleValues,
-    ).payload
+    )
     : "";
-  const qrDataUrl = qrPreview.payload === qrPayload ? qrPreview.dataUrl : undefined;
-  const qrError = qrPreview.payload === qrPayload ? qrPreview.error : undefined;
+  const qrDataUrl = qrPreview.payload === qrPayload
+    && qrPreview.codeType === template?.codeType
+    ? qrPreview.dataUrl
+    : undefined;
+  const qrError = qrPreview.payload === qrPayload
+    && qrPreview.codeType === template?.codeType
+    ? qrPreview.error
+    : undefined;
 
   useEffect(() => {
     if (!template || !qrPayload) return;
     let active = true;
-    void QRCode.toDataURL(qrPayload, {
-      errorCorrectionLevel: "H",
-      margin: 2,
-      width: template.qrSize,
-    })
+    void createOrderQrCodeDataUrl(qrPayload, template.codeType, template.qrSize)
       .then((dataUrl) => {
-        if (active) setQrPreview({ payload: qrPayload, dataUrl });
+        if (active) setQrPreview({ payload: qrPayload, codeType: template.codeType, dataUrl });
       })
       .catch((error: unknown) => {
-        console.error("Unable to generate the saved order QR template preview.", {
+        console.error("Unable to generate the saved order template preview.", {
           errorName: error instanceof Error ? error.name : "UnknownError",
         });
         if (active) {
-          setQrPreview({ payload: qrPayload, error: "QR preview could not be generated." });
+          setQrPreview({
+            payload: qrPayload,
+            codeType: template.codeType,
+            error: error instanceof Error
+              ? error.message
+              : "Code preview could not be generated.",
+          });
         }
       });
 
@@ -148,7 +160,7 @@ export default function BarcodeQrCodeTemplateDetailPage({
           </Link>
           <div className="space-y-1">
             <h1 className="text-xl font-semibold text-slate-900">Template Details</h1>
-            <p className="text-sm text-slate-600">View this saved QR template.</p>
+            <p className="text-sm text-slate-600">View this saved barcode or QR code template.</p>
           </div>
         </div>
         {template && (
@@ -184,9 +196,9 @@ export default function BarcodeQrCodeTemplateDetailPage({
         <>
         <Card className="space-y-4">
           <div className="space-y-1">
-            <h2 className="text-base font-semibold text-slate-900">Saved QR Sticker Preview</h2>
+            <h2 className="text-base font-semibold text-slate-900">Saved Sticker Preview</h2>
             <p className="text-sm text-slate-600">
-              This is the saved template layout with sample {getQrTemplateTypeLabel(
+              This is the saved {getOrderQrCodeTypeLabel(template.codeType)} layout with sample {getQrTemplateTypeLabel(
                 template.type === "POS_ITEM_BARCODE"
                   ? "POS_ITEM_BARCODE"
                   : template.type === "FG_BARCODE" ? "FG_BARCODE" : "ORDER_TAGS",
@@ -194,9 +206,10 @@ export default function BarcodeQrCodeTemplateDetailPage({
             </p>
           </div>
           <OrderQrStickerPreview
-            qrDataUrl={qrDataUrl}
-            qrError={qrError}
-            qrAlt={`Saved QR code preview for ${template.name}`}
+            codeType={template.codeType}
+            codeDataUrl={qrDataUrl}
+            codeError={qrError}
+            codeAlt={`Saved ${getOrderQrCodeTypeLabel(template.codeType)} preview for ${template.name}`}
             fields={template.displayFields.map((key) => ({
               key,
               label: getQrTemplateFieldLabel(key),
@@ -228,7 +241,7 @@ export default function BarcodeQrCodeTemplateDetailPage({
             </div>
             <div className="min-w-0">
               <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-text-muted)]">
-                QR Code Size
+                {template.codeType === "BARCODE" ? "Barcode Bar Height" : "QR Code Size"}
               </dt>
               <dd className="mt-1 text-sm text-[var(--erp-text)]">{template.qrSize} px</dd>
             </div>
@@ -242,13 +255,21 @@ export default function BarcodeQrCodeTemplateDetailPage({
             </div>
             <div className="min-w-0">
               <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-text-muted)]">
-                QR Code Field
+                Code Format
+              </dt>
+              <dd className="mt-1 text-sm text-[var(--erp-text)]">
+                {getOrderQrCodeTypeLabel(template.codeType)}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-text-muted)]">
+                Encoded Field
               </dt>
               <dd className="mt-1 text-sm text-[var(--erp-text)]">{qrFieldLabel}</dd>
             </div>
             <div className="min-w-0">
               <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-text-muted)]">
-                QR Position
+                Code Position
               </dt>
               <dd className="mt-1 text-sm text-[var(--erp-text)]">
                 {template.layout.qr.x}%, {template.layout.qr.y}%

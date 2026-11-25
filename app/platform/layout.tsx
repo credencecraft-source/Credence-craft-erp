@@ -54,6 +54,9 @@ export default async function PlatformRootLayout({
       canManageSalesTeam: true,
       canAccessWorkspace: true,
       canAccessSupport: true,
+      canAccessOrganizations: true,
+      canAccessCampaigns: true,
+      canAccessAISettings: false,
     }
     : getPlatformNavigationAccess(admin.team_role);
 

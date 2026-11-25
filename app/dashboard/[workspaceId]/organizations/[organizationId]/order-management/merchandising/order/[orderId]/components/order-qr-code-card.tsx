@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import QRCode from "qrcode";
 import { Download, Printer, QrCode, X } from "lucide-react";
 
 import Button from "@/components/ui/Button";
@@ -14,9 +13,11 @@ import Tabs from "@/components/ui/Tabs";
 import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
 import {
   DEFAULT_QR_FIELD_STYLE,
-  buildOrderQrPayload,
+  buildOrderCodePayload,
+  getOrderQrCodeTypeLabel,
   getQrTemplateFieldLabel,
   getQrTemplateFields,
+  type OrderQrCodeType,
   type OrderQrTemplateType,
   type OrderQrTemplateFieldKey,
   type QrTemplateFieldKey,
@@ -32,6 +33,7 @@ type OrderQrTemplate = {
   id: string;
   name: string;
   type: OrderQrTemplateType;
+  codeType: OrderQrCodeType;
   fieldKeys: QrTemplateFieldKey[];
   qrFieldKey: QrTemplateFieldKey;
   displayFields: QrTemplateFieldKey[];
@@ -53,6 +55,7 @@ type FinishedGoodsBarcodeRow = {
 
 type QrState = {
   payload: string;
+  codeType: OrderQrCodeType;
   size: number;
   dataUrl?: string;
   error?: string;
@@ -80,7 +83,11 @@ export default function OrderQrCodeCard({
     useState<OrderQrTemplateType>("ORDER_TAGS");
   const [quantityMode, setQuantityMode] = useState<OrderQrQuantityMode>("PCS");
   const [bulkQuantity, setBulkQuantity] = useState(String(orderFields.orderQty ?? ""));
-  const [qrState, setQrState] = useState<QrState>({ payload: "", size: 0 });
+  const [qrState, setQrState] = useState<QrState>({
+    payload: "",
+    codeType: "QR_CODE",
+    size: 0,
+  });
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [templates, setTemplates] = useState<OrderQrTemplate[]>([]);
   const [finishedGoodsRows, setFinishedGoodsRows] = useState<FinishedGoodsBarcodeRow[]>([]);
@@ -152,17 +159,23 @@ export default function OrderQrCodeCard({
     && Number.isSafeInteger(finishedGoodsLabelCount)
     && finishedGoodsLabelCount <= MAX_ORDER_QR_PRINT_REQUEST_LABELS;
   const qrPayload = selectedTemplate
-    ? buildOrderQrPayload([selectedTemplate.qrFieldKey], templateFieldValues).payload
+    ? buildOrderCodePayload(
+      selectedTemplate.codeType,
+      selectedTemplate.qrFieldKey,
+      templateFieldValues,
+    )
     : "";
   const qrFieldHasValue = Boolean(qrPayload);
   const qrSize = selectedTemplate?.qrSize ?? 0;
   const qrDataUrl = selectedTemplate
     && qrState.payload === qrPayload
+    && qrState.codeType === selectedTemplate.codeType
     && qrState.size === qrSize
     ? qrState.dataUrl
     : undefined;
   const qrError = selectedTemplate
     && qrState.payload === qrPayload
+    && qrState.codeType === selectedTemplate.codeType
     && qrState.size === qrSize
     ? qrState.error
     : undefined;
@@ -194,7 +207,7 @@ export default function OrderQrCodeCard({
         type: requestType,
         status: "error",
         message: !selectedTemplate
-          ? "Select a saved QR template before requesting print or download."
+          ? "Select a saved code template before requesting print or download."
           : activeTemplateType === "FG_BARCODE"
             ? "Select finished-goods sizes with saved SKU and barcode values and valid label quantities."
             : "Enter a positive whole-number bulk quantity.",
@@ -225,18 +238,18 @@ export default function OrderQrCodeCard({
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data?.error || "Unable to submit the QR request.");
+        throw new Error(data?.error || "Unable to submit the code request.");
       }
       setRequestState({
         type: requestType,
         status: "success",
-        message: `${activeTemplateType === "FG_BARCODE" ? "Finished-goods barcode" : "Order QR"} ${requestType.toLowerCase()} request sent to Design and Development.`,
+        message: `${getOrderQrCodeTypeLabel(selectedTemplate.codeType)} ${requestType.toLowerCase()} request sent to Design and Development.`,
       });
     } catch (error) {
       setRequestState({
         type: requestType,
         status: "error",
-        message: error instanceof Error ? error.message : "Unable to submit the QR request.",
+        message: error instanceof Error ? error.message : "Unable to submit the code request.",
       });
     }
   };
@@ -328,22 +341,28 @@ export default function OrderQrCodeCard({
   useEffect(() => {
     if (!open || !selectedTemplate || !qrPayload) return;
     let active = true;
-    void QRCode.toDataURL(qrPayload, {
-      errorCorrectionLevel: "H",
-      margin: 2,
-      width: qrSize,
-    })
+    void import("@/components/erp/order-qr-code-generator")
+      .then(({ createOrderQrCodeDataUrl }) =>
+        createOrderQrCodeDataUrl(qrPayload, selectedTemplate.codeType, qrSize))
       .then((dataUrl) => {
-        if (active) setQrState({ payload: qrPayload, size: qrSize, dataUrl });
+        if (active) {
+          setQrState({
+            payload: qrPayload,
+            codeType: selectedTemplate.codeType,
+            size: qrSize,
+            dataUrl,
+          });
+        }
       })
       .catch((error: unknown) => {
-        console.error("Unable to generate the merchandising order QR code.", {
+        console.error("Unable to generate the merchandising order code.", {
           errorName: error instanceof Error ? error.name : "UnknownError",
         });
         if (active) setQrState({
           payload: qrPayload,
+          codeType: selectedTemplate.codeType,
           size: qrSize,
-          error: "QR code could not be generated.",
+          error: error instanceof Error ? error.message : "Code could not be generated.",
         });
       });
 
@@ -358,13 +377,13 @@ export default function OrderQrCodeCard({
         type="button"
         variant="secondary"
         size="sm"
-        aria-label={`Show QR code and details for order ${orderNo}`}
-        title="Show order QR code"
+        aria-label={`Show code and details for order ${orderNo}`}
+        title="Show order code"
         className="min-h-8 px-2"
         onClick={openQrModal}
       >
         <QrCode className="h-4 w-4" aria-hidden="true" />
-        <span className="hidden sm:inline">Order QR</span>
+        <span className="hidden sm:inline">Order Code</span>
       </Button>
       <Modal
         open={open}
@@ -376,12 +395,16 @@ export default function OrderQrCodeCard({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 id="order-qr-dialog-title" className="text-lg font-semibold text-slate-900">
-                {activeTemplateType === "FG_BARCODE" ? "Finished-goods barcode labels" : "Order QR details"}
+                {selectedTemplate
+                  ? `${getOrderQrCodeTypeLabel(selectedTemplate.codeType)} details`
+                  : activeTemplateType === "FG_BARCODE"
+                    ? "Finished-goods labels"
+                    : "Order code details"}
               </h2>
               <p className="mt-1 text-sm text-slate-600">
                 {activeTemplateType === "FG_BARCODE"
                   ? "Select finished-goods sizes to print using their saved SKU and barcode."
-                  : "Select an Order Tags template to encode its chosen order fields."}
+                  : "Select an Order Tags template and code format."}
               </p>
             </div>
             <Button
@@ -389,7 +412,7 @@ export default function OrderQrCodeCard({
               variant="ghost"
               size="sm"
               onClick={() => setOpen(false)}
-              aria-label="Close order QR details"
+              aria-label="Close order code details"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </Button>
@@ -416,7 +439,7 @@ export default function OrderQrCodeCard({
 
           <div className="grid min-w-0 gap-4 sm:grid-cols-2 sm:items-end">
             <Select
-              label={activeTemplateType === "FG_BARCODE" ? "FG Barcode Template" : "Order Tags Template"}
+              label={activeTemplateType === "FG_BARCODE"               ? "FG Template" : "Order Tags Template"}
               value={selectedTemplateId}
               onChange={(event) => setSelectedTemplateId(event.target.value)}
               disabled={isLoadingTemplates || templateError.length > 0 || activeTemplates.length === 0}
@@ -424,7 +447,7 @@ export default function OrderQrCodeCard({
                 { value: "", label: "Select a saved template" },
                 ...activeTemplates.map((template) => ({
                   value: template.id,
-                  label: template.name,
+                  label: `${template.name} · ${getOrderQrCodeTypeLabel(template.codeType)}`,
                 })),
               ]}
             />
@@ -462,7 +485,7 @@ export default function OrderQrCodeCard({
                 aria-describedby="order-qr-bulk-quantity-help"
               />
               <p id="order-qr-bulk-quantity-help" className="text-xs text-[var(--erp-text-muted)]">
-                Enter a positive whole number. This quantity is used in the QR preview and request.
+                Enter a positive whole number. This quantity is used in the code preview and request.
               </p>
               {bulkQuantity.length > 0 && !isBulkQuantityValid && (
                 <p className="text-sm text-[var(--erp-danger)]" role="alert">
@@ -477,7 +500,7 @@ export default function OrderQrCodeCard({
               <div className="space-y-1">
                 <h3 className="text-sm font-semibold text-slate-900">Finished-goods sizes</h3>
                 <p className="text-xs text-[var(--erp-text-muted)]">
-                  Each selected size produces its own QR code. Label quantity defaults to the size&apos;s order quantity.
+                  Each selected size produces its own code. Label quantity defaults to the size&apos;s order quantity.
                 </p>
               </div>
               {isLoadingFinishedGoods && (
@@ -593,7 +616,7 @@ export default function OrderQrCodeCard({
                 </p>
               </div>
               <div>
-                <p className="text-xs text-[var(--erp-text-muted)]">QR encodes</p>
+                <p className="text-xs text-[var(--erp-text-muted)]">Code encodes</p>
                 <p className="text-sm font-medium text-slate-900">
                   {getQrTemplateFieldLabel(selectedTemplate.qrFieldKey)}
                 </p>
@@ -631,11 +654,12 @@ export default function OrderQrCodeCard({
 
           {selectedTemplate && qrFieldHasValue ? (
             <OrderQrStickerPreview
-              qrDataUrl={qrDataUrl}
-              qrError={qrError}
-              qrAlt={activeTemplateType === "FG_BARCODE"
-                ? `FG barcode QR code for ${selectedPreviewVariant?.barcode ?? orderNo}`
-                : `QR code for order ${orderNo}`}
+              codeType={selectedTemplate.codeType}
+              codeDataUrl={qrDataUrl}
+              codeError={qrError}
+              codeAlt={`${getOrderQrCodeTypeLabel(selectedTemplate.codeType)} for ${activeTemplateType === "FG_BARCODE"
+                ? selectedPreviewVariant?.barcode ?? orderNo
+                : `order ${orderNo}`}`}
               fields={selectedTemplate.displayFields.map((fieldKey) => ({
                 key: fieldKey,
                 label: getQrTemplateFieldLabel(fieldKey),
@@ -654,7 +678,7 @@ export default function OrderQrCodeCard({
           ) : selectedTemplate ? (
             <div className="flex min-h-40 items-center justify-center rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-6 text-center">
               <p className="text-sm text-[var(--erp-text-muted)]" role="status">
-                The selected QR field has no value on this order.
+                The selected code field has no value on this order.
               </p>
             </div>
           ) : (
@@ -663,18 +687,18 @@ export default function OrderQrCodeCard({
                 {isLoadingTemplates
                   ? "Loading saved templates..."
                   : templateError
-                    ? "Load templates to preview the saved QR design."
+                    ? "Load templates to preview the saved code design."
                     : activeTemplates.length === 0
                       ? `Create a ${activeTemplateType === "FG_BARCODE" ? "FG Barcode" : "Order Tags"} template to preview its sticker here.`
-                      : "Select a saved template to preview its QR sticker."}
+                      : "Select a saved template to preview its sticker."}
               </p>
             </div>
           )}
           <div className="space-y-3 border-t border-[var(--erp-border)] pt-4">
             <p className="text-sm text-[var(--erp-text-muted)]">
               {activeTemplateType === "FG_BARCODE"
-                ? "Send one QR label per selected finished-goods size to Design and Development."
-                : "Send this QR code and the selected order details to Design and Development for processing."}
+                ? `Send one ${selectedTemplate ? getOrderQrCodeTypeLabel(selectedTemplate.codeType) : "code"} label per selected finished-goods size to Design and Development.`
+                : `Send this ${selectedTemplate ? getOrderQrCodeTypeLabel(selectedTemplate.codeType) : "code"} and the selected order details to Design and Development for processing.`}
             </p>
             <div className="flex flex-wrap gap-3">
               <Button

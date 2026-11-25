@@ -17,6 +17,7 @@ import Card from "@/components/ui/Card";
 import Table from "@/components/ui/Table";
 import {
   getA4StickerGrid,
+  getOrderQrCodeTypeLabel,
   getQrTemplateFieldLabel,
 } from "@/lib/services/orders/order-qr-template-contract";
 import { getPageSetupPaperSizeLabel } from "@/lib/services/design-development/page-setup-template-contract";
@@ -155,7 +156,7 @@ export default function BarcodeQrPrintRequestDetailPage({
       }
     } catch (error) {
       printWindow?.close();
-      console.error("Unable to create order QR print output.", {
+      console.error("Unable to create order code print output.", {
         errorName: error instanceof Error ? error.name : "UnknownError",
       });
       setOutputError(error instanceof Error
@@ -179,14 +180,14 @@ export default function BarcodeQrPrintRequestDetailPage({
             Back to Print/Download requests
           </Link>
           <h1 className="text-xl font-semibold text-slate-900">
-          {request.isFinishedGoodsBarcode ? "FG Barcode Print Request" : "QR Print Request"} · {request.orderNo}
+          {getOrderQrCodeTypeLabel(request.codeType)} Print Request · {request.orderNo}
           </h1>
           <p className="text-sm text-[var(--erp-text-muted)]">
             {request.sourceType === "POS_PURCHASE_BILL"
-              ? "Purchase bill QR labels routed through Design & Development."
+              ? `Purchase bill ${getOrderQrCodeTypeLabel(request.codeType)} labels routed through Design & Development.`
               : request.isFinishedGoodsBarcode
                 ? "Finished-goods barcode labels generated from the SKU and barcode assigned to each order size."
-              : "Saved request design and print-ready preview."}
+              : `Saved ${getOrderQrCodeTypeLabel(request.codeType)} design and print-ready preview.`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -224,7 +225,7 @@ export default function BarcodeQrPrintRequestDetailPage({
       {outputError && <p className="text-sm text-[var(--erp-danger)]" role="alert">{outputError}</p>}
       {request.layout.printerType === "LASER" && !request.pageSetup && (
         <p className="text-sm text-[var(--erp-text-muted)]" role="status">
-          This request has no assigned Page Setup. Update its QR template and create a new request.
+          This request has no assigned Page Setup. Update its code template and create a new request.
         </p>
       )}
 
@@ -254,7 +255,7 @@ export default function BarcodeQrPrintRequestDetailPage({
 
           {!stickerDataUrls.length && !previewError && (
             <p className="text-sm text-[var(--erp-text-muted)]" role="status">
-              Preparing saved QR artwork...
+              Preparing saved code artwork...
             </p>
           )}
           {previewError && <p className="text-sm text-[var(--erp-danger)]" role="alert">{previewError}</p>}
@@ -380,12 +381,13 @@ export default function BarcodeQrPrintRequestDetailPage({
                 </div>
               )}
               <OrderQrStickerPreview
-                qrDataUrl={getStickerForLabel(previewPage)}
+                codeType={request.codeType}
+                codeDataUrl={getStickerForLabel(previewPage)}
                 fields={previewFields}
                 layout={request.layout}
                 stickerWidthMm={request.stickerWidthMm}
                 stickerLengthMm={request.stickerLengthMm}
-                qrAlt={`QR code for ${request.sourceType === "POS_PURCHASE_BILL" ? "purchase bill item" : "order"} ${activeBulkItem?.orderNo ?? request.orderNo}`}
+                codeAlt={`${getOrderQrCodeTypeLabel(request.codeType)} for ${request.sourceType === "POS_PURCHASE_BILL" ? "purchase bill item" : "order"} ${activeBulkItem?.orderNo ?? request.orderNo}`}
               />
               <p className="text-center text-xs text-[var(--erp-text-muted)]">
                 Actual label size: {request.stickerWidthMm} × {request.stickerLengthMm} mm ·
@@ -403,9 +405,9 @@ export default function BarcodeQrPrintRequestDetailPage({
             <dt className="text-[var(--erp-text-muted)]">Request</dt>
             <dd className="font-medium text-slate-900">
               {request.sourceType === "POS_PURCHASE_BILL"
-                ? "Purchase bill QR request · output choice by Design & Development"
+                ? `Purchase bill ${getOrderQrCodeTypeLabel(request.codeType)} request · output choice by Design & Development`
                 : request.bulkItems.length
-                  ? "Bulk QR request · output choice by Design & Development"
+                  ? `Bulk ${getOrderQrCodeTypeLabel(request.codeType)} request · output choice by Design & Development`
                   : request.requestType}
             </dd>
             <dt className="text-[var(--erp-text-muted)]">Printer</dt>
@@ -438,7 +440,7 @@ export default function BarcodeQrPrintRequestDetailPage({
             </dd>
             <dt className="text-[var(--erp-text-muted)]">Print quantity</dt>
             <dd className="font-medium text-slate-900">{request.printQuantity}</dd>
-            <dt className="text-[var(--erp-text-muted)]">QR field</dt>
+            <dt className="text-[var(--erp-text-muted)]">Encoded field</dt>
             <dd className="font-medium text-slate-900">
               {getQrTemplateFieldLabel(request.qrFieldKey)}
             </dd>
@@ -458,7 +460,7 @@ export default function BarcodeQrPrintRequestDetailPage({
                 {" · "}{request.pageSetup.horizontalGapMm} × {request.pageSetup.verticalGapMm} mm gaps
               </p>
               <p className="text-xs text-[var(--erp-text-muted)]">
-                Assigned by QR template. Change the setup in the template before creating another request.
+                Assigned by code template. Change the setup in the template before creating another request.
               </p>
             </div>
           ) : request.layout.printerType === "LASER" ? (
@@ -467,7 +469,7 @@ export default function BarcodeQrPrintRequestDetailPage({
               role="status"
             >
               This legacy request has no assigned Page Setup and cannot be printed as a sheet.
-              Update the QR template and create a new request.
+              Update the code template and create a new request.
             </p>
           ) : null}
           {request.bulkItems.length > 0 && (

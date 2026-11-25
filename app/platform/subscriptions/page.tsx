@@ -59,6 +59,11 @@ function formatDateForInput(val: Date | string | null | undefined): string {
 }
 
 export default async function PlatformSubscriptionsPage({ searchParams }: PageProps) {
+  const admin = await requirePlatformSessionAdmin();
+  if (admin.role !== "SUPER_ADMIN" && admin.team_role !== "CMO") {
+    redirect("/platform/business-types");
+  }
+
   const resolvedSearch = (await searchParams) ?? {};
   const isModalOpen = resolvedSearch.modal === "open";
   const editId = resolvedSearch.edit;

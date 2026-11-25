@@ -5,13 +5,13 @@ import {
   parsePageSetupPrintSnapshot,
 } from "@/lib/services/design-development/page-setup-template-contract";
 import {
+  buildOrderCodePayload,
   parseStoredOrderQrTemplateDesign,
   serializeOrderQrTemplateDesign,
   isOrderQrTemplateFieldKey,
   type QrTemplateFieldKey,
 } from "./order-qr-template-contract";
 import {
-  buildRequestQrPayload,
   getNextOrderQrPrintRequestStatus,
   MAX_FINISHED_GOODS_QR_PRINT_REQUEST_ITEMS,
   MAX_ORDER_QR_PRINT_REQUEST_LABELS,
@@ -63,6 +63,7 @@ function mapRequest(request: {
     requestType: request.request_type,
     status: request.status,
     templateName: request.template_name,
+    codeType: design.codeType,
     qrFieldKey: isOrderQrTemplateFieldKey(request.qr_field_key)
       ? request.qr_field_key
       : "orderNo",
@@ -603,7 +604,7 @@ export async function createOrderQrPrintRequest(
     if (!design.pageSetup) {
       return { success: false as const, reason: "PAGE_SETUP_REQUIRED" as const };
     }
-    const { displayFieldStyles, layout } = design;
+    const { codeType, displayFieldStyles, layout } = design;
     const bulkSnapshots = requestItems.map((item) => {
       const displayValues = Object.fromEntries(displayFields.flatMap((key) => {
         const value = item.fields[key];
@@ -611,13 +612,13 @@ export async function createOrderQrPrintRequest(
           ? []
           : [[key, String(value)]];
       }));
-      const qrContent = buildRequestQrPayload([qrFieldKey], item.fields);
+      const qrPayload = buildOrderCodePayload(codeType, qrFieldKey, item.fields);
       return {
         orderId: item.id,
         orderNo: item.orderNo,
         styleName: item.styleName,
         quantity: item.quantity,
-        qrPayload: qrContent.payload,
+        qrPayload,
         displayValues,
       };
     });
@@ -660,6 +661,7 @@ export async function createOrderQrPrintRequest(
           displayFieldStyles,
           layout,
           design.pageSetup,
+          codeType,
         ),
         qr_size: template?.qr_size ?? 256,
         sticker_width_mm: design.pageSetup.stickerWidthMm,

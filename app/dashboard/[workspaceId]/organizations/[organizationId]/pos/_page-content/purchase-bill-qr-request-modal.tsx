@@ -11,10 +11,12 @@ import Select from "@/components/ui/Select";
 import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
 import {
-  buildOrderQrPayload,
+  buildOrderCodePayload,
+  getOrderQrCodeTypeLabel,
   getQrTemplateFieldLabel,
   POS_ITEM_BARCODE_TEMPLATE_FIELDS,
   type QrTemplateFieldKey,
+  type OrderQrCodeType,
   parseOrderQrTemplateLayout,
   parseStoredOrderQrTemplateDesign,
   type OrderQrDisplayFieldStyle,
@@ -51,6 +53,7 @@ type QrTemplate = {
   id: string;
   name: string;
   type: "POS_ITEM_BARCODE";
+  codeType: OrderQrCodeType;
   qrFieldKey: QrTemplateFieldKey;
   displayFields: QrTemplateFieldKey[];
   displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
@@ -90,11 +93,13 @@ function parseTemplates(value: unknown): QrTemplate[] {
     const design = parseStoredOrderQrTemplateDesign({
       styles: item.displayFieldStyles,
       layout: item.layout,
+      codeType: item.codeType,
     }, displayFields);
     return [{
       id: item.id,
       name: item.name,
       type: "POS_ITEM_BARCODE" as const,
+      codeType: design.codeType,
       qrFieldKey: item.qrFieldKey as QrTemplateFieldKey,
       displayFields,
       displayFieldStyles: design.displayFieldStyles,
@@ -177,9 +182,9 @@ function PurchaseBillQrRequestModal({
     ? getBillLineFields(bill, sampleLine.line, sampleLine.index)
     : {};
   const sampleQrPayload = selectedTemplate
-    ? buildOrderQrPayload([selectedTemplate.qrFieldKey], sampleFields).payload
+    ? buildOrderCodePayload(selectedTemplate.codeType, selectedTemplate.qrFieldKey, sampleFields)
     : "";
-  const sampleQrPreviewKey = `${selectedTemplateId}:${sampleQrPayload}`;
+  const sampleQrPreviewKey = `${selectedTemplateId}:${selectedTemplate?.codeType ?? ""}:${sampleQrPayload}`;
   const sampleQrDataUrl = sampleQrPreview?.key === sampleQrPreviewKey
     ? sampleQrPreview.dataUrl
     : "";
@@ -254,12 +259,9 @@ function PurchaseBillQrRequestModal({
   useEffect(() => {
     let active = true;
     if (!open || !sampleQrPayload || !selectedTemplate) return;
-    void import("qrcode")
-      .then(({ default: QRCode }) => QRCode.toDataURL(sampleQrPayload, {
-        errorCorrectionLevel: "H",
-        margin: 2,
-        width: selectedTemplate.qrSize,
-      }))
+    void import("@/components/erp/order-qr-code-generator")
+      .then(({ createOrderQrCodeDataUrl }) =>
+        createOrderQrCodeDataUrl(sampleQrPayload, selectedTemplate.codeType, selectedTemplate.qrSize))
       .then((dataUrl) => {
         if (active) setSampleQrPreview({ key: sampleQrPreviewKey, dataUrl });
       })
@@ -267,7 +269,7 @@ function PurchaseBillQrRequestModal({
         if (active) {
           setSampleQrPreviewError({
             key: sampleQrPreviewKey,
-            error: error instanceof Error ? error.message : "Unable to prepare the QR preview.",
+            error: error instanceof Error ? error.message : "Unable to prepare the code preview.",
           });
         }
       });
@@ -283,11 +285,15 @@ function PurchaseBillQrRequestModal({
       return;
     }
     if (selectedLines.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS) {
-      setRequestError(`A single QR request can contain up to ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} purchase bill lines.`);
+      setRequestError(`A single code request can contain up to ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} purchase bill lines.`);
       return;
     }
     if (!selectedTemplateId) {
-      setRequestError("Create or select a QR template before requesting labels.");
+      setRequestError("Create or select a code template before requesting labels.");
+      return;
+    }
+    if (!selectedTemplate) {
+      setRequestError("Select an available code template before requesting labels.");
       return;
     }
     if (hasInvalidBulkQuantity) {
@@ -303,7 +309,7 @@ function PurchaseBillQrRequestModal({
       return;
     }
     if (billLines.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
-      setRequestError(`A single QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`);
+      setRequestError(`A single code request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`);
       return;
     }
     setIsSubmitting(true);
@@ -328,20 +334,20 @@ function PurchaseBillQrRequestModal({
       if (!response.ok) {
         throw new Error(isRecord(data) && typeof data.error === "string"
           ? data.error
-          : "Unable to send the QR request.");
+          : "Unable to send the code request.");
       }
       if (!isRecord(data) || !isRecord(data.request)
         || typeof data.request.id !== "string" || !data.request.id) {
         throw new Error(
-          "The QR request was sent, but its detail link could not be loaded. Find it in Print/Download requests.",
+          "The code request was sent, but its detail link could not be loaded. Find it in Print/Download requests.",
         );
       }
       onSubmitted(
-        `One QR request for ${selectedLines.length} purchase bill line${selectedLines.length === 1 ? "" : "s"} was sent to Design & Development. They can choose to print or download it.`,
+        `One ${getOrderQrCodeTypeLabel(selectedTemplate.codeType)} request for ${selectedLines.length} purchase bill line${selectedLines.length === 1 ? "" : "s"} was sent to Design & Development. They can choose to print or download it.`,
         data.request.id,
       );
     } catch (error) {
-      setRequestError(error instanceof Error ? error.message : "Unable to send the QR request.");
+      setRequestError(error instanceof Error ? error.message : "Unable to send the code request.");
     } finally {
       setIsSubmitting(false);
     }
@@ -364,7 +370,7 @@ function PurchaseBillQrRequestModal({
         <div className="mb-5 flex shrink-0 flex-wrap items-start justify-between gap-3">
           <div>
             <h2 id="purchase-bill-qr-title" className="text-lg font-semibold text-[var(--erp-text)]">
-                  Request POS item barcodes
+                  Request POS item labels
             </h2>
             <p className="mt-1 text-sm text-[var(--erp-text-muted)]">
               One request will be sent to Design & Development for the selected items from {bill.documentNumber}. They will choose print or download.
@@ -395,7 +401,7 @@ function PurchaseBillQrRequestModal({
           )}
 
           <Select
-            label="Saved QR template"
+            label="Saved code template"
             value={selectedTemplateId}
             onChange={(event) => setSelectedTemplateId(event.target.value)}
             disabled={isLoadingTemplates || templates.length === 0}
@@ -404,7 +410,9 @@ function PurchaseBillQrRequestModal({
               {isLoadingTemplates ? "Loading templates..." : "Select a template"}
             </option>
             {templates.map((template) => (
-              <option key={template.id} value={template.id}>{template.name}</option>
+              <option key={template.id} value={template.id}>
+                {template.name} · {getOrderQrCodeTypeLabel(template.codeType)}
+              </option>
             ))}
           </Select>
 
@@ -510,10 +518,13 @@ function PurchaseBillQrRequestModal({
           {selectedTemplate && sampleLine && (
             <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(16rem,1fr)]">
               <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-[var(--erp-text)]">Sample sticker preview</h3>
+                <h3 className="text-sm font-semibold text-[var(--erp-text)]">
+                  Sample {getOrderQrCodeTypeLabel(selectedTemplate.codeType)} sticker preview
+                </h3>
                 <OrderQrStickerPreview
-                  qrDataUrl={sampleQrDataUrl || undefined}
-                  qrError={sampleQrError || undefined}
+                  codeType={selectedTemplate.codeType}
+                  codeDataUrl={sampleQrDataUrl || undefined}
+                  codeError={sampleQrError || undefined}
                   fields={sampleQrDisplayFields}
                   layout={selectedTemplate.layout}
                   stickerWidthMm={selectedTemplate.stickerWidthMm}
@@ -539,7 +550,7 @@ function PurchaseBillQrRequestModal({
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">
-                  <dt className="text-[var(--erp-text-muted)]">QR field</dt>
+                  <dt className="text-[var(--erp-text-muted)]">Encoded field</dt>
                   <dd className="text-right font-medium text-[var(--erp-text)]">
                     {getQrTemplateFieldLabel(selectedTemplate.qrFieldKey)}
                   </dd>
@@ -555,7 +566,7 @@ function PurchaseBillQrRequestModal({
           )}
           {selectedLines.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS && (
             <p role="alert" className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">
-              Select no more than {MAX_ORDER_QR_PRINT_REQUEST_ORDERS} purchase bill lines for one QR request.
+              Select no more than {MAX_ORDER_QR_PRINT_REQUEST_ORDERS} purchase bill lines for one code request.
             </p>
           )}
         </div>
@@ -581,7 +592,7 @@ function PurchaseBillQrRequestModal({
               || selectedLines.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS
             }
           >
-            {isSubmitting ? "Sending request..." : "Send one QR request"}
+            {isSubmitting ? "Sending request..." : "Send one code request"}
           </Button>
         </div>
       </div>

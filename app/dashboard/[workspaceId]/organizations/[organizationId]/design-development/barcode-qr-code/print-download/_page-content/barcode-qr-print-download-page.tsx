@@ -12,6 +12,8 @@ import type {
   OrderQrPrintRequestType,
 } from "@/lib/services/orders/order-qr-print-request-contract";
 import {
+  getOrderQrCodeTypeLabel,
+  type OrderQrCodeType,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
   type QrTemplateFieldKey,
@@ -26,6 +28,7 @@ type RequestRecord = {
   requestType: OrderQrPrintRequestType;
   status: OrderQrPrintRequestStatus;
   templateName: string | null;
+  codeType: OrderQrCodeType;
   qrFieldKey: QrTemplateFieldKey;
   displayFields: QrTemplateFieldKey[];
   displayValues: Partial<Record<QrTemplateFieldKey, string>>;
@@ -57,6 +60,7 @@ type ReportRow = {
   orderNo: string;
   requestType: string;
   templateName: string;
+  codeType: string;
   status: string;
   qrSize: string;
   stickerWidthMm: number;
@@ -78,6 +82,7 @@ const fields: Array<{ key: keyof ReportRow; label: string }> = [
   { key: "orderNo", label: "Source Document" },
   { key: "requestType", label: "Request" },
   { key: "templateName", label: "Template" },
+  { key: "codeType", label: "Code Format" },
   { key: "status", label: "Status" },
   { key: "printQuantity", label: "Print Quantity" },
   { key: "printerType", label: "Printer" },
@@ -158,11 +163,12 @@ export default function BarcodeQrPrintDownloadPage({
         purchaseBillId: request.purchaseBillId,
         orderNo: request.orderNo,
         requestType: request.sourceType === "POS_PURCHASE_BILL"
-          ? "Purchase Bill QR Request"
+          ? "Purchase Bill Code Request"
           : request.bulkItems.length > 0
-          ? "Bulk QR Request"
+          ? "Bulk Code Request"
           : request.requestType === "PRINT" ? "Print" : "Download",
         templateName: request.templateName ?? "Saved template unavailable",
+        codeType: getOrderQrCodeTypeLabel(request.codeType),
         status: request.status,
         qrSize: `${request.qrSize} px`,
         stickerWidthMm: request.stickerWidthMm,
@@ -254,7 +260,7 @@ export default function BarcodeQrPrintDownloadPage({
       <header className="space-y-1">
         <h1 className="text-xl font-semibold text-slate-900">Print/Download</h1>
         <p className="text-sm text-slate-600">
-          Review QR print and download requests from purchase bills and merchandising orders.
+          Review code print and download requests from purchase bills and merchandising orders.
         </p>
       </header>
 
@@ -283,7 +289,7 @@ export default function BarcodeQrPrintDownloadPage({
       {notice && <p className="text-sm text-[var(--erp-success)]" role="status">{notice}</p>}
 
       <ReportGrid
-        title="QR Print/Download Request Report"
+        title="Code Print/Download Request Report"
         records={visibleRows}
         fields={fields}
         visibleFields={visibleFields}

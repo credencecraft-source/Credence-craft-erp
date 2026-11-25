@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildOrderCodePayload,
   buildOrderQrPayload,
   getA4StickerGrid,
   parseOrderQrTemplateInput,
@@ -27,6 +28,7 @@ describe("parseOrderQrTemplateInput", () => {
       data: {
         name: "ORDER TAG - SAMPLE",
         type: "ORDER_TAGS",
+        codeType: "QR_CODE",
         pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "styleName", "buyer"],
@@ -92,6 +94,29 @@ describe("parseOrderQrTemplateInput", () => {
           displayFields: ["posItemCode", "posItemName", "posSize"],
         },
       });
+  });
+
+  it("accepts one barcode format and rejects unsupported formats", () => {
+    expect(parseOrderQrTemplateInput({
+      name: "ORDER BARCODE",
+      codeType: "BARCODE",
+      pageSetupTemplateId: "setup-1",
+      qrFieldKey: "orderNo",
+      displayFields: ["orderNo"],
+      qrSize: 192,
+    })).toMatchObject({
+      success: true,
+      data: { codeType: "BARCODE" },
+    });
+
+    expect(parseOrderQrTemplateInput({
+      name: "INVALID CODE FORMAT",
+      codeType: "QR_AND_BARCODE",
+      pageSetupTemplateId: "setup-1",
+      qrFieldKey: "orderNo",
+      displayFields: ["orderNo"],
+      qrSize: 192,
+    })).toEqual({ success: false, error: "Select either QR Code or Barcode." });
   });
 
   it("accepts finished-goods barcode templates with SKU and barcode fields", () => {
@@ -273,6 +298,7 @@ describe("parseOrderQrTemplateInput", () => {
     expect(parseStoredOrderQrTemplateDesign({
       buyer: { fontSize: 16, bold: true, underline: false, color: "#123456" },
     }, ["buyer"])).toEqual({
+      codeType: "QR_CODE",
       displayFieldStyles: {
         buyer: { fontSize: 16, bold: true, underline: false, color: "#123456" },
       },
@@ -368,5 +394,15 @@ describe("parseOrderQrTemplateInput", () => {
       success: false,
       error: "Select a Page Setup template for this QR template.",
     });
+  });
+
+  it("encodes one raw field for barcodes while keeping QR payloads structured", () => {
+    const fields = { orderNo: "ORD-100", buyer: "BUYER A" };
+
+    expect(buildOrderCodePayload("BARCODE", "orderNo", fields)).toBe("ORD-100");
+    expect(buildOrderCodePayload("QR_CODE", "orderNo", fields)).toBe(
+      JSON.stringify({ "Order Number": "ORD-100" }),
+    );
+    expect(buildOrderCodePayload("BARCODE", "orderNo", { orderNo: "  " })).toBe("");
   });
 });

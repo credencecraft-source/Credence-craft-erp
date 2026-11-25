@@ -10,6 +10,7 @@ import type {
 import Button from "@/components/ui/Button";
 import {
   DEFAULT_QR_FIELD_STYLE,
+  type OrderQrCodeType,
   type OrderQrDisplayFieldStyle,
   type QrTemplateFieldKey,
   type OrderQrTemplateLayout,
@@ -23,14 +24,15 @@ export type OrderQrStickerPreviewField = {
 };
 
 type Props = {
-  qrDataUrl?: string;
-  qrError?: string;
+  codeType?: OrderQrCodeType;
+  codeDataUrl?: string;
+  codeError?: string;
   fields: OrderQrStickerPreviewField[];
   layout: OrderQrTemplateLayout;
   stickerWidthMm: number;
   stickerLengthMm: number;
   interactive?: boolean;
-  qrAlt?: string;
+  codeAlt?: string;
   className?: string;
   rootRef?: Ref<HTMLDivElement>;
   onPointerMove?: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -48,14 +50,15 @@ type Props = {
 };
 
 export default function OrderQrStickerPreview({
-  qrDataUrl,
-  qrError,
+  codeType = "QR_CODE",
+  codeDataUrl,
+  codeError,
   fields,
   layout,
   stickerWidthMm,
   stickerLengthMm,
   interactive = false,
-  qrAlt = "Order QR code",
+  codeAlt,
   className = "",
   rootRef,
   onPointerMove,
@@ -69,6 +72,7 @@ export default function OrderQrStickerPreview({
     52,
     Math.min(stickerWidthMm, stickerLengthMm) * 52 / stickerWidthMm,
   );
+  const codeLabel = codeType === "BARCODE" ? "Barcode" : "QR code";
   const qrClassName = interactive
     ? "border border-dashed border-[var(--erp-brand)]/50 bg-[var(--erp-surface)]/70 shadow-sm cursor-move"
     : "border border-transparent bg-transparent shadow-none pointer-events-none";
@@ -94,15 +98,16 @@ export default function OrderQrStickerPreview({
         tabIndex={interactive ? undefined : -1}
         aria-hidden={interactive ? undefined : true}
         aria-label={interactive
-          ? "Move QR code. Use arrow keys to reposition; hold Shift to move farther."
+          ? `Move ${codeLabel}. Use arrow keys to reposition; hold Shift to move farther.`
           : undefined}
-        title={interactive ? "Drag to move QR code; use arrow keys for precise placement" : undefined}
+        title={interactive ? `Drag to move ${codeLabel}; use arrow keys for precise placement` : undefined}
         className={`absolute min-h-0 justify-start rounded p-1 touch-none text-left focus-visible:outline-none ${qrClassName}`}
         style={{
           left: `${layout.qr.x}%`,
           top: `${layout.qr.y}%`,
-          width: `${qrWidthPercent}%`,
-          aspectRatio: "1",
+          width: `${codeType === "BARCODE" ? 82 : qrWidthPercent}%`,
+          height: codeType === "BARCODE" ? "64%" : undefined,
+          aspectRatio: codeType === "BARCODE" ? "auto" : "1",
         }}
         onPointerDown={interactive && onItemPointerDown
           ? (event) => onItemPointerDown(event, "qr")
@@ -111,28 +116,28 @@ export default function OrderQrStickerPreview({
           ? (event) => onItemKeyDown(event, "qr")
           : undefined}
       >
-        {qrDataUrl ? (
+        {codeDataUrl ? (
           <Image
-            src={qrDataUrl}
-            alt={qrAlt}
+            src={codeDataUrl}
+            alt={codeAlt ?? `Order ${codeLabel}`}
             fill
             unoptimized
             draggable={false}
             className="pointer-events-none object-contain"
           />
-        ) : qrError ? (
-          <span className="text-xs text-[var(--erp-danger)]" role="alert">{qrError}</span>
+        ) : codeError ? (
+          <span className="text-xs text-[var(--erp-danger)]" role="alert">{codeError}</span>
         ) : (
           <span className="text-xs text-[var(--erp-text-muted)]" role="status">
-            Preparing QR...
+            Preparing {codeLabel}...
           </span>
         )}
       </Button>
 
-      {qrError && onRetry && (
+      {codeError && onRetry && (
         <div className="absolute inset-0 flex items-center justify-center">
           <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
-            Retry QR
+            Retry {codeLabel}
           </Button>
         </div>
       )}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatIndianMobileNumber,
   getIndianMobileNumberLookupVariants,
+  getWhatsAppDirectUrl,
   isValidIndianNationalMobileNumber,
   normalizeIndianMobileNumber,
 } from "./indian-mobile-number";
@@ -35,5 +36,11 @@ describe("Indian mobile number normalization", () => {
   it("provides common legacy forms for duplicate checks during imports", () => {
     expect(getIndianMobileNumberLookupVariants("9876543210")).toContain("+91 9876543210");
     expect(getIndianMobileNumberLookupVariants("9876543210")).toContain("9876543210");
+  });
+
+  it("creates direct WhatsApp links for valid Indian mobile numbers", () => {
+    expect(getWhatsAppDirectUrl("+91 (98765) 43210")).toBe("https://wa.me/919876543210");
+    expect(getWhatsAppDirectUrl("9876543210")).toBe("https://wa.me/919876543210");
+    expect(getWhatsAppDirectUrl("12345")).toBeNull();
   });
 });
