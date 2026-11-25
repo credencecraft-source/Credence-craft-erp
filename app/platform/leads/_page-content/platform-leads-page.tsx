@@ -6,6 +6,7 @@ import {
   listPlatformLeads,
 } from "@/lib/services/platform/platform-lead-service";
 import { listPlatformSalesManagers } from "@/lib/services/platform/platform-sales-manager-service";
+import { getPlatformNavigationAccess } from "@/lib/auth/platform-navigation-access";
 import PlatformLeadsWorkspace from "./platform-leads-workspace";
 
 export default async function PlatformLeadsPage() {
@@ -45,7 +46,10 @@ export default async function PlatformLeadsPage() {
     <PlatformLeadsWorkspace
       leads={leads}
       appLogins={appLogins}
-      canManageCampaigns={admin.actualRole === "SUPER_ADMIN" || admin.team_role === null}
+      canCreateCampaignFromLeads={
+        admin.actualRole === "SUPER_ADMIN" ||
+        getPlatformNavigationAccess(admin.team_role).canCreateCampaignFromLeads
+      }
       canManageSalesTeam={admin.actualRole === "SUPER_ADMIN" || admin.team_role === "CMO" || admin.team_role === null}
       showSalesManagerQueues={admin.team_role === "SALES_MANAGER" || admin.team_role === "CMO"}
       isSalesManager={admin.actualRole !== "SUPER_ADMIN" && admin.team_role === "SALES_MANAGER"}

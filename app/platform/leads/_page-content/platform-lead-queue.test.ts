@@ -5,6 +5,7 @@ import {
   filterLeadStageTabs,
   filterLeadsByAssignmentQueue,
 } from "./platform-lead-queue";
+import { PLATFORM_LEAD_THIRD_PARTY_STAGES } from "@/lib/services/platform/platform-lead-constants";
 
 const leads = [
   { id: "assigned-a", assigned_sales_manager_id: "manager-a", stage: "1-new" },
@@ -37,6 +38,30 @@ describe("filterLeadsByAssignmentQueue", () => {
     expect(countLeadsByAssignmentQueue(leadsWithArchivedStage, "ASSIGNED", allStages)).toBe(2);
     expect(countLeadsByAssignmentQueue(leadsWithArchivedStage, "UNASSIGNED", allStages)).toBe(2);
     expect(countLeadsByAssignmentQueue(leadsWithArchivedStage, "ALL", allStages)).toBe(4);
+  });
+
+  it("counts assignment queues only for active third-party stages", () => {
+    const leadsWithArchivedStage = [
+      ...leads,
+      { id: "old-unassigned", assigned_sales_manager_id: null, stage: "Old" },
+      { id: "paid-assigned", assigned_sales_manager_id: "manager-a", stage: "Paid" },
+    ];
+
+    expect(countLeadsByAssignmentQueue(
+      leadsWithArchivedStage,
+      "ALL",
+      PLATFORM_LEAD_THIRD_PARTY_STAGES,
+    )).toBe(3);
+    expect(countLeadsByAssignmentQueue(
+      leadsWithArchivedStage,
+      "ASSIGNED",
+      PLATFORM_LEAD_THIRD_PARTY_STAGES,
+    )).toBe(2);
+    expect(countLeadsByAssignmentQueue(
+      leadsWithArchivedStage,
+      "UNASSIGNED",
+      PLATFORM_LEAD_THIRD_PARTY_STAGES,
+    )).toBe(1);
   });
 });
 

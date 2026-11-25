@@ -101,12 +101,6 @@ type LeadTicket = {
   updated_at: string;
 };
 
-type PlatformCampaignOption = {
-  id: string;
-  name: string;
-  campaign_date: string;
-};
-
 function LeadEditor({
   lead,
   tickets,
@@ -514,14 +508,14 @@ function LeadActivityInfo({ label, value }: { label: string; value: string }) {
 export default function PlatformLeadsWorkspace({
   leads: initialLeads,
   appLogins,
-  canManageCampaigns,
+  canCreateCampaignFromLeads,
   canManageSalesTeam,
   showSalesManagerQueues,
   isSalesManager,
   salesManagers,
 }: {
   leads: PlatformLead[];
-  canManageCampaigns: boolean;
+  canCreateCampaignFromLeads: boolean;
   canManageSalesTeam: boolean;
   showSalesManagerQueues: boolean;
   isSalesManager: boolean;
@@ -590,9 +584,7 @@ export default function PlatformLeadsWorkspace({
   const [stageMovementMessage, setStageMovementMessage] = useState("");
   const [stageMovementError, setStageMovementError] = useState("");
   const [campaignDialogOpen, setCampaignDialogOpen] = useState(false);
-  const [campaignOptions, setCampaignOptions] = useState<PlatformCampaignOption[]>([]);
-  const [campaignOptionsLoading, setCampaignOptionsLoading] = useState(false);
-  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  const [campaignName, setCampaignName] = useState("");
   const [addingToCampaign, setAddingToCampaign] = useState(false);
   const [campaignError, setCampaignError] = useState("");
   const [campaignMessage, setCampaignMessage] = useState("");
@@ -659,11 +651,15 @@ export default function PlatformLeadsWorkspace({
     [leadQueue, leads, showSalesManagerQueues],
   );
   const assignedLeadCount = useMemo(
-    () => countLeadsByAssignmentQueue(leads, "ASSIGNED", PLATFORM_LEAD_STAGES),
+    () => countLeadsByAssignmentQueue(leads, "ASSIGNED", PLATFORM_LEAD_THIRD_PARTY_STAGES),
     [leads],
   );
   const unassignedLeadCount = useMemo(
-    () => countLeadsByAssignmentQueue(leads, "UNASSIGNED", PLATFORM_LEAD_STAGES),
+    () => countLeadsByAssignmentQueue(leads, "UNASSIGNED", PLATFORM_LEAD_THIRD_PARTY_STAGES),
+    [leads],
+  );
+  const thirdPartyLeadCount = useMemo(
+    () => countLeadsByAssignmentQueue(leads, "ALL", PLATFORM_LEAD_THIRD_PARTY_STAGES),
     [leads],
   );
 
@@ -1448,56 +1444,51 @@ export default function PlatformLeadsWorkspace({
     router.replace(`/platform/leads?leadId=${encodeURIComponent(lead.id)}`);
   }
 
-  async function openCampaignDialog() {
+  function openCampaignDialog() {
     setCampaignDialogOpen(true);
-    setCampaignOptions([]);
+    setCampaignName("");
     setCampaignError("");
     setCampaignMessage("");
-    setCampaignOptionsLoading(true);
-    try {
-      const response = await fetch("/api/platform/campaigns");
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Unable to load campaigns.");
-      const options = payload.campaigns as PlatformCampaignOption[];
-      setCampaignOptions(options);
-      setSelectedCampaignId((current) =>
-        options.some((campaign) => campaign.id === current)
-          ? current
-          : options[0]?.id ?? "",
-      );
-    } catch (error) {
-      setCampaignError(error instanceof Error ? error.message : "Unable to load campaigns.");
-    } finally {
-      setCampaignOptionsLoading(false);
-    }
   }
 
-  async function addSelectedLeadsToCampaign(event: React.FormEvent<HTMLFormElement>) {
+  async function createCampaignForSelectedLeads(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedCampaignId || selectedLeadIds.length === 0 || addingToCampaign) return;
+    if (!campaignName.trim() || selectedLeadIds.length === 0 || addingToCampaign) return;
     setAddingToCampaign(true);
     setCampaignError("");
     try {
-      const response = await fetch(`/api/platform/campaigns/${encodeURIComponent(selectedCampaignId)}/leads`, {
+      const now = new Date();
+      const campaignDate = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      ].join("-");
+      const response = await fetch("/api/platform/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds: selectedLeadIds }),
+        body: JSON.stringify({
+          name: campaignName,
+          campaignDate,
+          leadIds: selectedLeadIds,
+        }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Unable to add leads to campaign.");
-      const { addedCount, alreadyAddedCount } = payload as {
+      if (!response.ok) throw new Error(payload.error || "Unable to create campaign.");
+      const { campaign, addedCount, alreadyAddedCount } = payload as {
+        campaign: { name: string };
         addedCount: number;
         alreadyAddedCount: number;
       };
       setCampaignMessage(
-        `${addedCount} lead${addedCount === 1 ? "" : "s"} added to the campaign${alreadyAddedCount ? `; ${alreadyAddedCount} already assigned` : ""}.`,
+        `Campaign "${campaign.name}" created; ${addedCount} lead${addedCount === 1 ? "" : "s"} added${alreadyAddedCount ? `; ${alreadyAddedCount} already assigned` : ""}.`,
       );
       setSelectedLeadIds([]);
       setLeadOverrides({});
       setCampaignDialogOpen(false);
+      setCampaignName("");
       router.refresh();
     } catch (error) {
-      setCampaignError(error instanceof Error ? error.message : "Unable to add leads to campaign.");
+      setCampaignError(error instanceof Error ? error.message : "Unable to create campaign.");
     } finally {
       setAddingToCampaign(false);
     }
@@ -1794,7 +1785,7 @@ export default function PlatformLeadsWorkspace({
                       <>
                         All leads
                         <span className="ml-1 text-xs tabular-nums text-slate-500">
-                          {leads.length}
+                          {thirdPartyLeadCount}
                         </span>
                       </>
                     ),
@@ -1970,7 +1961,7 @@ export default function PlatformLeadsWorkspace({
             }}
             toolbarActions={activeTab === "THIRD_PARTY" ? (
               <>
-                {canManageCampaigns && (
+                {canCreateCampaignFromLeads && (
                   <Button
                     type="button"
                     variant="primary"
@@ -2196,39 +2187,29 @@ export default function PlatformLeadsWorkspace({
             setCampaignError("");
           }
         }}
-        ariaLabel="Add selected leads to a campaign"
-        ariaLabelledBy="add-leads-to-campaign-title"
-        size="sm"
+        ariaLabel="Create a campaign for selected leads"
+        ariaLabelledBy="create-campaign-for-leads-title"
+        size="square"
       >
-        <form onSubmit={addSelectedLeadsToCampaign} className="space-y-4 p-5">
+        <form onSubmit={createCampaignForSelectedLeads} className="space-y-4 p-6">
           <div>
-            <h2 id="add-leads-to-campaign-title" className="text-lg font-bold text-slate-900">
-              Add {selectedLeadIds.length} selected lead{selectedLeadIds.length === 1 ? "" : "s"} to campaign
+            <h2 id="create-campaign-for-leads-title" className="text-lg font-bold text-slate-900">
+              Create campaign for {selectedLeadIds.length} selected lead{selectedLeadIds.length === 1 ? "" : "s"}
             </h2>
-            <p className="mt-1 text-sm text-slate-600">Customer details and stage will be shown in the campaign.</p>
+            <p className="mt-1 text-sm text-slate-600">
+              Customer details and stages will be added to this new campaign.
+            </p>
           </div>
-          {campaignOptionsLoading ? (
-            <p role="status" className="text-sm text-slate-600">Loading campaigns…</p>
-          ) : campaignOptions.length > 0 ? (
-            <Select
-              label="Campaign"
-              required
-              value={selectedCampaignId}
-              disabled={addingToCampaign}
-              onChange={(event) => setSelectedCampaignId(event.target.value)}
-              options={campaignOptions.map((campaign) => ({
-                label: `${campaign.name} · ${new Date(campaign.campaign_date).toLocaleDateString()}`,
-                value: campaign.id,
-              }))}
-            />
-          ) : !campaignError ? (
-            <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <p className="text-sm text-slate-700">Create a campaign before adding these leads.</p>
-              <Button type="button" variant="secondary" onClick={() => router.push("/platform/campaigns")}>
-                Open Campaigns
-              </Button>
-            </div>
-          ) : null}
+          <Input
+            label="Campaign name"
+            required
+            minLength={2}
+            maxLength={255}
+            value={campaignName}
+            onChange={(event) => setCampaignName(event.target.value)}
+            disabled={addingToCampaign}
+            autoFocus
+          />
           {campaignError && <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{campaignError}</p>}
           <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
             <Button
@@ -2242,9 +2223,9 @@ export default function PlatformLeadsWorkspace({
             <Button
               type="submit"
               variant="primary"
-              disabled={addingToCampaign || campaignOptionsLoading || !selectedCampaignId}
+              disabled={addingToCampaign || !campaignName.trim() || selectedLeadIds.length === 0}
             >
-              {addingToCampaign ? "Adding…" : "Add to campaign"}
+              {addingToCampaign ? "Creating…" : "Create campaign"}
             </Button>
           </div>
         </form>

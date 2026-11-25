@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
 
-import PlatformSettingsLayout from "@/app/platform/settings/layout";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 
-export default function AdminSettingsLayout({ children }: { children: ReactNode }) {
-  return <PlatformSettingsLayout>{children}</PlatformSettingsLayout>;
+export default async function AdminSettingsLayout({ children }: { children: ReactNode }) {
+  const admin = await requirePlatformSessionAdmin();
+  if (admin.team_role === "CMO" || admin.team_role === "SALES_MANAGER") {
+    redirect("/platform/organisations");
+  }
+  return children;
 }

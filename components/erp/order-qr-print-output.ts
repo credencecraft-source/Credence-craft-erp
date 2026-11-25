@@ -1,5 +1,3 @@
-import QRCode from "qrcode";
-
 import {
   DEFAULT_QR_FIELD_STYLE,
   getA4StickerGrid,
@@ -8,6 +6,7 @@ import {
   type OrderQrTemplateLayout,
   type OrderQrDisplayFieldStyle,
 } from "@/lib/services/orders/order-qr-template-contract";
+import { createOrderQrCodeDataUrl } from "./order-qr-code-generator";
 import {
   getThermalRollLayout,
   type PageSetupPrintSnapshot,
@@ -15,6 +14,7 @@ import {
 
 export type OrderQrPrintOutputRecord = {
   orderNo: string;
+  codeType?: "QR_CODE" | "BARCODE";
   qrSize: string | number;
   qrPayload: string;
   stickerWidthMm: number;
@@ -40,11 +40,11 @@ export async function createOrderQrStickerDataUrl(
   qrPayload = record.qrPayload,
   displayValues = record.displayValues,
 ) {
-  const qrDataUrl = await QRCode.toDataURL(qrPayload, {
-    errorCorrectionLevel: "H",
-    margin: 2,
-    width: typeof record.qrSize === "number" ? record.qrSize : Number.parseInt(record.qrSize, 10),
-  });
+  const codeDataUrl = await createOrderQrCodeDataUrl(
+    qrPayload,
+    record.codeType ?? "QR_CODE",
+    typeof record.qrSize === "number" ? record.qrSize : Number.parseInt(record.qrSize, 10),
+  );
   const widthPx = Math.max(1, Math.round(record.stickerWidthMm * 96 / 25.4));
   const heightPx = Math.max(1, Math.round(record.stickerLengthMm * 96 / 25.4));
   const resolution = Math.min(2, 4096 / widthPx, 4096 / heightPx);
@@ -57,17 +57,27 @@ export async function createOrderQrStickerDataUrl(
   context.fillStyle = "#FFFFFF";
   context.fillRect(0, 0, widthPx, heightPx);
 
-  const qrImage = new window.Image();
+  const codeImage = new window.Image();
   await new Promise<void>((resolve, reject) => {
-    qrImage.onload = () => resolve();
-    qrImage.onerror = () => reject(new Error("QR image could not be loaded."));
-    qrImage.src = qrDataUrl;
+    codeImage.onload = () => resolve();
+    codeImage.onerror = () => reject(new Error("The generated code image could not be loaded."));
+    codeImage.src = codeDataUrl;
   });
 
-  const qrExtent = Math.max(1, Math.min(widthPx, heightPx) * 0.52);
-  const qrX = widthPx * record.layout.qr.x / 100;
-  const qrY = heightPx * record.layout.qr.y / 100;
-  context.drawImage(qrImage, qrX, qrY, qrExtent, qrExtent);
+  const isBarcode = record.codeType === "BARCODE";
+  const codeBoxWidth = Math.max(1, widthPx * (isBarcode ? 0.82 : 0.52));
+  const codeBoxHeight = Math.max(1, heightPx * (isBarcode ? 0.62 : 0.52));
+  const imageWidth = codeImage.naturalWidth || codeImage.width;
+  const imageHeight = codeImage.naturalHeight || codeImage.height;
+  if (!imageWidth || !imageHeight) {
+    throw new Error("The generated code image has invalid dimensions.");
+  }
+  const scale = Math.min(codeBoxWidth / imageWidth, codeBoxHeight / imageHeight);
+  const codeWidth = imageWidth * scale;
+  const codeHeight = imageHeight * scale;
+  const codeX = widthPx * record.layout.qr.x / 100;
+  const codeY = heightPx * record.layout.qr.y / 100;
+  context.drawImage(codeImage, codeX, codeY, codeWidth, codeHeight);
 
   record.displayFields.forEach((fieldKey, index) => {
     const label = getQrTemplateFieldLabel(fieldKey);

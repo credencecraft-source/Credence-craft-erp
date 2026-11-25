@@ -113,6 +113,14 @@ These are persistent project governance requirements for all future human, AI, a
 - Never apply migrations to an unverified or production database for local validation. Production migrations are applied only by the approved deployment/release pipeline before serving code that requires the schema.
 - If the required safe database or running browser environment is unavailable, do not claim the implementation is complete: report the exact verification that remains blocked and what environment is needed. Do not bypass this gate by treating schema validation, client generation, mocks, or a successful build as proof that a migration is applied or the workflow works.
 
+## Pre-Push Local Gate (MANDATORY BEFORE `git push`)
+
+Before running `git push origin test-branch`, you MUST run and pass all local checks:
+
+1. Run `npx prisma validate` and verify every change in `prisma/schema` has a matching, idempotent `migration.sql` file in `prisma/migrations/` (no `P1014` missing tables, no `DROP`, no unsafe `NOT NULL`).
+2. Run lint, TypeScript check (`npx tsc --noEmit`), and unit tests locally.
+3. If any check fails, fix it locally first. NEVER push failing code to `origin/test-branch`.
+
 ## Platform Audience Tag Master
 
 - Audience tags are managed once in the platform Tags catalog, linked beneath Segments in the platform sidebar. Do not accept comma-separated or free-text tags on version/business-type configuration screens.

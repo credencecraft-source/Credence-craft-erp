@@ -9,6 +9,7 @@ import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import { getWhatsAppDirectUrl } from "@/lib/phone/indian-mobile-number";
 
 type PlatformCampaignSummary = {
   id: string;
@@ -84,14 +85,14 @@ function defaultScheduleDateTime() {
 
 export default function PlatformCampaignsPage({
   campaigns: initialCampaigns,
+  initialCampaign,
 }: {
-  campaigns: PlatformCampaignSummary[];
+  campaigns?: PlatformCampaignSummary[];
+  initialCampaign?: PlatformCampaignDetail;
 }) {
   const router = useRouter();
-  const [campaigns, setCampaigns] = useState(initialCampaigns);
-  const [selectedCampaign, setSelectedCampaign] = useState<PlatformCampaignDetail | null>(null);
-  const [loadingCampaign, setLoadingCampaign] = useState(false);
-  const [campaignError, setCampaignError] = useState("");
+  const [campaigns, setCampaigns] = useState(initialCampaigns ?? []);
+  const [selectedCampaign, setSelectedCampaign] = useState<PlatformCampaignDetail | null>(initialCampaign ?? null);
   const [createOpen, setCreateOpen] = useState(false);
   const [campaignName, setCampaignName] = useState("");
   const [campaignDate, setCampaignDate] = useState(todayLocalDate);
@@ -111,22 +112,6 @@ export default function PlatformCampaignsPage({
   const [campaignAction, setCampaignAction] = useState<CampaignAction | null>(null);
   const [campaignActionError, setCampaignActionError] = useState("");
   const [savingCampaignAction, setSavingCampaignAction] = useState(false);
-
-  async function openCampaign(campaignId: string) {
-    setSelectedCampaign(null);
-    setCampaignError("");
-    setLoadingCampaign(true);
-    try {
-      const campaignResponse = await fetch(`/api/platform/campaigns/${encodeURIComponent(campaignId)}`);
-      const campaignPayload = await campaignResponse.json();
-      if (!campaignResponse.ok) throw new Error(campaignPayload.error || "Unable to load campaign.");
-      setSelectedCampaign(campaignPayload.campaign as PlatformCampaignDetail);
-    } catch (error) {
-      setCampaignError(error instanceof Error ? error.message : "Unable to load campaign.");
-    } finally {
-      setLoadingCampaign(false);
-    }
-  }
 
   async function scheduleCampaignMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -212,11 +197,10 @@ export default function PlatformCampaignsPage({
         [summary, ...current.filter((campaign) => campaign.id !== summary.id)]
           .sort((left, right) => right.campaign_date.localeCompare(left.campaign_date)),
       );
-      setSelectedCampaign({ ...created, leads: [] });
       setCreateOpen(false);
       setCampaignName("");
       setCampaignDate(todayLocalDate());
-      router.refresh();
+      router.push(`/platform/campaigns/${encodeURIComponent(created.id)}`);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Unable to create campaign.");
     } finally {
@@ -291,106 +275,112 @@ export default function PlatformCampaignsPage({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-col gap-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Campaigns</h1>
-          <p className="mt-1 text-sm text-slate-600">Create campaigns and review the leads assigned to them.</p>
-        </div>
-        <Button type="button" variant="primary" onClick={() => {
-          setSaveError("");
-          setCreateOpen(true);
-        }}>
-          New campaign
-        </Button>
-      </header>
+      {!initialCampaign && (
+        <>
+          <header className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h1 className="text-xl font-bold text-slate-900">Campaigns</h1>
+              <p className="mt-1 text-sm text-slate-600">Create campaigns and review the leads assigned to them.</p>
+            </div>
+            <Button type="button" variant="primary" onClick={() => {
+              setSaveError("");
+              setCreateOpen(true);
+            }}>
+              New campaign
+            </Button>
+          </header>
 
-      <ReportGrid
-        title="Campaigns"
-        records={campaigns}
-        fields={CAMPAIGN_FIELDS}
-        visibleFields={CAMPAIGN_FIELDS.map(({ key }) => key)}
-        onVisibleFieldsChange={() => undefined}
-        rowIdSelector={(campaign) => campaign.id}
-        selectedIds={selectedCampaign ? [selectedCampaign.id] : []}
-        selectable={false}
-        onRowClick={(campaignId) => void openCampaign(campaignId)}
-        renderCell={(fieldKey, campaign) => {
-          if (fieldKey === "campaign_date") return formatDate(campaign.campaign_date);
-          if (fieldKey === "lead_count") return campaign.lead_count;
-          if (fieldKey === "actions") {
-            return (
-              <div className="flex min-w-max items-center gap-2" onClick={(event) => event.stopPropagation()}>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={campaign.lead_count === 0}
-                  title={campaign.lead_count === 0 ? "Add leads before scheduling a campaign message" : undefined}
-                  aria-label={`Schedule WhatsApp campaign message for ${campaign.name}`}
-                  onClick={() => void openScheduleDialog(campaign)}
-                >
-                  Schedule
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  aria-label={`Open WhatsApp send history for ${campaign.name}`}
-                  onClick={() => router.push(`/platform/campaigns/${encodeURIComponent(campaign.id)}/whatsapp-history`)}
-                >
-                  WhatsApp send history
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  disabled={!campaign.can_cancel}
-                  title={campaign.can_cancel ? "Cancel scheduled messages" : campaign.action_block_reason ?? "No scheduled messages to cancel."}
-                  aria-label={`Cancel scheduled messages for ${campaign.name}`}
-                  onClick={() => {
-                    setCampaignActionError("");
-                    setCampaignAction({ id: campaign.id, name: campaign.name, action: "cancel" });
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  disabled={!campaign.can_delete}
-                  title={campaign.can_delete ? "Delete campaign" : campaign.action_block_reason ?? undefined}
-                  aria-label={`Delete campaign ${campaign.name}`}
-                  onClick={() => {
-                    setCampaignActionError("");
-                    setCampaignAction({ id: campaign.id, name: campaign.name, action: "delete" });
-                  }}
-                >
-                  Delete
-                </Button>
-                {!campaign.can_cancel && campaign.action_block_reason && (
-                  <span className="max-w-64 text-xs text-slate-600">{campaign.action_block_reason}</span>
-                )}
-              </div>
-            );
-          }
-          return campaign.name;
-        }}
-        emptyMessage="No campaigns yet. Create a campaign to get started."
-      />
-
-      {loadingCampaign && <p role="status" className="text-sm text-slate-600">Loading campaign…</p>}
-      {campaignError && <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{campaignError}</p>}
+          <ReportGrid
+            title="Campaigns"
+            records={campaigns}
+            fields={CAMPAIGN_FIELDS}
+            visibleFields={CAMPAIGN_FIELDS.map(({ key }) => key)}
+            onVisibleFieldsChange={() => undefined}
+            rowIdSelector={(campaign) => campaign.id}
+            selectedIds={[]}
+            selectable={false}
+            onRowClick={(campaignId) => router.push(`/platform/campaigns/${encodeURIComponent(campaignId)}`)}
+            renderCell={(fieldKey, campaign) => {
+              if (fieldKey === "campaign_date") return formatDate(campaign.campaign_date);
+              if (fieldKey === "lead_count") return campaign.lead_count;
+              if (fieldKey === "actions") {
+                return (
+                  <div className="flex min-w-max items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={campaign.lead_count === 0}
+                      title={campaign.lead_count === 0 ? "Add leads before scheduling a campaign message" : undefined}
+                      aria-label={`Schedule WhatsApp campaign message for ${campaign.name}`}
+                      onClick={() => void openScheduleDialog(campaign)}
+                    >
+                      Schedule
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      aria-label={`Open WhatsApp send history for ${campaign.name}`}
+                      onClick={() => router.push(`/platform/campaigns/${encodeURIComponent(campaign.id)}/whatsapp-history`)}
+                    >
+                      WhatsApp send history
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={!campaign.can_cancel}
+                      title={campaign.can_cancel ? "Cancel scheduled messages" : campaign.action_block_reason ?? "No scheduled messages to cancel."}
+                      aria-label={`Cancel scheduled messages for ${campaign.name}`}
+                      onClick={() => {
+                        setCampaignActionError("");
+                        setCampaignAction({ id: campaign.id, name: campaign.name, action: "cancel" });
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={!campaign.can_delete}
+                      title={campaign.can_delete ? "Delete campaign" : campaign.action_block_reason ?? undefined}
+                      aria-label={`Delete campaign ${campaign.name}`}
+                      onClick={() => {
+                        setCampaignActionError("");
+                        setCampaignAction({ id: campaign.id, name: campaign.name, action: "delete" });
+                      }}
+                    >
+                      Delete
+                    </Button>
+                    {!campaign.can_cancel && campaign.action_block_reason && (
+                      <span className="max-w-64 text-xs text-slate-600">{campaign.action_block_reason}</span>
+                    )}
+                  </div>
+                );
+              }
+              return campaign.name;
+            }}
+            emptyMessage="No campaigns yet. Create a campaign to get started."
+          />
+        </>
+      )}
       {selectedCampaign && (
         <section className="min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-base font-bold text-slate-900">{selectedCampaign.name}</h2>
+              <h1 className="text-xl font-bold text-slate-900">{selectedCampaign.name}</h1>
               <p className="mt-1 text-sm text-slate-600">Campaign date: {formatDate(selectedCampaign.campaign_date)}</p>
             </div>
-            <Button type="button" variant="secondary" onClick={() => router.push("/platform/leads")}>
-              Select leads
-            </Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" onClick={() => router.push("/platform/campaigns")}>
+                Back to campaigns
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => router.push("/platform/leads")}>
+                Select leads
+              </Button>
+            </div>
           </div>
           <ReportGrid
             title="Campaign leads"
@@ -403,6 +393,22 @@ export default function PlatformCampaignsPage({
             selectable={false}
             renderCell={(fieldKey, lead) => {
               if (fieldKey === "added_at") return formatDate(lead.added_at);
+              if (fieldKey === "mobile") {
+                if (!lead.mobile) return "—";
+                const whatsappUrl = getWhatsAppDirectUrl(lead.mobile);
+                return whatsappUrl ? (
+                  <a
+                    href={whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-brand-600 underline underline-offset-2 hover:text-brand-700"
+                    title={`Open WhatsApp chat with ${lead.mobile}`}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {lead.mobile}
+                  </a>
+                ) : lead.mobile;
+              }
               if (fieldKey === "actions") {
                 return (
                   <Button

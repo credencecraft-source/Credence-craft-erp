@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   requirePlatformSessionAdminMock,
+  requirePlatformNavigationPermissionMock,
   findCampaignsMock,
   findCampaignMock,
   createCampaignMock,
@@ -30,6 +31,7 @@ const {
   const createCampaignEntries = vi.fn();
   const createAuditEvent = vi.fn();
   const createAuditEvents = vi.fn();
+  const requirePlatformSessionAdmin = vi.fn();
   const transaction = {
     platformLead: { findMany: findLeads },
     platformCampaignLead: {
@@ -61,7 +63,22 @@ const {
     ),
   };
   return {
-    requirePlatformSessionAdminMock: vi.fn(),
+    requirePlatformSessionAdminMock: requirePlatformSessionAdmin,
+    requirePlatformNavigationPermissionMock: vi.fn(async (permission: string) => {
+      const admin = await requirePlatformSessionAdmin();
+      const canCreateCampaignFromLeads =
+        admin.team_role === null ||
+        admin.team_role === "CMO" ||
+        admin.team_role === "SALES_MANAGER";
+      if (
+        permission === "canCreateCampaignFromLeads" &&
+        admin.actualRole !== "SUPER_ADMIN" &&
+        !canCreateCampaignFromLeads
+      ) {
+        throw new Error("You do not have access to this platform module.");
+      }
+      return admin;
+    }),
     findCampaignsMock: findCampaigns,
     findCampaignMock: findCampaign,
     createCampaignMock: createCampaign,
@@ -81,6 +98,7 @@ const {
 
 vi.mock("@/lib/auth/platform-session-manager", () => ({
   requirePlatformSessionAdmin: requirePlatformSessionAdminMock,
+  requirePlatformNavigationPermission: requirePlatformNavigationPermissionMock,
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -91,7 +109,9 @@ import {
   addPlatformLeadsToCampaign,
   cancelScheduledPlatformCampaignMessages,
   createPlatformCampaign,
+  createPlatformCampaignWithSelectedLeads,
   deletePlatformCampaign,
+  getPlatformCampaign,
   listPlatformCampaigns,
   removePlatformLeadFromCampaign,
 } from "@/lib/services/platform/platform-campaign-service";
@@ -102,6 +122,7 @@ describe("platform campaign management", () => {
     requirePlatformSessionAdminMock.mockResolvedValue({
       id: "admin-1",
       role: "ADMIN",
+      actualRole: "ADMIN",
       team_role: null,
     });
   });
@@ -116,16 +137,91 @@ describe("platform campaign management", () => {
     }));
   });
 
-  it("blocks campaign access for CMO and CTO team sessions", async () => {
+  it("allows CMO to list campaigns", async () => {
     requirePlatformSessionAdminMock.mockResolvedValue({
       id: "admin-1",
       role: "ADMIN",
+      actualRole: "ADMIN",
       team_role: "CMO",
+    });
+    findCampaignsMock.mockResolvedValue([]);
+
+    await expect(listPlatformCampaigns()).resolves.toEqual([]);
+    expect(findCampaignsMock).toHaveBeenCalled();
+  });
+
+  it("allows Sales Managers to list campaigns with only their visible lead count", async () => {
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "manager-1",
+      role: "ADMIN",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    findCampaignsMock.mockResolvedValue([]);
+
+    await expect(listPlatformCampaigns()).resolves.toEqual([]);
+    expect(findCampaignsMock).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({
+        _count: {
+          select: {
+            leads: {
+              where: {
+                lead: {
+                  OR: [
+                    { assigned_sales_manager_id: null },
+                    { assigned_sales_manager_id: "manager-1" },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      }),
+    }));
+  });
+
+  it("blocks CTO campaign list access", async () => {
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "admin-1",
+      role: "ADMIN",
+      actualRole: "ADMIN",
+      team_role: "CTO",
     });
 
     await expect(listPlatformCampaigns())
-      .rejects.toThrow("Campaign management is available to platform Admin accounts only.");
+      .rejects.toThrow("Campaign management is available to platform Admin, CMO, and Sales Manager accounts only.");
     expect(findCampaignsMock).not.toHaveBeenCalled();
+  });
+
+  it("returns only leads within a Sales Manager's scope on campaign details", async () => {
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "manager-1",
+      role: "ADMIN",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    findCampaignMock.mockResolvedValue({
+      id: "campaign-1",
+      leads: [],
+    });
+
+    await getPlatformCampaign("campaign-1");
+
+    expect(findCampaignMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "campaign-1" },
+      include: {
+        leads: expect.objectContaining({
+          where: {
+            lead: {
+              OR: [
+                { assigned_sales_manager_id: null },
+                { assigned_sales_manager_id: "manager-1" },
+              ],
+            },
+          },
+        }),
+      },
+    }));
   });
 
   it("disables campaign actions for delivered or in-flight sends in the report", async () => {
@@ -173,7 +269,7 @@ describe("platform campaign management", () => {
   it("normalizes and atomically audits campaign creation", async () => {
     const campaign = {
       id: "campaign-1",
-      name: "Autumn launch",
+      name: "AUTUMN LAUNCH",
       campaign_date: new Date("2026-10-10T00:00:00.000Z"),
     };
     createCampaignMock.mockResolvedValue(campaign);
@@ -186,7 +282,7 @@ describe("platform campaign management", () => {
 
     expect(createCampaignMock).toHaveBeenCalledWith({
       data: {
-        name: "Autumn launch",
+        name: "AUTUMN LAUNCH",
         campaign_date: new Date("2026-10-10T00:00:00.000Z"),
       },
     });
@@ -205,6 +301,97 @@ describe("platform campaign management", () => {
       name: "Campaign",
       campaignDate: "2026-02-30",
     })).rejects.toThrow("Enter a valid campaign date.");
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("allows CMO to create a new campaign with selected leads atomically", async () => {
+    const campaign = {
+      id: "campaign-1",
+      name: "SPRING LAUNCH",
+      campaign_date: new Date("2026-10-10T00:00:00.000Z"),
+    };
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "cmo-1",
+      role: "ADMIN",
+      actualRole: "ADMIN",
+      team_role: "CMO",
+    });
+    findLeadsMock.mockResolvedValue([{ id: "lead-1" }, { id: "lead-2" }]);
+    createCampaignMock.mockResolvedValue(campaign);
+    createCampaignEntriesMock.mockResolvedValue({ count: 2 });
+    createAuditEventMock.mockResolvedValue({ id: "audit-1" });
+    createAuditEventsMock.mockResolvedValue({ count: 2 });
+
+    await expect(createPlatformCampaignWithSelectedLeads({
+      name: "  Spring launch ",
+      campaignDate: "2026-10-10",
+      leadIds: ["lead-1", "lead-2"],
+    })).resolves.toEqual({
+      campaign,
+      addedCount: 2,
+      alreadyAddedCount: 0,
+    });
+
+    expect(createCampaignEntriesMock).toHaveBeenCalledWith({
+      data: [
+        { campaign_id: "campaign-1", lead_id: "lead-1" },
+        { campaign_id: "campaign-1", lead_id: "lead-2" },
+      ],
+    });
+    expect(createAuditEventMock).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "PLATFORM_CAMPAIGN_CREATED",
+        entity_id: "campaign-1",
+        details: expect.objectContaining({ name: "SPRING LAUNCH", leadCount: 2 }),
+      }),
+    });
+    expect(createAuditEventsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows Sales Managers to create campaigns only from leads in their queue", async () => {
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "manager-1",
+      role: "ADMIN",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    findLeadsMock.mockResolvedValue([{ id: "lead-1" }]);
+    createCampaignMock.mockResolvedValue({ id: "campaign-1" });
+    createCampaignEntriesMock.mockResolvedValue({ count: 1 });
+    createAuditEventMock.mockResolvedValue({ id: "audit-1" });
+    createAuditEventsMock.mockResolvedValue({ count: 1 });
+
+    await createPlatformCampaignWithSelectedLeads({
+      name: "Manager campaign",
+      campaignDate: "2026-10-10",
+      leadIds: ["lead-1"],
+    });
+
+    expect(findLeadsMock).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["lead-1"] },
+        OR: [
+          { assigned_sales_manager_id: null },
+          { assigned_sales_manager_id: "manager-1" },
+        ],
+      },
+      select: { id: true },
+    });
+  });
+
+  it("denies CTO access to create campaigns from selected leads", async () => {
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "cto-1",
+      role: "ADMIN",
+      actualRole: "ADMIN",
+      team_role: "CTO",
+    });
+
+    await expect(createPlatformCampaignWithSelectedLeads({
+      name: "CTO campaign",
+      campaignDate: "2026-10-10",
+      leadIds: ["lead-1"],
+    })).rejects.toThrow("You do not have access to this platform module.");
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 

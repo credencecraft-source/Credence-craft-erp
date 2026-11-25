@@ -11,12 +11,16 @@ const mocks = vi.hoisted(() => {
   const findRecipients = vi.fn();
   const updateRecipients = vi.fn();
   const createAuditEvents = vi.fn();
+  const findCampaign = vi.fn();
+  const findTemplate = vi.fn();
+  const createCampaignMessage = vi.fn();
   const transaction = {
     platformWhatsAppTemplate: { create: createTemplate },
     platformWhatsAppCampaignMessage: {
       findFirst: findCampaignMessage,
       updateMany: updateCampaignMessage,
       delete: deleteCampaignMessage,
+      create: createCampaignMessage,
     },
     platformAuditEvent: { create: createAuditEvent },
   };
@@ -31,9 +35,14 @@ const mocks = vi.hoisted(() => {
     findRecipients,
     updateRecipients,
     createAuditEvents,
+    findCampaign,
+    findTemplate,
+    createCampaignMessage,
     transaction,
     prisma: {
       platformWhatsAppConfiguration: { findUnique: findWhatsAppConfiguration },
+      platformCampaign: { findUnique: findCampaign },
+      platformWhatsAppTemplate: { findUnique: findTemplate },
       platformWhatsAppCampaignMessage: {
         findFirst: findCampaignMessage,
         updateMany: updateCampaignMessage,
@@ -68,6 +77,7 @@ import {
   applyPlatformWhatsAppDeliveryCallback,
   cancelPlatformWhatsAppCampaignMessage,
   deletePlatformWhatsAppCampaignMessage,
+  getPlatformWhatsAppSettings,
   savePlatformWhatsAppTemplate,
   schedulePlatformWhatsAppCampaignMessage,
 } from "@/lib/services/platform/platform-whatsapp-service";
@@ -107,14 +117,105 @@ describe("platform WhatsApp campaign service", () => {
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("restricts WhatsApp campaign scheduling to platform Admin accounts", async () => {
+  it("allows CMO campaign scheduling access while still requiring opt-in confirmation", async () => {
     mocks.requireAdmin.mockResolvedValue({ id: "admin-1", team_role: "CMO" });
     await expect(schedulePlatformWhatsAppCampaignMessage({
       campaignId: "campaign-1",
       templateId: "template-1",
       scheduledAt: new Date(Date.now() + 60_000),
+      consentConfirmed: false,
+    })).rejects.toThrow("Confirm that campaign recipients have opted in");
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("allows Sales Managers campaign scheduling access while still requiring opt-in confirmation", async () => {
+    mocks.requireAdmin.mockResolvedValue({ id: "admin-1", team_role: "SALES_MANAGER" });
+    await expect(schedulePlatformWhatsAppCampaignMessage({
+      campaignId: "campaign-1",
+      templateId: "template-1",
+      scheduledAt: new Date(Date.now() + 60_000),
+      consentConfirmed: false,
+    })).rejects.toThrow("Confirm that campaign recipients have opted in");
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("schedules WhatsApp recipients only from the Sales Manager's lead scope", async () => {
+    mocks.requireAdmin.mockResolvedValue({
+      id: "manager-1",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    mocks.findWhatsAppConfiguration.mockResolvedValue({ api_key_encrypted: "encrypted:key" });
+    mocks.findCampaign.mockResolvedValue({
+      id: "campaign-1",
+      leads: [{
+        lead: { id: "lead-1", name: "Customer", mobile: "9876543210" },
+      }],
+    });
+    mocks.findTemplate.mockResolvedValue({ id: "template-1", is_active: true });
+    mocks.createCampaignMessage.mockResolvedValue({
+      id: "message-1",
+      scheduled_at: new Date(Date.now() + 60_000),
+      status: "SCHEDULED",
+    });
+
+    await schedulePlatformWhatsAppCampaignMessage({
+      campaignId: "campaign-1",
+      templateId: "template-1",
+      scheduledAt: new Date(Date.now() + 60_000),
       consentConfirmed: true,
-    })).rejects.toThrow("Campaign management is available to platform Admin accounts only.");
+    });
+
+    expect(mocks.findCampaign).toHaveBeenCalledWith({
+      where: { id: "campaign-1" },
+      select: {
+        id: true,
+        leads: {
+          where: {
+            lead: {
+              OR: [
+                { assigned_sales_manager_id: null },
+                { assigned_sales_manager_id: "manager-1" },
+              ],
+            },
+          },
+          select: {
+            lead: { select: { id: true, name: true, mobile: true } },
+          },
+        },
+      },
+    });
+    expect(mocks.createCampaignMessage).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        recipients: {
+          create: [{
+            lead_id: "lead-1",
+            customer_name: "Customer",
+            phone_number: "919876543210",
+            status: "PENDING",
+            failure_summary: null,
+          }],
+        },
+      }),
+    }));
+  });
+
+  it("does not grant Sales Managers access to WhatsApp configuration", async () => {
+    mocks.requireAdmin.mockResolvedValue({ id: "manager-1", team_role: "SALES_MANAGER" });
+
+    await expect(getPlatformWhatsAppSettings())
+      .rejects.toThrow("WhatsApp configuration is not available to this platform team.");
+    expect(mocks.findWhatsAppConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("denies CTO access to WhatsApp campaign scheduling", async () => {
+    mocks.requireAdmin.mockResolvedValue({ id: "cto-1", team_role: "CTO" });
+    await expect(schedulePlatformWhatsAppCampaignMessage({
+      campaignId: "campaign-1",
+      templateId: "template-1",
+      scheduledAt: new Date(Date.now() + 60_000),
+      consentConfirmed: true,
+    })).rejects.toThrow("Campaign management is available to platform Admin, CMO, and Sales Manager accounts only.");
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
   });
 
@@ -220,6 +321,27 @@ describe("platform WhatsApp campaign service", () => {
 
     expect(mocks.updateCampaignMessage).not.toHaveBeenCalled();
     expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("prevents Sales Managers cancelling a message sent to another manager's lead", async () => {
+    mocks.requireAdmin.mockResolvedValue({
+      id: "manager-1",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    mocks.findCampaignMessage.mockResolvedValue({
+      id: "message-1",
+      status: "SCHEDULED",
+      recipients: [{
+        status: "PENDING",
+        lead: { assigned_sales_manager_id: "manager-2" },
+      }],
+    });
+
+    await expect(cancelPlatformWhatsAppCampaignMessage("campaign-1", "message-1"))
+      .rejects.toThrow("You can only manage WhatsApp messages for leads assigned to you or unassigned.");
+
+    expect(mocks.updateCampaignMessage).not.toHaveBeenCalled();
   });
 
   it("deletes an unsent schedule and audits the removal", async () => {

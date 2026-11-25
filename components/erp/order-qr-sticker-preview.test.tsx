@@ -7,7 +7,8 @@ import OrderQrStickerPreview from "./order-qr-sticker-preview";
 describe("OrderQrStickerPreview", () => {
   it("renders saved positions and field styling in the shared sticker layout", () => {
     const markup = renderToStaticMarkup(createElement(OrderQrStickerPreview, {
-      qrDataUrl: "data:image/png;base64,AA==",
+      codeType: "QR_CODE",
+      codeDataUrl: "data:image/png;base64,AA==",
       fields: [{
         key: "orderNo",
         label: "Order Number",

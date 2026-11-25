@@ -17,13 +17,15 @@ import Tabs from "@/components/ui/Tabs";
 import {
   ORDER_QR_TEMPLATE_SIZES,
   ORDER_QR_TEMPLATE_TYPES,
-  buildOrderQrPayload,
+  buildOrderCodePayload,
+  getOrderQrCodeTypeLabel,
   getQrTemplateFieldLabel,
   getQrTemplateFields,
   getQrTemplateSampleValues,
   parseOrderQrTemplateLayout,
   parseStoredOrderQrTemplateDesign,
   type OrderQrTemplateType,
+  type OrderQrCodeType,
   type QrTemplateFieldKey,
   type OrderQrTemplateLayout,
   type OrderQrDisplayFieldStyle,
@@ -73,6 +75,7 @@ type OrderQrTemplate = {
   id: string;
   name: string;
   type: OrderQrTemplateType;
+  codeType: OrderQrCodeType;
   qrFieldKey: QrTemplateFieldKey;
   displayFields: QrTemplateFieldKey[];
   displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
@@ -136,11 +139,13 @@ function parseOrderQrTemplates(value: unknown): OrderQrTemplate[] {
     const design = parseStoredOrderQrTemplateDesign({
       styles: candidate.displayFieldStyles,
       layout: candidate.layout,
+      codeType: candidate.codeType,
     }, displayFields);
     return [{
       id: candidate.id,
       name: candidate.name,
       type,
+      codeType: design.codeType,
       qrFieldKey: candidate.qrFieldKey as QrTemplateFieldKey,
       displayFields,
       displayFieldStyles: design.displayFieldStyles,
@@ -403,9 +408,13 @@ export default function MerchandisingOrdersPage({
       ? getQrTemplateSampleValues("FG_BARCODE")
       : sampleQrOrder ? getOrderQrFieldValues(sampleQrOrder, sampleQrQuantity) : {};
   const sampleQrPayload = selectedQrTemplate
-    ? buildOrderQrPayload([selectedQrTemplate.qrFieldKey], sampleQrFields).payload
+    ? buildOrderCodePayload(
+      selectedQrTemplate.codeType,
+      selectedQrTemplate.qrFieldKey,
+      sampleQrFields,
+    )
     : "";
-  const sampleQrPreviewKey = `${selectedQrTemplateId}:${sampleQrPayload}`;
+  const sampleQrPreviewKey = `${selectedQrTemplateId}:${selectedQrTemplate?.codeType ?? ""}:${sampleQrPayload}`;
   const sampleQrDataUrl = sampleQrPreview?.key === sampleQrPreviewKey
     ? sampleQrPreview.dataUrl
     : "";
@@ -635,12 +644,13 @@ export default function MerchandisingOrdersPage({
   useEffect(() => {
     let active = true;
     if (!showBulkQrRequest || !sampleQrPayload || !selectedQrTemplate) return;
-    void import("qrcode")
-      .then(({ default: QRCode }) => QRCode.toDataURL(sampleQrPayload, {
-        errorCorrectionLevel: "H",
-        margin: 2,
-        width: selectedQrTemplate.qrSize,
-      }))
+    void import("@/components/erp/order-qr-code-generator")
+      .then(({ createOrderQrCodeDataUrl }) =>
+        createOrderQrCodeDataUrl(
+          sampleQrPayload,
+          selectedQrTemplate.codeType,
+          selectedQrTemplate.qrSize,
+        ))
       .then((dataUrl) => {
         if (active) setSampleQrPreview({ key: sampleQrPreviewKey, dataUrl });
       })
@@ -648,7 +658,7 @@ export default function MerchandisingOrdersPage({
         if (active) {
           setSampleQrPreviewError({
             key: sampleQrPreviewKey,
-            error: error instanceof Error ? error.message : "Unable to prepare the QR preview.",
+            error: error instanceof Error ? error.message : "Unable to prepare the code preview.",
           });
         }
       });
@@ -1251,7 +1261,7 @@ export default function MerchandisingOrdersPage({
             />
 
             <Select
-              label="Saved QR template"
+              label="Saved code template"
               value={selectedQrTemplateId}
               onChange={(event) => setSelectedQrTemplateId(event.target.value)}
               disabled={isLoadingQrTemplates || bulkQrTemplates.length === 0}
@@ -1260,7 +1270,9 @@ export default function MerchandisingOrdersPage({
                 {isLoadingQrTemplates ? "Loading templates..." : "Select a template"}
               </option>
               {bulkQrTemplates.map((template) => (
-                <option key={template.id} value={template.id}>{template.name}</option>
+                <option key={template.id} value={template.id}>
+                  {template.name} · {getOrderQrCodeTypeLabel(template.codeType)}
+                </option>
               ))}
             </Select>
 
@@ -1451,8 +1463,9 @@ export default function MerchandisingOrdersPage({
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold text-[var(--erp-text)]">Sample sticker preview</h3>
                 <OrderQrStickerPreview
-                  qrDataUrl={sampleQrDataUrl || undefined}
-                  qrError={sampleQrError || undefined}
+                  codeType={selectedQrTemplate.codeType}
+                  codeDataUrl={sampleQrDataUrl || undefined}
+                  codeError={sampleQrError || undefined}
                   fields={sampleQrDisplayFields}
                   layout={selectedQrTemplate.layout}
                   stickerWidthMm={selectedQrTemplate.stickerWidthMm}

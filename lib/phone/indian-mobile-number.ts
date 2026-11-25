@@ -29,6 +29,11 @@ export function formatIndianMobileNumber(value: string | null) {
   return getCanonicalIndianMobileNumber(value) ?? value.trim();
 }
 
+export function getWhatsAppDirectUrl(value: string | null | undefined) {
+  const canonical = getCanonicalIndianMobileNumber(value);
+  return canonical ? `https://wa.me/${canonical}` : null;
+}
+
 export function getIndianMobileNumberLookupVariants(value: string) {
   const canonical = normalizeIndianMobileNumber(value);
   const national = canonical.slice(2);
